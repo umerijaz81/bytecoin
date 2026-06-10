@@ -24,6 +24,7 @@
 
 #ifndef __EMSCRIPTEN__
 #include "../tests/blockchain/test_blockchain.hpp"
+#include "../tests/blockchain/test_jade_consensus.hpp"
 #include "../tests/wallet_file/test_wallet_file.hpp"
 #include "../tests/wallet_state/test_wallet_state.hpp"
 #endif
@@ -101,6 +102,7 @@ int main(int argc, const char *argv[]) {
 	all["--hash"]      = std::bind(test_hashes, test_folder + "/hash");
 #ifndef __EMSCRIPTEN__
 	all["--blockchain"]   = std::bind(test_blockchain, std::ref(cmd));
+	all["--jade"]         = std::bind(test_jade_consensus, std::ref(cmd));
 	all["--db"]           = platform::DB::run_tests;
 	all["--json"]         = std::bind(test_json, test_folder + "/json");
 	all["--wallet"]       = std::bind(test_wallet_file, test_folder + "/wallet_file");

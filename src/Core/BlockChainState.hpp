@@ -12,6 +12,13 @@
 namespace cn {
 
 class Config;
+class Currency;
+
+// Semantic (stateless) transaction validation. Returns coinbase reward or non-coinbase fee;
+// throws ConsensusError on any violation (incl. the Jade minimum-ring-size rule). Exposed for the
+// consensus test harness so the real rule can be exercised directly.
+Amount validate_tx_semantic(const Currency &currency, uint8_t block_major_version, bool coinbase,
+    const Transaction &tx, bool check_keys, bool key_image_subgroup_check);
 
 class IBlockChainState {
 public:

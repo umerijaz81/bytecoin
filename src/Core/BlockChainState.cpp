@@ -114,7 +114,8 @@ void BlockChainState::DeltaState::clear(Height new_block_height) {
 }
 
 // returns reward for coinbase transaction or fee for non-coinbase one
-static Amount validate_tx_semantic(const Currency &currency, uint8_t block_major_version, bool coinbase,
+// Not static: exercised directly by the consensus test harness (tests/blockchain).
+Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_version, bool coinbase,
     const Transaction &tx, bool check_keys, bool key_image_subgroup_check) {
 	//	TODO - uncomment during next hard fork, finally prohibiting old signatures, outputs without secrets
 	//	We cannot do it at once, because mem pool will have v1 transactions during switch
@@ -166,6 +167,15 @@ static Amount validate_tx_semantic(const Currency &currency, uint8_t block_major
 				throw ConsensusError("Key input amounts overflow");
 			if (!ki.insert(in->key_image).second)
 				throw ConsensusError(common::to_string("Keyimage used twice in same transaction", in->key_image));
+			// Jade (V5): consensus-enforced minimum ring size. Unlike Amethyst, where the minimum
+			// anonymity was only a wallet-side default, here the network rejects undersized (incl.
+			// zero-mixin) rings outright, closing the traceability loophole.
+			if (block_major_version >= currency.jade_block_version) {
+				const size_t min_ring = currency.minimum_anonymity(block_major_version) + 1;
+				if (in->output_indexes.size() < min_ring)
+					throw ConsensusError(common::to_string(
+					    "Ring size too small", in->output_indexes.size(), "minimum", min_ring));
+			}
 			std::vector<size_t> absolute_indexes;
 			if (!relative_output_offsets_to_absolute(&absolute_indexes, in->output_indexes))
 				throw ConsensusError("Output indexes invalid in input");

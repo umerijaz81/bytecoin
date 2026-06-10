@@ -199,6 +199,7 @@ endif()
 add_executable(minerd src/main_miner.cpp)
 add_executable(tests src/main_tests.cpp tests/io.hpp tests/Random.hpp
         tests/blockchain/test_blockchain.cpp tests/blockchain/test_blockchain.hpp
+        tests/blockchain/test_jade_consensus.cpp tests/blockchain/test_jade_consensus.hpp
         tests/crypto/test_crypto.cpp tests/crypto/test_crypto.hpp
         tests/hash/test_hash.cpp tests/hash/test_hash.hpp
         tests/json/test_json.cpp tests/json/test_json.hpp
