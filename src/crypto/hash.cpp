@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <algorithm>
 #include <new>
+#include <stdexcept>
 
 #include "crypto.hpp"  // KeccakStream
 #include "hash.hpp"

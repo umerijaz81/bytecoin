@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <memory>
 #include "Wallet.hpp"
 #include "platform/Files.hpp"
 

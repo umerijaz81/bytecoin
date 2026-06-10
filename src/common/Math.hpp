@@ -5,6 +5,7 @@
 
 #include <ctype.h>
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <typeinfo>
 #include <vector>
