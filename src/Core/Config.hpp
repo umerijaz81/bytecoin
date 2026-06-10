@@ -31,6 +31,9 @@ public:
 
 	std::string net;
 	bool is_archive;
+	// Privacy: when true (default), the archive does NOT record which peer IP relayed each
+	// block/transaction. Restore the old behaviour with --archive-keep-source-addresses.
+	bool archive_omit_source_addresses = true;
 
 	std::string blocks_file_name;
 	std::string block_indexes_file_name;
@@ -116,6 +119,10 @@ public:
 	Timestamp wallet_sync_timestamp_granularity = 86400 * 30;
 	// Sending exact timestamp of wallet to public node allows tracking
 	size_t wallet_sync_preparator_queue_size = 10 * 1024 * 1024;
+	// Privacy: when set (--wallet-sync-privacy), walletd hides its age (first_block_timestamp=0)
+	// and withholds its sparse_chain from the (possibly untrusted) node, at the cost of a slower
+	// first sync.
+	bool wallet_sync_privacy = false;
 
 	std::vector<NetworkAddress> seed_nodes;
 	std::vector<NetworkAddress> priority_nodes;

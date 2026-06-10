@@ -116,7 +116,8 @@ void PreparedBlock::prepare(const Currency &currency, crypto::CryptoNightContext
 BlockChain::BlockChain(logging::ILogger &log, const Config &config, const Currency &currency, bool read_only)
     : m_genesis_bid(currency.genesis_block_hash)
     , m_db(read_only ? platform::O_READ_EXISTING : platform::O_OPEN_ALWAYS, config.get_data_folder() + "/blockchain")
-    , m_archive(read_only || !config.is_archive, config.get_data_folder() + "/archive")
+    , m_archive(read_only || !config.is_archive, config.get_data_folder() + "/archive",
+          config.archive_omit_source_addresses)
     , m_log(log, "BlockChainState")
     , m_config(config)
     , m_currency(currency) {

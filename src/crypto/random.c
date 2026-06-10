@@ -100,14 +100,37 @@ static void generate_system_random_bytes(size_t n, unsigned char *result) {
 static struct cryptoKeccakState state;
 static int initialized = 0;
 
+/* Defense-in-depth: the sponge state is no longer seeded only once at startup. Fresh system
+ * entropy is mixed in periodically (and on demand via crypto_reseed_random), so a one-time state
+ * compromise does not let an attacker predict all future keys/output-secrets of a long-running
+ * daemon. Callers already serialize access via crypto::generate_random_bytes' random_lock. */
+#define CRYPTO_RESEED_INTERVAL_BYTES (1u << 20) /* mix fresh entropy at least every 1 MiB */
+static size_t bytes_since_reseed = 0;
+static int reseed_disabled       = 0; /* set in deterministic test mode to keep vectors stable */
+
+void crypto_reseed_random(void) {
+	unsigned char fresh[32];
+	if (reseed_disabled)
+		return;
+	generate_system_random_bytes(sizeof(fresh), fresh);
+	for (size_t i = 0; i < sizeof(fresh); ++i)
+		state.b[i] ^= fresh[i];
+	crypto_keccak_permutation(&state);
+	bytes_since_reseed = 0;
+}
+
 void crypto_initialize_random(void) {
 	generate_system_random_bytes(32, state.b);
-	initialized = 1;
+	initialized       = 1;
+	bytes_since_reseed = 0;
 }
 
 void crypto_unsafe_generate_random_bytes(unsigned char *result, size_t n) {
 	if (!initialized)
 		crypto_initialize_random();
+	if (bytes_since_reseed >= CRYPTO_RESEED_INTERVAL_BYTES)
+		crypto_reseed_random();
+	bytes_since_reseed += n;
 	for (;;) {
 		crypto_keccak_permutation(&state);
 		if (n <= HASH_DATA_AREA) {
@@ -122,7 +145,9 @@ void crypto_unsafe_generate_random_bytes(unsigned char *result, size_t n) {
 
 void crypto_initialize_random_for_tests(void) {
 	memset(state.b, 42, sizeof(struct cryptoKeccakState));
-	initialized = 1;
+	initialized        = 1;
+	reseed_disabled    = 1;  // keep deterministic test vectors stable
+	bytes_since_reseed = 0;
 }
 
 // We keep initialize@start, because generate_system_random_bytes will exit on error, and in

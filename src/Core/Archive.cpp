@@ -22,7 +22,8 @@ const std::string Archive::BLOCK("b");
 const std::string Archive::TRANSACTION("t");
 const std::string Archive::CHECKPOINT("c");
 
-Archive::Archive(bool read_only, const std::string &path) : m_read_only(read_only) {
+Archive::Archive(bool read_only, const std::string &path, bool omit_source_addresses)
+    : m_read_only(read_only), m_omit_source_addresses(omit_source_addresses) {
 #if !platform_USE_SQLITE
 	try {
 		m_db = std::make_unique<DB>(read_only ? platform::O_READ_EXISTING : platform::O_OPEN_ALWAYS, path);
@@ -60,10 +61,11 @@ void Archive::add(const std::string &type,
 		m_db->put(hash_key, data, true);
 	}
 	api::cnd::GetArchive::ArchiveRecord rec;
-	rec.timestamp      = now_unix_timestamp(&rec.timestamp_usec);
-	rec.type           = type;
-	rec.hash           = hash;
-	rec.source_address = source_address;
+	rec.timestamp = now_unix_timestamp(&rec.timestamp_usec);
+	rec.type      = type;
+	rec.hash      = hash;
+	// Privacy: optionally record the event without the peer IP that relayed it.
+	rec.source_address = m_omit_source_addresses ? std::string() : source_address;
 	m_db->put(RECORDS_PREFIX + common::write_varint_sqlite4(m_next_record_id), seria::to_binary(rec), true);
 	m_next_record_id += 1;
 }
