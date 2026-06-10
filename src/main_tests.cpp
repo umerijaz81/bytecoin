@@ -29,6 +29,10 @@
 #include "../tests/wallet_state/test_wallet_state.hpp"
 #endif
 
+#ifdef onyx_USE_ZK
+#include "../tests/zk/test_zk.hpp"
+#endif
+
 void test_bip32() {
 	// TODO move this code to a proper test suite
 	cn::Bip32Key master_key = cn::Bip32Key::create_master_key(
@@ -103,6 +107,9 @@ int main(int argc, const char *argv[]) {
 #ifndef __EMSCRIPTEN__
 	all["--blockchain"]   = std::bind(test_blockchain, std::ref(cmd));
 	all["--jade"]         = std::bind(test_jade_consensus, std::ref(cmd));
+#ifdef onyx_USE_ZK
+	all["--zk"]           = test_zk;
+#endif
 	all["--db"]           = platform::DB::run_tests;
 	all["--json"]         = std::bind(test_json, test_folder + "/json");
 	all["--wallet"]       = std::bind(test_wallet_file, test_folder + "/wallet_file");

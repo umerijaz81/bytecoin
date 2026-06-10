@@ -14,6 +14,7 @@ cmake-build-*
 bin/
 libs/
 build/
+build-zk/
 
 # Tests
 tests/scratchpad/

@@ -10,6 +10,9 @@ add_definitions(-DCRYPTONOTE_NAME=\"${CRYPTONOTE_NAME}\" -DNDEBUG=1)
 message("SANITIZE adds clang sanitizer options. Examples thread or address,undefined or fuzzer,address,undefined")
 option(BETTER_DEBUG "Disables optimizations. We do not use standard debug/realease configurations because they change too much" OFF)
 option(CRYPTO128 "Uses faster crypto" OFF)
+# Onyx (V6) zero-knowledge backend (vendor/onyx-zk, Rust/Halo2). OFF by default so the C++-only
+# build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
+option(ONYX_ZK "Build the Onyx ZK backend (requires Rust/cargo)" OFF)
 get_filename_component(PARENT_DIR ${CMAKE_SOURCE_DIR} DIRECTORY)
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -156,6 +159,40 @@ else()
     set_property(SOURCE ${SRC_SERIA} PROPERTY COMPILE_FLAGS -O3)
 endif()
 include_directories(src)
+
+# --- Onyx ZK backend (optional) ---------------------------------------------------------------
+# Builds the vendored Rust staticlib via cargo and imports it as a CMake target. Self-contained
+# (no Corrosion/network dependency). When OFF, nothing here runs and the build is unchanged.
+set(ONYX_ZK_SRC "")
+if(ONYX_ZK)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "ONYX_ZK=ON but 'cargo' was not found. Install a Rust toolchain or build with -DONYX_ZK=OFF.")
+    endif()
+    set(ONYX_ZK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/onyx-zk)
+    set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/libonyx_zk.a)
+    add_custom_command(
+        OUTPUT ${ONYX_ZK_LIB}
+        COMMAND ${CARGO_EXECUTABLE} build --release --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
+        WORKING_DIRECTORY ${ONYX_ZK_DIR}
+        DEPENDS ${ONYX_ZK_DIR}/src/lib.rs ${ONYX_ZK_DIR}/Cargo.toml ${ONYX_ZK_DIR}/include/onyx_zk.h
+        COMMENT "Building Onyx ZK backend (cargo build --release)"
+        VERBATIM)
+    add_custom_target(onyx_zk_build DEPENDS ${ONYX_ZK_LIB})
+    add_library(onyx_zk STATIC IMPORTED GLOBAL)
+    set_target_properties(onyx_zk PROPERTIES IMPORTED_LOCATION ${ONYX_ZK_LIB})
+    add_dependencies(onyx_zk onyx_zk_build)
+    include_directories(${ONYX_ZK_DIR}/include)
+    add_definitions(-Donyx_USE_ZK=1)
+    # C++ adapter + the --zk test, compiled into the tests target only when ONYX_ZK is ON.
+    set(ONYX_ZK_SRC
+        src/Core/zk/IProofSystem.hpp
+        src/Core/zk/Halo2ProofSystem.hpp src/Core/zk/Halo2ProofSystem.cpp
+        tests/zk/test_zk.hpp tests/zk/test_zk.cpp)
+    message(STATUS "Onyx ZK backend: ENABLED (cargo at ${CARGO_EXECUTABLE})")
+endif()
+# ----------------------------------------------------------------------------------------------
+
 set(SOURCE_FILES
     ${SRC_DB}
     ${SRC_NO_WARNINGS}
@@ -204,7 +241,13 @@ add_executable(tests src/main_tests.cpp tests/io.hpp tests/Random.hpp
         tests/hash/test_hash.cpp tests/hash/test_hash.hpp
         tests/json/test_json.cpp tests/json/test_json.hpp
         tests/wallet_state/test_wallet_state.cpp tests/wallet_state/test_wallet_state.hpp
-        tests/wallet_file/test_wallet_file.cpp tests/wallet_file/test_wallet_file.hpp tests/crypto/benchmarks.cpp tests/crypto/benchmarks.hpp)
+        tests/wallet_file/test_wallet_file.cpp tests/wallet_file/test_wallet_file.hpp tests/crypto/benchmarks.cpp tests/crypto/benchmarks.hpp
+        ${ONYX_ZK_SRC})
+if(ONYX_ZK)
+    # Link the Rust staticlib; -lm in addition to the dl/pthread already added via link_libraries.
+    add_dependencies(tests onyx_zk_build)
+    target_link_libraries(tests onyx_zk m)
+endif()
 endif()
 
 set(Boost_USE_STATIC_LIBS ON)

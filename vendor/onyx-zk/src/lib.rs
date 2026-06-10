@@ -245,10 +245,16 @@ pub extern "C" fn onyx_toy_verify(
     proof_len: usize,
     public_input: *const u8,
 ) -> i32 {
-    if vk.is_null() || proof.is_null() || public_input.is_null() {
+    // The toy verifier regenerates its vk from the circuit structure, so a null/empty vk is allowed
+    // here (a real program vk in O4 will not be optional). proof and public_input are required.
+    if proof.is_null() || public_input.is_null() {
         return -1;
     }
-    let vk = unsafe { slice::from_raw_parts(vk, vk_len) };
+    let vk = if vk.is_null() || vk_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(vk, vk_len) }
+    };
     let proof = unsafe { slice::from_raw_parts(proof, proof_len) };
     let public: [u8; 32] = match unsafe { slice::from_raw_parts(public_input, 32) }.try_into() {
         Ok(p) => p,
