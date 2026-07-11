@@ -8,6 +8,7 @@
 //! See ONYX_ARCHITECTURE.md and ONYX_O0_PLAN.md.
 
 use std::convert::TryInto;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
 use ff::PrimeField;
@@ -26,6 +27,14 @@ use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 
 const SINSEMILLA_DOMAIN: &str = "z.cash:Onyx-test-v6";
 const TOY_K: u32 = 4; // 2^4 rows is ample for the one-multiplication toy circuit
+const MAX_HASH_INPUT: usize = 4 * 1024;
+const MAX_PROOF_BYTES: usize = 192 * 1024;
+const MAX_VK_BYTES: usize = 1024 * 1024;
+const ERR_PANIC: i32 = -127;
+
+fn ffi_i32(f: impl FnOnce() -> i32) -> i32 {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or(ERR_PANIC)
+}
 
 #[no_mangle]
 pub extern "C" fn onyx_backend_id() -> *const std::os::raw::c_char {
@@ -40,6 +49,10 @@ fn fp_from_le(bytes: &[u8; 32]) -> Option<Fp> {
 /// Orchard Poseidon (P128Pow5T3, arity 2) over the Pallas base field.
 #[no_mangle]
 pub extern "C" fn onyx_poseidon_hash2(input: *const u8, out: *mut u8) -> i32 {
+    ffi_i32(|| poseidon_hash2_impl(input, out))
+}
+
+fn poseidon_hash2_impl(input: *const u8, out: *mut u8) -> i32 {
     if input.is_null() || out.is_null() {
         return -1;
     }
@@ -59,7 +72,11 @@ pub extern "C" fn onyx_poseidon_hash2(input: *const u8, out: *mut u8) -> i32 {
 /// Sinsemilla hash over a fixed test domain; input bytes expanded LSB-first to bits.
 #[no_mangle]
 pub extern "C" fn onyx_sinsemilla_hash(input: *const u8, in_len: usize, out: *mut u8) -> i32 {
-    if out.is_null() || (input.is_null() && in_len != 0) {
+    ffi_i32(|| sinsemilla_hash_impl(input, in_len, out))
+}
+
+fn sinsemilla_hash_impl(input: *const u8, in_len: usize, out: *mut u8) -> i32 {
+    if out.is_null() || (input.is_null() && in_len != 0) || in_len > MAX_HASH_INPUT {
         return -1;
     }
     let bytes = if in_len == 0 {
@@ -104,7 +121,10 @@ impl Circuit<Fp> for ToyCircuit {
     type FloorPlanner = SimpleFloorPlanner;
 
     fn without_witnesses(&self) -> Self {
-        ToyCircuit { a: Value::unknown(), b: Value::unknown() }
+        ToyCircuit {
+            a: Value::unknown(),
+            b: Value::unknown(),
+        }
     }
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> ToyConfig {
@@ -124,7 +144,13 @@ impl Circuit<Fp> for ToyCircuit {
             vec![s * (a * b - c)]
         });
 
-        ToyConfig { a, b, c, s, instance }
+        ToyConfig {
+            a,
+            b,
+            c,
+            s,
+            instance,
+        }
     }
 
     fn synthesize(
@@ -162,7 +188,10 @@ fn toy_prove(a: u64, b: u64) -> Result<ToyProof, String> {
     let public = a_f * b_f;
 
     let params: Params<EqAffine> = Params::new(TOY_K);
-    let circuit = ToyCircuit { a: Value::known(a_f), b: Value::known(b_f) };
+    let circuit = ToyCircuit {
+        a: Value::known(a_f),
+        b: Value::known(b_f),
+    };
     let vk = keygen_vk(&params, &circuit).map_err(|e| format!("keygen_vk: {e:?}"))?;
     let pk = keygen_pk(&params, vk, &circuit).map_err(|e| format!("keygen_pk: {e:?}"))?;
 
@@ -181,7 +210,11 @@ fn toy_prove(a: u64, b: u64) -> Result<ToyProof, String> {
     // The toy verifying key is determined solely by the circuit structure, so the verifier
     // regenerates it via keygen_vk rather than deserializing. (halo2_proofs 0.3.2 has no VK serde;
     // O4's program registry will publish vks once the protocol circuits exist.)
-    Ok(ToyProof { proof, vk: Vec::new(), public: public.to_repr() })
+    Ok(ToyProof {
+        proof,
+        vk: Vec::new(),
+        public: public.to_repr(),
+    })
 }
 
 fn toy_verify(_vk_bytes: &[u8], proof: &[u8], public: &[u8; 32]) -> Result<bool, String> {
@@ -190,8 +223,14 @@ fn toy_verify(_vk_bytes: &[u8], proof: &[u8], public: &[u8; 32]) -> Result<bool,
         None => return Err("public input not a canonical field element".into()),
     };
     let params: Params<EqAffine> = Params::new(TOY_K);
-    let vk = keygen_vk(&params, &ToyCircuit { a: Value::unknown(), b: Value::unknown() })
-        .map_err(|e| format!("keygen_vk: {e:?}"))?;
+    let vk = keygen_vk(
+        &params,
+        &ToyCircuit {
+            a: Value::unknown(),
+            b: Value::unknown(),
+        },
+    )
+    .map_err(|e| format!("keygen_vk: {e:?}"))?;
 
     let strategy = SingleVerifier::new(&params);
     let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(proof);
@@ -216,7 +255,22 @@ pub extern "C" fn onyx_toy_prove(
     vk_len: *mut usize,
     public_out: *mut u8,
 ) -> i32 {
-    if proof_out.is_null() || proof_len.is_null() || vk_out.is_null() || vk_len.is_null()
+    ffi_i32(|| toy_prove_ffi_impl(a, b, proof_out, proof_len, vk_out, vk_len, public_out))
+}
+
+fn toy_prove_ffi_impl(
+    a: u64,
+    b: u64,
+    proof_out: *mut *mut u8,
+    proof_len: *mut usize,
+    vk_out: *mut *mut u8,
+    vk_len: *mut usize,
+    public_out: *mut u8,
+) -> i32 {
+    if proof_out.is_null()
+        || proof_len.is_null()
+        || vk_out.is_null()
+        || vk_len.is_null()
         || public_out.is_null()
     {
         return -1;
@@ -245,9 +299,25 @@ pub extern "C" fn onyx_toy_verify(
     proof_len: usize,
     public_input: *const u8,
 ) -> i32 {
+    ffi_i32(|| toy_verify_ffi_impl(vk, vk_len, proof, proof_len, public_input))
+}
+
+fn toy_verify_ffi_impl(
+    vk: *const u8,
+    vk_len: usize,
+    proof: *const u8,
+    proof_len: usize,
+    public_input: *const u8,
+) -> i32 {
     // The toy verifier regenerates its vk from the circuit structure, so a null/empty vk is allowed
     // here (a real program vk in O4 will not be optional). proof and public_input are required.
-    if proof.is_null() || public_input.is_null() {
+    if proof.is_null()
+        || public_input.is_null()
+        || proof_len == 0
+        || proof_len > MAX_PROOF_BYTES
+        || vk_len > MAX_VK_BYTES
+        || (vk.is_null() && vk_len != 0)
+    {
         return -1;
     }
     let vk = if vk.is_null() || vk_len == 0 {
@@ -307,9 +377,45 @@ mod tests {
     fn sinsemilla_runs() {
         let input = b"onyx";
         let mut out = [0u8; 32];
-        assert_eq!(onyx_sinsemilla_hash(input.as_ptr(), input.len(), out.as_mut_ptr()), 0);
+        assert_eq!(
+            onyx_sinsemilla_hash(input.as_ptr(), input.len(), out.as_mut_ptr()),
+            0
+        );
         assert_ne!(out, [0u8; 32]);
         println!("sinsemilla(\"onyx\") = {}", hex(&out));
+    }
+
+    #[test]
+    fn ffi_rejects_oversized_inputs() {
+        let input = [0u8; 1];
+        let mut out = [0u8; 32];
+        assert_eq!(
+            onyx_sinsemilla_hash(input.as_ptr(), MAX_HASH_INPUT + 1, out.as_mut_ptr()),
+            -1
+        );
+
+        let proof = [0u8; 1];
+        let public = [0u8; 32];
+        assert_eq!(
+            onyx_toy_verify(
+                std::ptr::null(),
+                0,
+                proof.as_ptr(),
+                MAX_PROOF_BYTES + 1,
+                public.as_ptr(),
+            ),
+            -1
+        );
+        assert_eq!(
+            onyx_toy_verify(
+                std::ptr::null(),
+                1,
+                proof.as_ptr(),
+                proof.len(),
+                public.as_ptr(),
+            ),
+            -1
+        );
     }
 
     #[test]
@@ -319,7 +425,15 @@ mod tests {
         let mut vk: *mut u8 = std::ptr::null_mut();
         let mut vk_len = 0usize;
         let mut public = [0u8; 32];
-        let rc = onyx_toy_prove(6, 7, &mut proof, &mut proof_len, &mut vk, &mut vk_len, public.as_mut_ptr());
+        let rc = onyx_toy_prove(
+            6,
+            7,
+            &mut proof,
+            &mut proof_len,
+            &mut vk,
+            &mut vk_len,
+            public.as_mut_ptr(),
+        );
         assert_eq!(rc, 0);
         let ok = onyx_toy_verify(vk, vk_len, proof, proof_len, public.as_ptr());
         assert_eq!(ok, 1, "valid proof must verify");

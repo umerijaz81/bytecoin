@@ -1,10 +1,11 @@
 # onyx-zk — Onyx (V6) zero-knowledge backend (Rust)
 
 > Reproducibility status: dependency versions are exact-pinned in `Cargo.toml` and
-> `Cargo.lock`, and CMake builds with `cargo --locked`. The dependency source tree is
-> **not yet committed**, so this is not an offline build. Before testnet or release use,
-> run `cargo vendor`, commit the resulting sources and Cargo source configuration, and add
-> `--offline` to the CMake Cargo command.
+> `Cargo.lock`; dependency sources are committed under `vendor/`; and the workspace Cargo
+> configuration plus CMake enforce locked offline builds.
+
+The workspace pins Rust 1.88.0 in `../../rust-toolchain.toml`. This minimum is required by the
+locked dependency graph (which includes Rust 2024-edition crates).
 
 Halo2/PLONKish (Pasta) proving stack exposed to the C++ node through a small C ABI
 (`include/onyx_zk.h`). Backs `cn::zk::Halo2ProofSystem` (`src/Core/zk`). This is **wrappers only** —

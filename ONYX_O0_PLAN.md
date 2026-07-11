@@ -7,9 +7,9 @@
 > those are O1). It de-risks the single biggest unknown: making a real Halo2/PLONKish prover/verifier
 > callable, reproducible, and testable from inside a C++/CMake project.
 
-**Current implementation note:** the wrapper crate and lockfile are present, but the Cargo
-dependency sources are not committed yet. Builds are locked, not offline-reproducible. The
-vendoring and CI acceptance criteria below therefore remain open.
+**Current implementation note:** the wrapper crate, exact lockfile, pinned Rust toolchain, Cargo
+vendor tree, and locked offline build configuration are present. CI and full cross-platform
+acceptance criteria below remain open.
 
 ## Context: why O0 is mostly a build/FFI problem
 

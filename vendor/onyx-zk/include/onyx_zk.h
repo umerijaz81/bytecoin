@@ -25,7 +25,7 @@ const char *onyx_backend_id(void);
  * out: 32-byte digest. Returns 0 on success, <0 if an input is not a canonical field element. */
 int onyx_poseidon_hash2(const uint8_t in[64], uint8_t out[32]);
 
-/* Sinsemilla hash over a fixed test domain. Input bytes are expanded LSB-first to a bit string.
+/* Sinsemilla hash over a fixed test domain. Input is limited to 4096 bytes and expanded LSB-first.
  * out: 32-byte digest (Pallas base field element). Returns 0 on success, <0 on the (negligible)
  * exceptional case or bad input. */
 int onyx_sinsemilla_hash(const uint8_t *in, size_t in_len, uint8_t out[32]);
@@ -38,7 +38,8 @@ int onyx_toy_prove(uint64_t a, uint64_t b,
                    uint8_t **vk_out, size_t *vk_len,
                    uint8_t public_out[32]);
 
-/* Verify a toy-circuit proof against (vk, public_input). 1 = valid, 0 = invalid, <0 = malformed. */
+/* Verify a toy-circuit proof against (vk, public_input). Proofs are limited to 192 KiB and
+ * verifying keys to 1 MiB. 1 = valid, 0 = invalid, <0 = malformed. */
 int onyx_toy_verify(const uint8_t *vk, size_t vk_len,
                     const uint8_t *proof, size_t proof_len,
                     const uint8_t public_input[32]);
