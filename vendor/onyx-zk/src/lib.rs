@@ -26,6 +26,7 @@ use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 
 pub mod keys;
+pub mod membership_circuit;
 pub mod state;
 pub mod transaction;
 pub mod transfer_circuit;
