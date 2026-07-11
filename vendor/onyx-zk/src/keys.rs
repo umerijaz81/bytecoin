@@ -2,9 +2,10 @@
 
 use chacha20poly1305::aead::{Aead, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
-use ff::FromUniformBytes;
+use ff::{FromUniformBytes, PrimeField};
 use halo2_proofs::pasta::Fp;
 use hkdf::Hkdf;
+use pasta_curves::pallas;
 use rand::RngCore;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -42,7 +43,9 @@ impl MasterSeed {
     }
 
     pub fn derive(&self, network_id: [u8; NETWORK_ID_BYTES]) -> Result<KeyBundle, KeyError> {
-        let spend = derive_32(self.0.as_ref(), &network_id, b"spend")?;
+        let mut spend_wide = Zeroizing::new([0u8; 64]);
+        expand(self.0.as_ref(), &network_id, b"spend", spend_wide.as_mut())?;
+        let spend = pallas::Scalar::from_uniform_bytes(&spend_wide).to_repr();
         let incoming = derive_32(self.0.as_ref(), &network_id, b"incoming-view")?;
         let outgoing = derive_32(self.0.as_ref(), &network_id, b"outgoing-view")?;
         let diversifier = derive_32(self.0.as_ref(), &network_id, b"diversifier")?;
@@ -112,6 +115,10 @@ impl KeyBundle {
 
     pub fn spend_key_fingerprint(&self) -> Result<[u8; 32], KeyError> {
         derive_32(self.spend.as_ref(), &self.network_id, b"spend-fingerprint")
+    }
+
+    pub(crate) fn spend_key_bytes(&self) -> [u8; 32] {
+        *self.spend
     }
 
     pub fn encrypt_note(

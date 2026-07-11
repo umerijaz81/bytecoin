@@ -25,6 +25,7 @@ hkdf = "=0.12.4"
 sha2 = "=0.10.9"
 x25519-dalek = { version = "=2.0.1", features = ["static_secrets"] }
 zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
+reddsa = "=0.5.2"
 
 [profile.release]
 opt-level = 3

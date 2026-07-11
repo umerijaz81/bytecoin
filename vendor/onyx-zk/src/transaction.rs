@@ -13,7 +13,7 @@ pub const MAX_OUT_CIPHERTEXT_BYTES: usize = 512;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicSpend {
     pub nullifier: Nullifier,
-    pub randomized_key: CanonicalField,
+    pub randomized_key: [u8; 32],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,7 +92,7 @@ impl TransactionPreimage {
         write_varint(self.spends.len() as u64, &mut out);
         for spend in &self.spends {
             out.extend_from_slice(&spend.nullifier.0);
-            out.extend_from_slice(&spend.randomized_key.bytes());
+            out.extend_from_slice(&spend.randomized_key);
         }
         write_varint(self.outputs.len() as u64, &mut out);
         for output in &self.outputs {
@@ -129,7 +129,7 @@ impl TransactionPreimage {
         for _ in 0..spend_count {
             spends.push(PublicSpend {
                 nullifier: Nullifier(reader.array()?),
-                randomized_key: reader.field()?,
+                randomized_key: reader.array()?,
             });
         }
 
@@ -231,7 +231,7 @@ mod tests {
             fee: 7,
             spends: vec![PublicSpend {
                 nullifier: Nullifier([3; 32]),
-                randomized_key: field(4),
+                randomized_key: [4; 32],
             }],
             outputs: vec![PublicOutput {
                 commitment: field(5),
@@ -275,7 +275,7 @@ mod tests {
         tx.spends = (0..=MAX_SPENDS)
             .map(|value| PublicSpend {
                 nullifier: Nullifier([value as u8; 32]),
-                randomized_key: field(value as u64),
+                randomized_key: [value as u8; 32],
             })
             .collect();
         assert_eq!(tx.encode(), Err(TransactionError::TooManySpends));

@@ -19,6 +19,7 @@ Resolved and tested with the workspace-pinned Rust 1.88.0 toolchain.
 | sha2 | 0.10.9 | a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283 |
 | x25519-dalek | 2.0.1 | c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277 |
 | zeroize | 1.8.1 | ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde |
+| reddsa | 0.5.2 | 4784b85c8bfd17b36b86e664e6e504ecdb586001086ee23749e4a633bbb84832 |
 
 Note: `halo2_proofs`/`halo2_gadgets` 0.3.x of `halo2_gadgets` are yanked on crates.io; `halo2_gadgets`
 0.5.0 is the current published line and resolves against `halo2_proofs` 0.3.2 (the single-backend IPA

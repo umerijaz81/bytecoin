@@ -1,0 +1,181 @@
+//! Transaction transcript binding and Orchard RedPallas spend authorization.
+
+use ff::FromUniformBytes;
+use pasta_curves::pallas;
+use rand::RngCore;
+use reddsa::orchard::SpendAuth;
+use reddsa::{Signature, SigningKey, VerificationKey};
+use sha2::{Digest, Sha256};
+
+use crate::keys::KeyBundle;
+use crate::transaction::{TransactionError, TransactionPreimage};
+
+const AUTHORIZATION_DOMAIN: &[u8] = b"bytecoin.onyx.v6.spend-authorization";
+const MAX_BACKEND_ID_BYTES: usize = 64;
+const MAX_PROOF_BYTES: usize = 192 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AuthorizationError {
+    InvalidBackendId,
+    ProofTooLarge,
+    InvalidSpendKey,
+    InvalidVerificationKey,
+    InvalidSignature,
+    WrongSignatureCount,
+    Transaction(TransactionError),
+}
+
+impl From<TransactionError> for AuthorizationError {
+    fn from(value: TransactionError) -> Self {
+        Self::Transaction(value)
+    }
+}
+
+pub fn authorization_digest(
+    transaction: &TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+) -> Result<[u8; 32], AuthorizationError> {
+    if backend_id.is_empty() || backend_id.len() > MAX_BACKEND_ID_BYTES || !backend_id.is_ascii() {
+        return Err(AuthorizationError::InvalidBackendId);
+    }
+    if proof.len() > MAX_PROOF_BYTES {
+        return Err(AuthorizationError::ProofTooLarge);
+    }
+    let transaction = transaction.encode()?;
+    let mut hash = Sha256::new();
+    hash.update(AUTHORIZATION_DOMAIN);
+    hash.update((transaction.len() as u64).to_le_bytes());
+    hash.update(transaction);
+    hash.update((backend_id.len() as u64).to_le_bytes());
+    hash.update(backend_id.as_bytes());
+    hash.update((proof.len() as u64).to_le_bytes());
+    hash.update(proof);
+    Ok(hash.finalize().into())
+}
+
+/// Randomizes every spend key, writes the corresponding public keys into the transaction preimage,
+/// then signs the final transaction/proof digest. This ordering avoids circular transcript binding.
+pub fn authorize_same_owner_spends(
+    keys: &KeyBundle,
+    transaction: &mut TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+) -> Result<Vec<[u8; 64]>, AuthorizationError> {
+    let signing_key = SigningKey::<SpendAuth>::try_from(keys.spend_key_bytes())
+        .map_err(|_| AuthorizationError::InvalidSpendKey)?;
+    let mut rng = rand::rngs::OsRng;
+    let mut randomized_keys = Vec::with_capacity(transaction.spends.len());
+    for spend in &mut transaction.spends {
+        let mut wide = [0u8; 64];
+        rng.fill_bytes(&mut wide);
+        let randomizer = pallas::Scalar::from_uniform_bytes(&wide);
+        let randomized = signing_key.randomize(&randomizer);
+        spend.randomized_key = VerificationKey::from(&randomized).into();
+        randomized_keys.push(randomized);
+    }
+    let digest = authorization_digest(transaction, backend_id, proof)?;
+    Ok(randomized_keys
+        .iter()
+        .map(|key| key.sign(&mut rng, &digest).into())
+        .collect())
+}
+
+pub fn verify_spend_authorizations(
+    transaction: &TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+    signatures: &[[u8; 64]],
+) -> Result<(), AuthorizationError> {
+    if signatures.len() != transaction.spends.len() {
+        return Err(AuthorizationError::WrongSignatureCount);
+    }
+    let digest = authorization_digest(transaction, backend_id, proof)?;
+    for (spend, signature) in transaction.spends.iter().zip(signatures) {
+        let key = VerificationKey::<SpendAuth>::try_from(spend.randomized_key)
+            .map_err(|_| AuthorizationError::InvalidVerificationKey)?;
+        let signature = Signature::<SpendAuth>::from(*signature);
+        key.verify(&digest, &signature)
+            .map_err(|_| AuthorizationError::InvalidSignature)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use ff::PrimeField;
+    use halo2_proofs::pasta::Fp;
+
+    use crate::keys::MasterSeed;
+    use crate::state::{CanonicalField, Nullifier};
+    use crate::transaction::{PublicOutput, PublicSpend};
+    use crate::types::NETWORK_ID_BYTES;
+
+    use super::*;
+
+    fn field(value: u64) -> CanonicalField {
+        CanonicalField::from_bytes(Fp::from(value).to_repr()).unwrap()
+    }
+
+    fn transaction() -> TransactionPreimage {
+        TransactionPreimage {
+            network_id: [1; NETWORK_ID_BYTES],
+            anchor: field(2),
+            expiry_height: 100,
+            fee: 7,
+            spends: vec![PublicSpend {
+                nullifier: Nullifier([3; 32]),
+                randomized_key: [0; 32],
+            }],
+            outputs: vec![PublicOutput {
+                commitment: field(5),
+                ephemeral_key: [6; 32],
+                ciphertext: vec![7; 48],
+                outgoing_ciphertext: vec![8; 32],
+            }],
+            programs: vec![],
+        }
+    }
+
+    #[test]
+    fn authorization_binds_transaction_and_proof() {
+        let keys = MasterSeed::new([9; 32])
+            .derive([1; NETWORK_ID_BYTES])
+            .unwrap();
+        let mut tx = transaction();
+        let proof = b"proof bytes";
+        let signatures =
+            authorize_same_owner_spends(&keys, &mut tx, "halo2-ipa-pasta-v1", proof).unwrap();
+        assert!(verify_spend_authorizations(&tx, "halo2-ipa-pasta-v1", proof, &signatures).is_ok());
+
+        let mut changed = tx.clone();
+        changed.fee += 1;
+        assert_eq!(
+            verify_spend_authorizations(&changed, "halo2-ipa-pasta-v1", proof, &signatures),
+            Err(AuthorizationError::InvalidSignature)
+        );
+        assert_eq!(
+            verify_spend_authorizations(&tx, "halo2-ipa-pasta-v1", b"other proof", &signatures),
+            Err(AuthorizationError::InvalidSignature)
+        );
+        changed = tx.clone();
+        changed.outputs[0].ciphertext[0] ^= 1;
+        assert_eq!(
+            verify_spend_authorizations(&changed, "halo2-ipa-pasta-v1", proof, &signatures),
+            Err(AuthorizationError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn authorization_rejects_bad_shapes_before_crypto() {
+        let tx = transaction();
+        assert_eq!(
+            authorization_digest(&tx, "", b"proof"),
+            Err(AuthorizationError::InvalidBackendId)
+        );
+        assert_eq!(
+            verify_spend_authorizations(&tx, "halo2", b"proof", &[]),
+            Err(AuthorizationError::WrongSignatureCount)
+        );
+    }
+}
