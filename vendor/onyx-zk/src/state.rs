@@ -45,6 +45,7 @@ pub enum StateError {
     DuplicateNullifier,
     UnknownAnchor,
     InvalidTransaction,
+    HeightRegression,
 }
 
 // Numeric tags are the frozen field encodings of the protocol's leaf/node domain separation.
@@ -182,25 +183,37 @@ pub struct NullifierDelta {
 pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     tree: IncrementalMerkleTree<DEPTH>,
     nullifiers: NullifierSet,
-    anchors: Vec<CanonicalField>,
-    max_anchors: usize,
+    anchors: Vec<Anchor>,
+    anchor_window_blocks: u64,
+    current_height: u64,
+}
+
+#[derive(Clone, Copy)]
+struct Anchor {
+    root: CanonicalField,
+    height: u64,
 }
 
 pub struct ShieldedStateDelta<const DEPTH: usize> {
     previous_tree: IncrementalMerkleTree<DEPTH>,
     nullifiers: NullifierDelta,
-    previous_anchors: Vec<CanonicalField>,
+    previous_anchors: Vec<Anchor>,
+    previous_height: u64,
 }
 
 impl<const DEPTH: usize> ShieldedState<DEPTH> {
-    pub fn new(max_anchors: usize) -> Self {
-        assert!(max_anchors > 0, "at least one anchor must be retained");
+    pub fn new(anchor_window_blocks: u64) -> Self {
+        assert!(anchor_window_blocks > 0, "anchor window must be nonzero");
         let tree = IncrementalMerkleTree::default();
         Self {
-            anchors: vec![tree.root()],
+            anchors: vec![Anchor {
+                root: tree.root(),
+                height: 0,
+            }],
             tree,
             nullifiers: NullifierSet::default(),
-            max_anchors,
+            anchor_window_blocks,
+            current_height: 0,
         }
     }
 
@@ -213,7 +226,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
     }
 
     pub fn knows_anchor(&self, anchor: CanonicalField) -> bool {
-        self.anchors.contains(&anchor)
+        self.anchors.iter().any(|entry| entry.root == anchor)
     }
 
     pub fn is_spent(&self, nullifier: &Nullifier) -> bool {
@@ -223,6 +236,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
     pub fn apply_transaction(
         &mut self,
         transaction: &TransactionPreimage,
+        block_height: u64,
     ) -> Result<ShieldedStateDelta<DEPTH>, StateError> {
         // Encoding performs all structural and resource-limit validation before state work.
         transaction
@@ -231,9 +245,13 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         if !self.knows_anchor(transaction.anchor) {
             return Err(StateError::UnknownAnchor);
         }
+        if block_height < self.current_height {
+            return Err(StateError::HeightRegression);
+        }
 
         let previous_tree = self.tree.clone();
         let previous_anchors = self.anchors.clone();
+        let previous_height = self.current_height;
         let nullifier_values: Vec<_> = transaction
             .spends
             .iter()
@@ -250,16 +268,20 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         }
 
         let root = self.tree.root();
-        if self.anchors.last() != Some(&root) {
-            self.anchors.push(root);
-            if self.anchors.len() > self.max_anchors {
-                self.anchors.remove(0);
-            }
+        self.current_height = block_height;
+        if self.anchors.last().map(|entry| entry.root) != Some(root) {
+            self.anchors.push(Anchor {
+                root,
+                height: block_height,
+            });
         }
+        let oldest_height = block_height.saturating_sub(self.anchor_window_blocks - 1);
+        self.anchors.retain(|entry| entry.height >= oldest_height);
         Ok(ShieldedStateDelta {
             previous_tree,
             nullifiers,
             previous_anchors,
+            previous_height,
         })
     }
 
@@ -267,6 +289,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.tree = delta.previous_tree;
         self.nullifiers.rollback(delta.nullifiers);
         self.anchors = delta.previous_anchors;
+        self.current_height = delta.previous_height;
     }
 }
 
@@ -369,7 +392,7 @@ mod tests {
         let mut state = ShieldedState::<4>::new(3);
         let initial = state.root();
         let tx = transaction(initial, 1, 30);
-        let delta = state.apply_transaction(&tx).unwrap();
+        let delta = state.apply_transaction(&tx, 1).unwrap();
         assert_ne!(state.root(), initial);
         assert_eq!(state.leaf_count(), 1);
         assert!(state.is_spent(&Nullifier([1; 32])));
@@ -384,18 +407,42 @@ mod tests {
         let mut state = ShieldedState::<4>::new(2);
         let unknown = field(999);
         assert!(matches!(
-            state.apply_transaction(&transaction(unknown, 1, 30)),
+            state.apply_transaction(&transaction(unknown, 1, 30), 1),
             Err(StateError::UnknownAnchor)
         ));
 
         let first = transaction(state.root(), 1, 30);
-        state.apply_transaction(&first).unwrap();
+        state.apply_transaction(&first, 1).unwrap();
         let root_before = state.root();
         assert!(matches!(
-            state.apply_transaction(&transaction(root_before, 1, 31)),
+            state.apply_transaction(&transaction(root_before, 1, 31), 1),
             Err(StateError::DuplicateNullifier)
         ));
         assert_eq!(state.root(), root_before);
         assert_eq!(state.leaf_count(), 1);
+    }
+
+    #[test]
+    fn anchor_window_is_measured_in_blocks_not_transactions() {
+        let mut state = ShieldedState::<8>::new(2);
+        let genesis = state.root();
+        let first = transaction(genesis, 1, 30);
+        state.apply_transaction(&first, 1).unwrap();
+        let first_root = state.root();
+        let second = transaction(first_root, 2, 31);
+        state.apply_transaction(&second, 1).unwrap();
+        assert!(state.knows_anchor(first_root));
+
+        let third = transaction(state.root(), 3, 32);
+        state.apply_transaction(&third, 2).unwrap();
+        assert!(state.knows_anchor(first_root));
+
+        let fourth = transaction(state.root(), 4, 33);
+        state.apply_transaction(&fourth, 3).unwrap();
+        assert!(!state.knows_anchor(first_root));
+        assert!(matches!(
+            state.apply_transaction(&transaction(state.root(), 5, 34), 2),
+            Err(StateError::HeightRegression)
+        ));
     }
 }
