@@ -1,6 +1,12 @@
 # onyx-zk — Onyx (V6) zero-knowledge backend (Rust)
 
-Vendored Halo2/PLONKish (Pasta) proving stack exposed to the C++ node through a small C ABI
+> Reproducibility status: dependency versions are exact-pinned in `Cargo.toml` and
+> `Cargo.lock`, and CMake builds with `cargo --locked`. The dependency source tree is
+> **not yet committed**, so this is not an offline build. Before testnet or release use,
+> run `cargo vendor`, commit the resulting sources and Cargo source configuration, and add
+> `--offline` to the CMake Cargo command.
+
+Halo2/PLONKish (Pasta) proving stack exposed to the C++ node through a small C ABI
 (`include/onyx_zk.h`). Backs `cn::zk::Halo2ProofSystem` (`src/Core/zk`). This is **wrappers only** —
 no bespoke cryptography. See `../../ONYX_ARCHITECTURE.md` and `../../ONYX_O0_PLAN.md`.
 

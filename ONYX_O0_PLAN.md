@@ -7,6 +7,10 @@
 > those are O1). It de-risks the single biggest unknown: making a real Halo2/PLONKish prover/verifier
 > callable, reproducible, and testable from inside a C++/CMake project.
 
+**Current implementation note:** the wrapper crate and lockfile are present, but the Cargo
+dependency sources are not committed yet. Builds are locked, not offline-reproducible. The
+vendoring and CI acceptance criteria below therefore remain open.
+
 ## Context: why O0 is mostly a build/FFI problem
 
 Production-grade Halo2 (`halo2_proofs`, `halo2_gadgets` with Poseidon/Sinsemilla, the Pasta curves

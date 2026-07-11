@@ -121,11 +121,15 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 	//	We cannot do it at once, because mem pool will have v1 transactions during switch
 	// for compatibility, we create v1 coinbase transaction if mining on legacy address
 	const bool is_tx_amethyst = tx.version == currency.amethyst_transaction_version;
+	const bool is_tx_jade     = tx.version == currency.jade_transaction_version;
 
 	if (block_major_version < currency.amethyst_block_version && tx.version != 1)
 		throw ConsensusError(common::to_string(
 		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
 	if (block_major_version == currency.amethyst_block_version && tx.version != 1 && !is_tx_amethyst)
+		throw ConsensusError(common::to_string(
+		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
+	if (block_major_version >= currency.jade_block_version && !is_tx_jade && !(coinbase && tx.version == 1))
 		throw ConsensusError(common::to_string(
 		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
 	if (block_major_version >= currency.amethyst_block_version && !extra::is_valid(tx.extra))
@@ -745,13 +749,17 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 			}
 		}
 	}
-	const Amount my_fee3 = validate_tx_semantic(
-	    m_currency, get_tip().major_version, false, tx, m_config.paranoid_checks || check_sigs, true);
-	// TODO - get_tip().major_version, instead of next block major version
+	// The pool contains transactions for the block that miners can build next. This matters at a
+	// hard-fork boundary: validating against the current tip would apply the old rules one block
+	// too long and reject transactions using the newly-active format.
+	const uint8_t next_block_major_version =
+	    m_currency.get_block_major_version_for_height(get_tip_height() + 1);
+	const Amount my_fee3 = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
+	    m_config.paranoid_checks || check_sigs, true);
 	DeltaState memory_state(get_tip_height() + 1, get_tip().timestamp, get_tip().timestamp_median, this);
 	BlockStackIndexes stack_indexes;
 	Hash newest_referenced_bid;
-	redo_transaction(get_tip().major_version, false, tx, &memory_state, &stack_indexes, &newest_referenced_bid,
+	redo_transaction(next_block_major_version, false, tx, &memory_state, &stack_indexes, &newest_referenced_bid,
 	    m_config.paranoid_checks || check_sigs);
 	if (my_fee != my_fee3)
 		m_log(logging::ERROR) << "Inconsistent fees " << my_fee << ", " << my_fee3 << " in transaction " << tid;

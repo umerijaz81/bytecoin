@@ -170,10 +170,14 @@ if(ONYX_ZK)
         message(FATAL_ERROR "ONYX_ZK=ON but 'cargo' was not found. Install a Rust toolchain or build with -DONYX_ZK=OFF.")
     endif()
     set(ONYX_ZK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/onyx-zk)
-    set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/libonyx_zk.a)
+    if(WIN32)
+        set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/onyx_zk.lib)
+    else()
+        set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/libonyx_zk.a)
+    endif()
     add_custom_command(
         OUTPUT ${ONYX_ZK_LIB}
-        COMMAND ${CARGO_EXECUTABLE} build --release --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
+        COMMAND ${CARGO_EXECUTABLE} build --release --locked --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
         WORKING_DIRECTORY ${ONYX_ZK_DIR}
         DEPENDS ${ONYX_ZK_DIR}/src/lib.rs ${ONYX_ZK_DIR}/Cargo.toml ${ONYX_ZK_DIR}/include/onyx_zk.h
         COMMENT "Building Onyx ZK backend (cargo build --release)"

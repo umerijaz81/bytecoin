@@ -79,5 +79,24 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		std::cout << "  [amethyst] ring size 1 still semantically valid (unchanged)" << std::endl;
 	}
 
+	// 4. Jade blocks must not admit legacy non-coinbase transaction formats. Otherwise old
+	// validation paths could bypass future Jade-only consensus rules.
+	{
+		const size_t good = currency.minimum_anonymity(jade) + 1;
+		const Transaction tx = build_tx(currency.amethyst_transaction_version, good);
+		const bool rejected = semantic_rejects(currency, jade, tx, &what);
+		invariant(rejected, "Jade consensus accepted an Amethyst transaction");
+		std::cout << "  [jade] legacy non-coinbase transaction rejected: " << what << std::endl;
+	}
+
+	// 5. Future/unknown transaction versions fail closed under Jade.
+	{
+		const size_t good = currency.minimum_anonymity(jade) + 1;
+		const Transaction tx = build_tx(static_cast<uint8_t>(currency.jade_transaction_version + 1), good);
+		const bool rejected = semantic_rejects(currency, jade, tx, &what);
+		invariant(rejected, "Jade consensus accepted an unknown transaction version");
+		std::cout << "  [jade] unknown transaction version rejected: " << what << std::endl;
+	}
+
 	std::cout << "  test_jade_consensus: OK" << std::endl;
 }
