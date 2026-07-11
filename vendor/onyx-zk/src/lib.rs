@@ -28,6 +28,7 @@ use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 pub mod keys;
 pub mod state;
 pub mod transaction;
+pub mod transfer_circuit;
 pub mod types;
 
 const SINSEMILLA_DOMAIN: &str = "z.cash:Onyx-test-v6";
