@@ -8,11 +8,12 @@ use reddsa::{Signature, SigningKey, VerificationKey};
 use sha2::{Digest, Sha256};
 
 use crate::keys::KeyBundle;
-use crate::transaction::{TransactionError, TransactionPreimage};
+use crate::transaction::{
+    AuthorizedTransaction, TransactionError, TransactionPreimage, MAX_BACKEND_ID_BYTES,
+    MAX_PROOF_BYTES,
+};
 
 const AUTHORIZATION_DOMAIN: &[u8] = b"bytecoin.onyx.v6.spend-authorization";
-const MAX_BACKEND_ID_BYTES: usize = 64;
-const MAX_PROOF_BYTES: usize = 192 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AuthorizationError {
@@ -101,6 +102,35 @@ pub fn verify_spend_authorizations(
     Ok(())
 }
 
+pub fn authorize_transaction(
+    keys: &KeyBundle,
+    mut preimage: TransactionPreimage,
+    backend_id: String,
+    proof: Vec<u8>,
+) -> Result<AuthorizedTransaction, AuthorizationError> {
+    let spend_signatures = authorize_same_owner_spends(keys, &mut preimage, &backend_id, &proof)?;
+    let transaction = AuthorizedTransaction {
+        preimage,
+        backend_id,
+        proof,
+        spend_signatures,
+    };
+    transaction.encode()?;
+    Ok(transaction)
+}
+
+pub fn verify_authorized_transaction(
+    transaction: &AuthorizedTransaction,
+) -> Result<(), AuthorizationError> {
+    transaction.encode()?;
+    verify_spend_authorizations(
+        &transaction.preimage,
+        &transaction.backend_id,
+        &transaction.proof,
+        &transaction.spend_signatures,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use ff::PrimeField;
@@ -176,6 +206,25 @@ mod tests {
         assert_eq!(
             verify_spend_authorizations(&tx, "halo2", b"proof", &[]),
             Err(AuthorizationError::WrongSignatureCount)
+        );
+    }
+
+    #[test]
+    fn authorized_envelope_builds_and_verifies_as_one_object() {
+        let keys = MasterSeed::new([9; 32])
+            .derive([1; NETWORK_ID_BYTES])
+            .unwrap();
+        let transaction = authorize_transaction(
+            &keys,
+            transaction(),
+            "halo2-ipa-pasta-v1".to_owned(),
+            b"proof".to_vec(),
+        )
+        .unwrap();
+        assert!(verify_authorized_transaction(&transaction).is_ok());
+        assert_eq!(
+            AuthorizedTransaction::decode(&transaction.encode().unwrap()).unwrap(),
+            transaction
         );
     }
 }

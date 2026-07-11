@@ -2,6 +2,7 @@
 
 use crate::state::{CanonicalField, Nullifier};
 use crate::types::{write_varint, DecodeError, Reader, NETWORK_ID_BYTES};
+use sha2::{Digest, Sha256};
 
 pub const ONYX_TRANSACTION_VERSION: u8 = 6;
 pub const MAX_SPENDS: usize = 16;
@@ -9,6 +10,9 @@ pub const MAX_OUTPUTS: usize = 16;
 pub const MAX_PROGRAMS: usize = 8;
 pub const MAX_CIPHERTEXT_BYTES: usize = 4096;
 pub const MAX_OUT_CIPHERTEXT_BYTES: usize = 512;
+pub const MAX_BACKEND_ID_BYTES: usize = 64;
+pub const MAX_PROOF_BYTES: usize = 192 * 1024;
+const TRANSACTION_ID_DOMAIN: &[u8] = b"bytecoin.onyx.v6.transaction-id";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicSpend {
@@ -43,6 +47,14 @@ pub struct TransactionPreimage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorizedTransaction {
+    pub preimage: TransactionPreimage,
+    pub backend_id: String,
+    pub proof: Vec<u8>,
+    pub spend_signatures: Vec<[u8; 64]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransactionError {
     Decode(DecodeError),
     TooManySpends,
@@ -50,6 +62,10 @@ pub enum TransactionError {
     TooManyPrograms,
     CiphertextTooLarge,
     EmptyTransaction,
+    InvalidBackendId,
+    ProofTooLarge,
+    WrongSignatureCount,
+    NonCanonicalNullifier,
 }
 
 impl From<DecodeError> for TransactionError {
@@ -65,6 +81,13 @@ impl TransactionPreimage {
         }
         if self.spends.len() > MAX_SPENDS {
             return Err(TransactionError::TooManySpends);
+        }
+        if self
+            .spends
+            .iter()
+            .any(|spend| CanonicalField::from_bytes(spend.nullifier.0).is_none())
+        {
+            return Err(TransactionError::NonCanonicalNullifier);
         }
         if self.outputs.len() > MAX_OUTPUTS {
             return Err(TransactionError::TooManyOutputs);
@@ -187,6 +210,96 @@ impl TransactionPreimage {
     }
 }
 
+impl AuthorizedTransaction {
+    fn validate(&self) -> Result<(), TransactionError> {
+        self.preimage.validate()?;
+        if self.backend_id.is_empty()
+            || self.backend_id.len() > MAX_BACKEND_ID_BYTES
+            || !self.backend_id.is_ascii()
+        {
+            return Err(TransactionError::InvalidBackendId);
+        }
+        if self.proof.len() > MAX_PROOF_BYTES {
+            return Err(TransactionError::ProofTooLarge);
+        }
+        if self.spend_signatures.len() != self.preimage.spends.len() {
+            return Err(TransactionError::WrongSignatureCount);
+        }
+        Ok(())
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, TransactionError> {
+        self.validate()?;
+        let preimage = self.preimage.encode()?;
+        let mut out = Vec::with_capacity(
+            preimage.len()
+                + self.backend_id.len()
+                + self.proof.len()
+                + self.spend_signatures.len() * 64
+                + 32,
+        );
+        write_bytes(&preimage, &mut out);
+        write_bytes(self.backend_id.as_bytes(), &mut out);
+        write_bytes(&self.proof, &mut out);
+        write_varint(self.spend_signatures.len() as u64, &mut out);
+        for signature in &self.spend_signatures {
+            out.extend_from_slice(signature);
+        }
+        Ok(out)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<Self, TransactionError> {
+        let mut reader = Reader::new(input);
+        let preimage_bytes = read_bounded_bytes(
+            &mut reader,
+            256 * 1024,
+            TransactionError::CiphertextTooLarge,
+        )?;
+        let preimage = TransactionPreimage::decode(&preimage_bytes)?;
+        let backend_bytes = read_bounded_bytes(
+            &mut reader,
+            MAX_BACKEND_ID_BYTES,
+            TransactionError::InvalidBackendId,
+        )?;
+        let backend_id =
+            String::from_utf8(backend_bytes).map_err(|_| TransactionError::InvalidBackendId)?;
+        let proof = read_bounded_bytes(
+            &mut reader,
+            MAX_PROOF_BYTES,
+            TransactionError::ProofTooLarge,
+        )?;
+        let signature_count = bounded_count(
+            reader.varint()?,
+            MAX_SPENDS,
+            TransactionError::WrongSignatureCount,
+        )?;
+        let mut spend_signatures = Vec::with_capacity(signature_count);
+        for _ in 0..signature_count {
+            spend_signatures.push(reader.array()?);
+        }
+        if !reader.is_empty() {
+            return Err(DecodeError::TrailingData.into());
+        }
+        let transaction = Self {
+            preimage,
+            backend_id,
+            proof,
+            spend_signatures,
+        };
+        transaction.validate()?;
+        Ok(transaction)
+    }
+
+    pub fn id(&self) -> Result<[u8; 32], TransactionError> {
+        let encoding = self.encode()?;
+        let mut hash = Sha256::new();
+        hash.update(TRANSACTION_ID_DOMAIN);
+        hash.update((encoding.len() as u64).to_le_bytes());
+        hash.update(encoding);
+        Ok(hash.finalize().into())
+    }
+}
+
 fn bounded_count(
     value: u64,
     limit: usize,
@@ -205,9 +318,17 @@ fn write_bytes(bytes: &[u8], out: &mut Vec<u8>) {
 }
 
 fn read_bytes(reader: &mut Reader<'_>, limit: usize) -> Result<Vec<u8>, TransactionError> {
+    read_bounded_bytes(reader, limit, TransactionError::CiphertextTooLarge)
+}
+
+fn read_bounded_bytes(
+    reader: &mut Reader<'_>,
+    limit: usize,
+    error: TransactionError,
+) -> Result<Vec<u8>, TransactionError> {
     let count = reader.varint()?;
     if count > limit as u64 {
-        return Err(TransactionError::CiphertextTooLarge);
+        return Err(error);
     }
     Ok(reader.take(count as usize)?.to_vec())
 }
@@ -291,5 +412,56 @@ mod tests {
         tx.spends.clear();
         tx.outputs.clear();
         assert_eq!(tx.encode(), Err(TransactionError::EmptyTransaction));
+    }
+
+    #[test]
+    fn public_statement_rejects_noncanonical_nullifier() {
+        let mut tx = transaction();
+        tx.spends[0].nullifier = Nullifier([0xff; 32]);
+        assert_eq!(tx.encode(), Err(TransactionError::NonCanonicalNullifier));
+    }
+
+    #[test]
+    fn authorized_transaction_round_trip_and_id_bind_every_byte() {
+        let mut preimage = transaction();
+        preimage.spends[0].randomized_key = [12; 32];
+        let transaction = AuthorizedTransaction {
+            preimage,
+            backend_id: "halo2-ipa-pasta-v1".to_owned(),
+            proof: vec![13; 96],
+            spend_signatures: vec![[14; 64]],
+        };
+        let encoded = transaction.encode().unwrap();
+        assert_eq!(
+            AuthorizedTransaction::decode(&encoded),
+            Ok(transaction.clone())
+        );
+        let id = transaction.id().unwrap();
+        let mut changed = transaction;
+        changed.proof[0] ^= 1;
+        assert_ne!(id, changed.id().unwrap());
+    }
+
+    #[test]
+    fn authorized_transaction_rejects_unbounded_or_mismatched_fields() {
+        let mut transaction = AuthorizedTransaction {
+            preimage: transaction(),
+            backend_id: "halo2".to_owned(),
+            proof: vec![],
+            spend_signatures: vec![],
+        };
+        assert_eq!(
+            transaction.encode(),
+            Err(TransactionError::WrongSignatureCount)
+        );
+        transaction.spend_signatures.push([0; 64]);
+        transaction.backend_id.clear();
+        assert_eq!(
+            transaction.encode(),
+            Err(TransactionError::InvalidBackendId)
+        );
+        transaction.backend_id = "halo2".to_owned();
+        transaction.proof = vec![0; MAX_PROOF_BYTES + 1];
+        assert_eq!(transaction.encode(), Err(TransactionError::ProofTooLarge));
     }
 }

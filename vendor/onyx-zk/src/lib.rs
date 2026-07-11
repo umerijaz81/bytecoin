@@ -29,6 +29,7 @@ pub mod authorization;
 pub mod bundle_circuit;
 pub mod keys;
 pub mod membership_circuit;
+pub mod proof;
 pub mod state;
 pub mod transaction;
 pub mod transfer_circuit;
