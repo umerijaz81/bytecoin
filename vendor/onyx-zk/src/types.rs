@@ -32,7 +32,7 @@ pub struct NotePlaintext {
     pub asset_id: [u8; 32],
     pub value: u64,
     pub diversifier: [u8; DIVERSIFIER_BYTES],
-    pub transmission_key: CanonicalField,
+    pub transmission_key: [u8; 32],
     pub rho: CanonicalField,
     pub randomness: CanonicalField,
     pub memo: Vec<u8>,
@@ -50,7 +50,7 @@ impl NotePlaintext {
         out.extend_from_slice(&self.asset_id);
         write_varint(self.value, &mut out);
         out.extend_from_slice(&self.diversifier);
-        out.extend_from_slice(&self.transmission_key.bytes());
+        out.extend_from_slice(&self.transmission_key);
         out.extend_from_slice(&self.rho.bytes());
         out.extend_from_slice(&self.randomness.bytes());
         write_varint(self.memo.len() as u64, &mut out);
@@ -68,7 +68,7 @@ impl NotePlaintext {
         let asset_id = reader.array()?;
         let value = reader.varint()?;
         let diversifier = reader.array()?;
-        let transmission_key = reader.field()?;
+        let transmission_key = reader.array()?;
         let rho = reader.field()?;
         let randomness = reader.field()?;
         let memo_len = reader.varint()?;
@@ -193,7 +193,7 @@ mod tests {
             asset_id: [3; 32],
             value: 42,
             diversifier: [4; DIVERSIFIER_BYTES],
-            transmission_key: CanonicalField::from_field(Fp::from(5)),
+            transmission_key: [5; 32],
             rho: CanonicalField::from_field(Fp::from(6)),
             randomness: CanonicalField::from_field(Fp::from(7)),
             memo: b"onyx".to_vec(),
@@ -208,7 +208,7 @@ mod tests {
         let commitment = note.commitment().unwrap();
         assert_eq!(
             hex(&commitment.bytes()),
-            "cb3ce323c4c91231ed6349a53aa8e08b4d4d8a8e00fb8c62e2fe447b5e243b28"
+            "4971955b0f0f892f6b39a54dc56b812105c187e7a947b230630fe3bb30c36432"
         );
         let mut changed = note;
         changed.value += 1;
@@ -239,8 +239,8 @@ mod tests {
     #[test]
     fn parser_rejects_noncanonical_field_and_oversized_memo() {
         let mut encoded = note().encode().unwrap();
-        let transmission_offset = 1 + NETWORK_ID_BYTES + 32 + 32 + 1 + DIVERSIFIER_BYTES;
-        encoded[transmission_offset..transmission_offset + 32].fill(0xff);
+        let rho_offset = 1 + NETWORK_ID_BYTES + 32 + 32 + 1 + DIVERSIFIER_BYTES + 32;
+        encoded[rho_offset..rho_offset + 32].fill(0xff);
         assert_eq!(
             NotePlaintext::decode(&encoded),
             Err(DecodeError::NonCanonicalField)

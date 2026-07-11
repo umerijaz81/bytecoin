@@ -11,8 +11,12 @@ use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, 
 use halo2_proofs::pasta::Fp;
 
 use crate::transaction::TransactionPreimage;
+use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
+const SNAPSHOT_VERSION: u8 = 1;
+const MAX_SNAPSHOT_NULLIFIERS: usize = 1_000_000;
+const MAX_SNAPSHOT_ANCHORS: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CanonicalField([u8; 32]);
@@ -46,6 +50,33 @@ pub enum StateError {
     UnknownAnchor,
     InvalidTransaction,
     HeightRegression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SnapshotError {
+    Decode(DecodeError),
+    WrongVersion,
+    WrongDepth,
+    InvalidLeafCount,
+    InvalidFrontier,
+    InvalidFullRoot,
+    TooManyNullifiers,
+    TooManyAnchors,
+    DuplicateNullifier,
+    InvalidAnchorHistory,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WitnessError {
+    TreeFull,
+    PositionMissing,
+    WrongPathLength,
+}
+
+impl From<DecodeError> for SnapshotError {
+    fn from(value: DecodeError) -> Self {
+        Self::Decode(value)
+    }
 }
 
 // Numeric tags are the frozen field encodings of the protocol's leaf/node domain separation.
@@ -291,6 +322,262 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.anchors = delta.previous_anchors;
         self.current_height = delta.previous_height;
     }
+
+    pub fn encode_snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(SNAPSHOT_VERSION);
+        out.push(DEPTH as u8);
+        write_varint(self.tree.leaf_count, &mut out);
+        let frontier_bitmap = self
+            .tree
+            .frontier
+            .iter()
+            .enumerate()
+            .fold(0u64, |bits, (level, value)| {
+                bits | (u64::from(value.is_some()) << level)
+            });
+        write_varint(frontier_bitmap, &mut out);
+        for value in self.tree.frontier.iter().flatten() {
+            out.extend_from_slice(&value.to_repr());
+        }
+        match self.tree.full_root {
+            Some(root) => {
+                out.push(1);
+                out.extend_from_slice(&root.to_repr());
+            }
+            None => out.push(0),
+        }
+
+        write_varint(self.current_height, &mut out);
+        write_varint(self.anchor_window_blocks, &mut out);
+        write_varint(self.anchors.len() as u64, &mut out);
+        for anchor in &self.anchors {
+            out.extend_from_slice(&anchor.root.bytes());
+            write_varint(anchor.height, &mut out);
+        }
+
+        let mut nullifiers: Vec<_> = self.nullifiers.values.iter().copied().collect();
+        nullifiers.sort_unstable_by_key(|nullifier| nullifier.0);
+        write_varint(nullifiers.len() as u64, &mut out);
+        for nullifier in nullifiers {
+            out.extend_from_slice(&nullifier.0);
+        }
+        out
+    }
+
+    pub fn decode_snapshot(input: &[u8]) -> Result<Self, SnapshotError> {
+        if DEPTH == 0 || DEPTH >= 64 {
+            return Err(SnapshotError::WrongDepth);
+        }
+        let mut reader = Reader::new(input);
+        if reader.byte()? != SNAPSHOT_VERSION {
+            return Err(SnapshotError::WrongVersion);
+        }
+        if usize::from(reader.byte()?) != DEPTH {
+            return Err(SnapshotError::WrongDepth);
+        }
+        let leaf_count = reader.varint()?;
+        let capacity = 1u64 << DEPTH;
+        if leaf_count > capacity {
+            return Err(SnapshotError::InvalidLeafCount);
+        }
+        let frontier_bitmap = reader.varint()?;
+        let expected_bitmap = if leaf_count == capacity {
+            0
+        } else {
+            leaf_count
+        };
+        if frontier_bitmap != expected_bitmap {
+            return Err(SnapshotError::InvalidFrontier);
+        }
+
+        let mut tree = IncrementalMerkleTree::<DEPTH>::default();
+        tree.leaf_count = leaf_count;
+        for level in 0..DEPTH {
+            if ((frontier_bitmap >> level) & 1) == 1 {
+                tree.frontier[level] = Some(reader.field()?.field());
+            }
+        }
+        match reader.byte()? {
+            0 if leaf_count != capacity => {}
+            1 if leaf_count == capacity => tree.full_root = Some(reader.field()?.field()),
+            _ => return Err(SnapshotError::InvalidFullRoot),
+        }
+
+        let current_height = reader.varint()?;
+        let anchor_window_blocks = reader.varint()?;
+        if anchor_window_blocks == 0 {
+            return Err(SnapshotError::InvalidAnchorHistory);
+        }
+        let anchor_count = bounded_snapshot_count(
+            reader.varint()?,
+            MAX_SNAPSHOT_ANCHORS,
+            SnapshotError::TooManyAnchors,
+        )?;
+        if anchor_count == 0 {
+            return Err(SnapshotError::InvalidAnchorHistory);
+        }
+        let mut anchors = Vec::with_capacity(anchor_count);
+        let mut previous_height = 0;
+        for index in 0..anchor_count {
+            let root = reader.field()?;
+            let height = reader.varint()?;
+            if height > current_height || (index != 0 && height < previous_height) {
+                return Err(SnapshotError::InvalidAnchorHistory);
+            }
+            previous_height = height;
+            anchors.push(Anchor { root, height });
+        }
+        if anchors.last().map(|anchor| anchor.root) != Some(tree.root()) {
+            return Err(SnapshotError::InvalidAnchorHistory);
+        }
+        let oldest_height = current_height.saturating_sub(anchor_window_blocks - 1);
+        if anchors.iter().any(|anchor| anchor.height < oldest_height) {
+            return Err(SnapshotError::InvalidAnchorHistory);
+        }
+
+        let nullifier_count = bounded_snapshot_count(
+            reader.varint()?,
+            MAX_SNAPSHOT_NULLIFIERS,
+            SnapshotError::TooManyNullifiers,
+        )?;
+        let mut values = HashSet::with_capacity(nullifier_count);
+        let mut previous: Option<[u8; 32]> = None;
+        for _ in 0..nullifier_count {
+            let bytes = reader.array()?;
+            if previous.is_some_and(|value| value >= bytes) {
+                return Err(SnapshotError::DuplicateNullifier);
+            }
+            previous = Some(bytes);
+            values.insert(Nullifier(bytes));
+        }
+        if !reader.is_empty() {
+            return Err(DecodeError::TrailingData.into());
+        }
+        Ok(Self {
+            tree,
+            nullifiers: NullifierSet { values },
+            anchors,
+            anchor_window_blocks,
+            current_height,
+        })
+    }
+}
+
+fn bounded_snapshot_count(
+    count: u64,
+    limit: usize,
+    error: SnapshotError,
+) -> Result<usize, SnapshotError> {
+    if count > limit as u64 {
+        Err(error)
+    } else {
+        Ok(count as usize)
+    }
+}
+
+#[derive(Clone)]
+pub struct WitnessTree<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
+    leaves: Vec<CanonicalField>,
+    empty: Vec<Fp>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MerklePath {
+    pub position: u64,
+    pub siblings: Vec<CanonicalField>,
+}
+
+impl<const DEPTH: usize> Default for WitnessTree<DEPTH> {
+    fn default() -> Self {
+        let tree = IncrementalMerkleTree::<DEPTH>::default();
+        Self {
+            leaves: Vec::new(),
+            empty: tree.empty,
+        }
+    }
+}
+
+impl<const DEPTH: usize> WitnessTree<DEPTH> {
+    pub fn append(&mut self, commitment: CanonicalField) -> Result<u64, WitnessError> {
+        if self.leaves.len() as u64 == (1u64 << DEPTH) {
+            return Err(WitnessError::TreeFull);
+        }
+        let position = self.leaves.len() as u64;
+        self.leaves.push(commitment);
+        Ok(position)
+    }
+
+    pub fn root(&self) -> CanonicalField {
+        if self.leaves.is_empty() {
+            return CanonicalField::from_field(self.empty[DEPTH]);
+        }
+        let mut layer: Vec<Fp> = self
+            .leaves
+            .iter()
+            .map(|commitment| hash_leaf(commitment.field()))
+            .collect();
+        for level in 0..DEPTH {
+            layer = parent_layer(&layer, self.empty[level]);
+        }
+        CanonicalField::from_field(layer[0])
+    }
+
+    pub fn witness(&self, position: u64) -> Result<MerklePath, WitnessError> {
+        if position >= self.leaves.len() as u64 {
+            return Err(WitnessError::PositionMissing);
+        }
+        let mut index = position as usize;
+        let mut layer: Vec<Fp> = self
+            .leaves
+            .iter()
+            .map(|commitment| hash_leaf(commitment.field()))
+            .collect();
+        let mut siblings = Vec::with_capacity(DEPTH);
+        for level in 0..DEPTH {
+            let sibling_index = index ^ 1;
+            siblings.push(CanonicalField::from_field(
+                layer
+                    .get(sibling_index)
+                    .copied()
+                    .unwrap_or(self.empty[level]),
+            ));
+            layer = parent_layer(&layer, self.empty[level]);
+            index >>= 1;
+        }
+        Ok(MerklePath { position, siblings })
+    }
+}
+
+impl MerklePath {
+    pub fn verify<const DEPTH: usize>(
+        &self,
+        commitment: CanonicalField,
+        expected_root: CanonicalField,
+    ) -> Result<bool, WitnessError> {
+        if self.siblings.len() != DEPTH {
+            return Err(WitnessError::WrongPathLength);
+        }
+        if DEPTH >= 64 || self.position >= (1u64 << DEPTH) {
+            return Err(WitnessError::PositionMissing);
+        }
+        let mut node = hash_leaf(commitment.field());
+        for (level, sibling) in self.siblings.iter().enumerate() {
+            node = if ((self.position >> level) & 1) == 0 {
+                hash_node(node, sibling.field())
+            } else {
+                hash_node(sibling.field(), node)
+            };
+        }
+        Ok(CanonicalField::from_field(node) == expected_root)
+    }
+}
+
+fn parent_layer(layer: &[Fp], empty: Fp) -> Vec<Fp> {
+    layer
+        .chunks(2)
+        .map(|pair| hash_node(pair[0], pair.get(1).copied().unwrap_or(empty)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -379,7 +666,7 @@ mod tests {
             }],
             outputs: vec![PublicOutput {
                 commitment: field(commitment),
-                ephemeral_key: field(21),
+                ephemeral_key: [21; 32],
                 ciphertext: vec![1, 2, 3],
                 outgoing_ciphertext: vec![4, 5],
             }],
@@ -444,5 +731,62 @@ mod tests {
             state.apply_transaction(&transaction(state.root(), 5, 34), 2),
             Err(StateError::HeightRegression)
         ));
+    }
+
+    #[test]
+    fn snapshot_round_trip_is_deterministic() {
+        let mut state = ShieldedState::<8>::new(3);
+        state
+            .apply_transaction(&transaction(state.root(), 2, 40), 1)
+            .unwrap();
+        state
+            .apply_transaction(&transaction(state.root(), 1, 41), 2)
+            .unwrap();
+        let encoded = state.encode_snapshot();
+        let restored = ShieldedState::<8>::decode_snapshot(&encoded).unwrap();
+        assert_eq!(restored.encode_snapshot(), encoded);
+        assert_eq!(restored.root(), state.root());
+        assert!(restored.is_spent(&Nullifier([1; 32])));
+        assert!(restored.is_spent(&Nullifier([2; 32])));
+    }
+
+    #[test]
+    fn snapshot_rejects_corruption_and_wrong_depth() {
+        let state = ShieldedState::<8>::new(3);
+        let encoded = state.encode_snapshot();
+        assert_eq!(
+            ShieldedState::<7>::decode_snapshot(&encoded).err(),
+            Some(SnapshotError::WrongDepth)
+        );
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&trailing).err(),
+            Some(SnapshotError::Decode(DecodeError::TrailingData))
+        );
+        let mut bad_version = encoded;
+        bad_version[0] += 1;
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&bad_version).err(),
+            Some(SnapshotError::WrongVersion)
+        );
+    }
+
+    #[test]
+    fn wallet_witnesses_match_consensus_root() {
+        let mut consensus = IncrementalMerkleTree::<4>::default();
+        let mut wallet = WitnessTree::<4>::default();
+        for value in 1..=5 {
+            consensus.append(field(value)).unwrap();
+            wallet.append(field(value)).unwrap();
+        }
+        let root = consensus.root();
+        assert_eq!(wallet.root(), root);
+        for position in 0..5 {
+            let path = wallet.witness(position).unwrap();
+            assert_eq!(path.verify::<4>(field(position + 1), root), Ok(true));
+            assert_eq!(path.verify::<4>(field(position + 2), root), Ok(false));
+        }
+        assert_eq!(wallet.witness(5), Err(WitnessError::PositionMissing));
     }
 }

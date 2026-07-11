@@ -19,7 +19,7 @@ pub struct PublicSpend {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicOutput {
     pub commitment: CanonicalField,
-    pub ephemeral_key: CanonicalField,
+    pub ephemeral_key: [u8; 32],
     pub ciphertext: Vec<u8>,
     pub outgoing_ciphertext: Vec<u8>,
 }
@@ -97,7 +97,7 @@ impl TransactionPreimage {
         write_varint(self.outputs.len() as u64, &mut out);
         for output in &self.outputs {
             out.extend_from_slice(&output.commitment.bytes());
-            out.extend_from_slice(&output.ephemeral_key.bytes());
+            out.extend_from_slice(&output.ephemeral_key);
             write_bytes(&output.ciphertext, &mut out);
             write_bytes(&output.outgoing_ciphertext, &mut out);
         }
@@ -141,7 +141,7 @@ impl TransactionPreimage {
         let mut outputs = Vec::with_capacity(output_count);
         for _ in 0..output_count {
             let commitment = reader.field()?;
-            let ephemeral_key = reader.field()?;
+            let ephemeral_key = reader.array()?;
             let ciphertext = read_bytes(&mut reader, MAX_CIPHERTEXT_BYTES)?;
             let outgoing_ciphertext = read_bytes(&mut reader, MAX_OUT_CIPHERTEXT_BYTES)?;
             outputs.push(PublicOutput {
@@ -235,7 +235,7 @@ mod tests {
             }],
             outputs: vec![PublicOutput {
                 commitment: field(5),
-                ephemeral_key: field(6),
+                ephemeral_key: [6; 32],
                 ciphertext: vec![7; 48],
                 outgoing_ciphertext: vec![8; 32],
             }],
