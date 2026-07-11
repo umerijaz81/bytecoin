@@ -26,6 +26,8 @@ use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 
 pub mod state;
+pub mod transaction;
+pub mod types;
 
 const SINSEMILLA_DOMAIN: &str = "z.cash:Onyx-test-v6";
 const TOY_K: u32 = 4; // 2^4 rows is ample for the one-multiplication toy circuit

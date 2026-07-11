@@ -10,6 +10,8 @@ use ff::PrimeField;
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, P128Pow5T3};
 use halo2_proofs::pasta::Fp;
 
+use crate::transaction::TransactionPreimage;
+
 pub const ONYX_MERKLE_DEPTH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -28,7 +30,7 @@ impl CanonicalField {
         self.0
     }
 
-    fn field(self) -> Fp {
+    pub(crate) fn field(self) -> Fp {
         // Construction proves canonicality.
         Option::<Fp>::from(Fp::from_repr(self.0)).expect("CanonicalField invariant")
     }
@@ -41,6 +43,8 @@ pub struct Nullifier(pub [u8; 32]);
 pub enum StateError {
     TreeFull,
     DuplicateNullifier,
+    UnknownAnchor,
+    InvalidTransaction,
 }
 
 // Numeric tags are the frozen field encodings of the protocol's leaf/node domain separation.
@@ -174,9 +178,103 @@ pub struct NullifierDelta {
     inserted: Vec<Nullifier>,
 }
 
+#[derive(Clone)]
+pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
+    tree: IncrementalMerkleTree<DEPTH>,
+    nullifiers: NullifierSet,
+    anchors: Vec<CanonicalField>,
+    max_anchors: usize,
+}
+
+pub struct ShieldedStateDelta<const DEPTH: usize> {
+    previous_tree: IncrementalMerkleTree<DEPTH>,
+    nullifiers: NullifierDelta,
+    previous_anchors: Vec<CanonicalField>,
+}
+
+impl<const DEPTH: usize> ShieldedState<DEPTH> {
+    pub fn new(max_anchors: usize) -> Self {
+        assert!(max_anchors > 0, "at least one anchor must be retained");
+        let tree = IncrementalMerkleTree::default();
+        Self {
+            anchors: vec![tree.root()],
+            tree,
+            nullifiers: NullifierSet::default(),
+            max_anchors,
+        }
+    }
+
+    pub fn root(&self) -> CanonicalField {
+        self.tree.root()
+    }
+
+    pub fn leaf_count(&self) -> u64 {
+        self.tree.leaf_count()
+    }
+
+    pub fn knows_anchor(&self, anchor: CanonicalField) -> bool {
+        self.anchors.contains(&anchor)
+    }
+
+    pub fn is_spent(&self, nullifier: &Nullifier) -> bool {
+        self.nullifiers.contains(nullifier)
+    }
+
+    pub fn apply_transaction(
+        &mut self,
+        transaction: &TransactionPreimage,
+    ) -> Result<ShieldedStateDelta<DEPTH>, StateError> {
+        // Encoding performs all structural and resource-limit validation before state work.
+        transaction
+            .encode()
+            .map_err(|_| StateError::InvalidTransaction)?;
+        if !self.knows_anchor(transaction.anchor) {
+            return Err(StateError::UnknownAnchor);
+        }
+
+        let previous_tree = self.tree.clone();
+        let previous_anchors = self.anchors.clone();
+        let nullifier_values: Vec<_> = transaction
+            .spends
+            .iter()
+            .map(|spend| &spend.nullifier)
+            .collect();
+        let nullifiers = self.nullifiers.apply(nullifier_values)?;
+
+        for output in &transaction.outputs {
+            if let Err(error) = self.tree.append(output.commitment) {
+                self.tree = previous_tree;
+                self.nullifiers.rollback(nullifiers);
+                return Err(error);
+            }
+        }
+
+        let root = self.tree.root();
+        if self.anchors.last() != Some(&root) {
+            self.anchors.push(root);
+            if self.anchors.len() > self.max_anchors {
+                self.anchors.remove(0);
+            }
+        }
+        Ok(ShieldedStateDelta {
+            previous_tree,
+            nullifiers,
+            previous_anchors,
+        })
+    }
+
+    pub fn rollback(&mut self, delta: ShieldedStateDelta<DEPTH>) {
+        self.tree = delta.previous_tree;
+        self.nullifiers.rollback(delta.nullifiers);
+        self.anchors = delta.previous_anchors;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transaction::{PublicOutput, PublicSpend, TransactionPreimage};
+    use crate::types::NETWORK_ID_BYTES;
 
     fn field(value: u64) -> CanonicalField {
         CanonicalField::from_field(Fp::from(value))
@@ -195,12 +293,24 @@ mod tests {
         let snapshot = tree.clone();
         assert_eq!(tree.append(field(7)), Ok(0));
         let one = tree.root();
+        assert_eq!(
+            hex(&empty.bytes()),
+            "97af549e78f1c639c7c98cc6bf841df536c5678a9730c786add771a45bf4f028"
+        );
+        assert_eq!(
+            hex(&one.bytes()),
+            "a116a31f82e58dfaf0332ad57847c747ddda9eb339b2f1e5bfcbcf63dbaeda22"
+        );
         assert_ne!(empty, one);
         assert_eq!(tree.append(field(8)), Ok(1));
         assert_ne!(one, tree.root());
         tree = snapshot;
         assert_eq!(tree.root(), empty);
         assert_eq!(tree.leaf_count(), 0);
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     #[test]
@@ -232,5 +342,60 @@ mod tests {
         set.rollback(delta);
         assert!(!set.contains(&a));
         assert!(!set.contains(&b));
+    }
+
+    fn transaction(anchor: CanonicalField, nullifier: u8, commitment: u64) -> TransactionPreimage {
+        TransactionPreimage {
+            network_id: [1; NETWORK_ID_BYTES],
+            anchor,
+            expiry_height: 10,
+            fee: 1,
+            spends: vec![PublicSpend {
+                nullifier: Nullifier([nullifier; 32]),
+                randomized_key: field(20),
+            }],
+            outputs: vec![PublicOutput {
+                commitment: field(commitment),
+                ephemeral_key: field(21),
+                ciphertext: vec![1, 2, 3],
+                outgoing_ciphertext: vec![4, 5],
+            }],
+            programs: vec![],
+        }
+    }
+
+    #[test]
+    fn shielded_state_applies_and_rolls_back_atomically() {
+        let mut state = ShieldedState::<4>::new(3);
+        let initial = state.root();
+        let tx = transaction(initial, 1, 30);
+        let delta = state.apply_transaction(&tx).unwrap();
+        assert_ne!(state.root(), initial);
+        assert_eq!(state.leaf_count(), 1);
+        assert!(state.is_spent(&Nullifier([1; 32])));
+        state.rollback(delta);
+        assert_eq!(state.root(), initial);
+        assert_eq!(state.leaf_count(), 0);
+        assert!(!state.is_spent(&Nullifier([1; 32])));
+    }
+
+    #[test]
+    fn shielded_state_rejects_stale_or_duplicate_spends() {
+        let mut state = ShieldedState::<4>::new(2);
+        let unknown = field(999);
+        assert!(matches!(
+            state.apply_transaction(&transaction(unknown, 1, 30)),
+            Err(StateError::UnknownAnchor)
+        ));
+
+        let first = transaction(state.root(), 1, 30);
+        state.apply_transaction(&first).unwrap();
+        let root_before = state.root();
+        assert!(matches!(
+            state.apply_transaction(&transaction(root_before, 1, 31)),
+            Err(StateError::DuplicateNullifier)
+        ));
+        assert_eq!(state.root(), root_before);
+        assert_eq!(state.leaf_count(), 1);
     }
 }
