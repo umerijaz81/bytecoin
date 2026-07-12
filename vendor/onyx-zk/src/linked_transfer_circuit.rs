@@ -13,9 +13,11 @@ use crate::note_commitment_circuit::{
     synthesize_note_commitment, NoteCommitmentConfig, NOTE_COMMITMENT_INPUTS,
 };
 use crate::spend_auth_circuit::{
-    configure_spend_authority, synthesize_spend_authority, SpendAuthCircuit, SpendAuthConfig,
+    configure_spend_authority, synthesize_spend_authority, synthesize_value_commitment,
+    SpendAuthCircuit, SpendAuthConfig,
 };
 use crate::transfer_circuit::{synthesize_native_values, NativeValueCircuit, ValueConfig};
+use pasta_curves::pallas;
 
 #[derive(Clone)]
 pub struct LinkedTransferConfig {
@@ -32,6 +34,10 @@ pub struct LinkedTransferCircuit<const DEPTH: usize> {
     input_note: [Option<Fp>; NOTE_COMMITMENT_INPUTS],
     output_note: [Option<Fp>; NOTE_COMMITMENT_INPUTS],
     authorization: SpendAuthCircuit,
+    input_value_randomness: Option<Fp>,
+    input_value_commitment: Option<pallas::Affine>,
+    output_value_randomness: Option<Fp>,
+    output_value_commitment: Option<pallas::Affine>,
 }
 
 impl<const DEPTH: usize> LinkedTransferCircuit<DEPTH> {
@@ -42,6 +48,10 @@ impl<const DEPTH: usize> LinkedTransferCircuit<DEPTH> {
         input_note: [Fp; NOTE_COMMITMENT_INPUTS],
         output_note: [Fp; NOTE_COMMITMENT_INPUTS],
         authorization: SpendAuthCircuit,
+        input_value_randomness: Fp,
+        input_value_commitment: pallas::Affine,
+        output_value_randomness: Fp,
+        output_value_commitment: pallas::Affine,
     ) -> Self {
         Self {
             values: NativeValueCircuit::new(&[input_value], &[output_value])
@@ -50,6 +60,10 @@ impl<const DEPTH: usize> LinkedTransferCircuit<DEPTH> {
             input_note: input_note.map(Some),
             output_note: output_note.map(Some),
             authorization,
+            input_value_randomness: Some(input_value_randomness),
+            input_value_commitment: Some(input_value_commitment),
+            output_value_randomness: Some(output_value_randomness),
+            output_value_commitment: Some(output_value_commitment),
         }
     }
 }
@@ -65,6 +79,10 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             input_note: [None; NOTE_COMMITMENT_INPUTS],
             output_note: [None; NOTE_COMMITMENT_INPUTS],
             authorization: self.authorization.without_witnesses(),
+            input_value_randomness: None,
+            input_value_commitment: None,
+            output_value_randomness: None,
+            output_value_commitment: None,
         }
     }
 
@@ -94,6 +112,26 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             true,
             0,
             1,
+        )?;
+        synthesize_value_commitment(
+            &config.authorization,
+            layouter.namespace(|| "input value commitment"),
+            &values.input_cells[0],
+            self.input_value_randomness,
+            self.input_value_commitment,
+            false,
+            2,
+            3,
+        )?;
+        synthesize_value_commitment(
+            &config.authorization,
+            layouter.namespace(|| "output value commitment"),
+            &values.output_cells[0],
+            self.output_value_randomness,
+            self.output_value_commitment,
+            false,
+            4,
+            5,
         )?;
         let input_commitment = synthesize_note_commitment(
             &config.notes,
@@ -192,6 +230,16 @@ mod tests {
             rho,
         )
         .unwrap();
+        let input_value_randomness = Fp::from(51);
+        let output_value_randomness = Fp::from(52);
+        let input_value_commitment = (crate::spend_auth_circuit::value_generator()
+            * pallas::Scalar::from(30)
+            + crate::spend_auth_circuit::binding_generator() * pallas::Scalar::from(51))
+        .to_affine();
+        let output_value_commitment = (crate::spend_auth_circuit::value_generator()
+            * pallas::Scalar::from(25)
+            + crate::spend_auth_circuit::binding_generator() * pallas::Scalar::from(52))
+        .to_affine();
         let circuit = LinkedTransferCircuit::new(
             30,
             25,
@@ -199,12 +247,25 @@ mod tests {
             input_note,
             output_note,
             SpendAuthCircuit::new(authority_key, randomizer, randomized_key),
+            input_value_randomness,
+            input_value_commitment,
+            output_value_randomness,
+            output_value_commitment,
         );
+        let input_value_coordinates = input_value_commitment.coordinates().unwrap();
+        let output_value_coordinates = output_value_commitment.coordinates().unwrap();
         let instances = vec![
             vec![Fp::from(5)],
             vec![root, nullifier],
             vec![output_commitment],
-            vec![*randomized_coordinates.x(), *randomized_coordinates.y()],
+            vec![
+                *randomized_coordinates.x(),
+                *randomized_coordinates.y(),
+                *input_value_coordinates.x(),
+                *input_value_coordinates.y(),
+                *output_value_coordinates.x(),
+                *output_value_coordinates.y(),
+            ],
         ];
         MockProver::run(15, &circuit, instances.clone())
             .unwrap()

@@ -90,8 +90,9 @@ The base-transfer proving system uses a versioned circuit family keyed by the pu
 `(spend_count, output_count)` pair. Each member has an immutable shape and verifying-key identifier;
 counts outside `1..=16` fail before key selection. Within a member, the instance layout is fee;
 one shared anchor followed by ordered nullifiers; ordered output commitments; and ordered affine
-`(rk_x, rk_y)` randomized-authority coordinates. The ECC range table is loaded once and shared by
-all spend slots.
+`(rk_x, rk_y)` randomized-authority coordinates; ordered input value-commitment coordinates; then
+ordered output value-commitment coordinates. The ECC range table is loaded once and shared by all
+slots.
 
 After a valid proof and binding signature:
 

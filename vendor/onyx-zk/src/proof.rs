@@ -64,6 +64,10 @@ pub struct TransferWitness<const DEPTH: usize> {
     pub position: u64,
     pub nullifier_key: Fp,
     pub rho: Fp,
+    pub input_value_randomness: Fp,
+    pub input_value_commitment: pallas::Affine,
+    pub output_value_randomness: Fp,
+    pub output_value_commitment: pallas::Affine,
 }
 
 #[derive(Clone)]
@@ -77,6 +81,8 @@ pub struct MultiSpendWitness<const DEPTH: usize> {
     pub position: u64,
     pub nullifier_key: Fp,
     pub rho: Fp,
+    pub value_randomness: Fp,
+    pub value_commitment: pallas::Affine,
 }
 
 #[derive(Clone)]
@@ -85,6 +91,8 @@ pub struct MultiTransferWitness<const DEPTH: usize> {
     pub output_values: Vec<u64>,
     pub spends: Vec<MultiSpendWitness<DEPTH>>,
     pub output_notes: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
+    pub output_value_randomness: Vec<Fp>,
+    pub output_value_commitments: Vec<pallas::Affine>,
 }
 
 impl<const DEPTH: usize> MultiSpendWitness<DEPTH> {
@@ -104,6 +112,8 @@ impl<const DEPTH: usize> MultiSpendWitness<DEPTH> {
                 self.authorization_randomizer,
                 self.randomized_key,
             ),
+            self.value_randomness,
+            self.value_commitment,
         ))
     }
 }
@@ -122,6 +132,8 @@ impl<const DEPTH: usize> MultiTransferWitness<DEPTH> {
             &self.output_values,
             spends,
             self.output_notes.clone(),
+            self.output_value_randomness.clone(),
+            self.output_value_commitments.clone(),
         )
         .map_err(|_| ProofError::InvalidShape)
     }
@@ -172,7 +184,7 @@ pub fn create_multi_transfer_proof<
                 .hash(*note)
         })
         .collect::<Vec<_>>();
-    let authorization = witness
+    let mut authorization = witness
         .spends
         .iter()
         .map(|spend| randomized_key_coordinates(spend.randomized_key))
@@ -180,6 +192,12 @@ pub fn create_multi_transfer_proof<
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
+    for spend in &witness.spends {
+        authorization.extend(randomized_key_coordinates(spend.value_commitment)?);
+    }
+    for commitment in &witness.output_value_commitments {
+        authorization.extend(randomized_key_coordinates(*commitment)?);
+    }
     let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
     create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
         &params,
@@ -222,6 +240,8 @@ pub fn verify_multi_transfer_proof<
                     .map_err(|_| ProofError::InvalidShape)?,
                 [Fp::zero(); NOTE_COMMITMENT_INPUTS],
                 SpendAuthCircuit::new(generator, Fp::zero(), generator),
+                Fp::one(),
+                crate::spend_auth_circuit::binding_generator(),
             ))
         })
         .collect::<Result<Vec<_>, ProofError>>()?;
@@ -230,6 +250,8 @@ pub fn verify_multi_transfer_proof<
         &vec![0; OUTPUTS],
         dummy_spends,
         vec![[Fp::zero(); NOTE_COMMITMENT_INPUTS]; OUTPUTS],
+        vec![Fp::one(); OUTPUTS],
+        vec![crate::spend_auth_circuit::binding_generator(); OUTPUTS],
     )
     .map_err(|_| ProofError::InvalidShape)?;
     let params: Params<EqAffine> = Params::new(k);
@@ -253,6 +275,24 @@ pub fn verify_multi_transfer_proof<
     let mut authorization = Vec::with_capacity(SPENDS * 2);
     for spend in &transaction.preimage.spends {
         let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(&spend.randomized_key))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+        authorization.extend(randomized_key_coordinates(point)?);
+    }
+    for bytes in transaction
+        .preimage
+        .spends
+        .iter()
+        .map(|spend| &spend.value_commitment)
+        .chain(
+            transaction
+                .preimage
+                .outputs
+                .iter()
+                .map(|output| &output.value_commitment),
+        )
+    {
+        let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
             .ok_or(ProofError::InvalidPublicInput)?
             .to_affine();
         authorization.extend(randomized_key_coordinates(point)?);
@@ -304,6 +344,10 @@ impl<const DEPTH: usize> TransferWitness<DEPTH> {
                 self.authorization_randomizer,
                 self.randomized_key,
             ),
+            self.input_value_randomness,
+            self.input_value_commitment,
+            self.output_value_randomness,
+            self.output_value_commitment,
         ))
     }
 }
@@ -331,7 +375,9 @@ pub fn create_transfer_proof<const DEPTH: usize>(
         return Err(ProofError::InvalidPublicInput);
     }
     let randomized_coordinates = randomized_coordinates.unwrap();
-    let authorization = [*randomized_coordinates.x(), *randomized_coordinates.y()];
+    let mut authorization = vec![*randomized_coordinates.x(), *randomized_coordinates.y()];
+    authorization.extend(randomized_key_coordinates(witness.input_value_commitment)?);
+    authorization.extend(randomized_key_coordinates(witness.output_value_commitment)?);
     let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
     create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
         &params,
@@ -376,6 +422,10 @@ pub fn verify_transfer_proof<const DEPTH: usize>(
             Fp::zero(),
             pallas::Point::generator().to_affine(),
         ),
+        Fp::one(),
+        crate::spend_auth_circuit::binding_generator(),
+        Fp::one(),
+        crate::spend_auth_circuit::binding_generator(),
     );
     let params: Params<EqAffine> = Params::new(k);
     let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
@@ -392,7 +442,16 @@ pub fn verify_transfer_proof<const DEPTH: usize>(
         return Err(ProofError::InvalidPublicInput);
     }
     let randomized_coordinates = randomized_coordinates.unwrap();
-    let authorization = [*randomized_coordinates.x(), *randomized_coordinates.y()];
+    let mut authorization = vec![*randomized_coordinates.x(), *randomized_coordinates.y()];
+    for bytes in [
+        &transaction.preimage.spends[0].value_commitment,
+        &transaction.preimage.outputs[0].value_commitment,
+    ] {
+        let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+        authorization.extend(randomized_key_coordinates(point)?);
+    }
     let mut transcript =
         Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
     verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
@@ -428,6 +487,14 @@ mod tests {
 
     fn hash2(first: Fp, second: Fp) -> Fp {
         PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([first, second])
+    }
+
+    fn value_commitment(value: u64, randomness: Fp) -> pallas::Affine {
+        Option::<pallas::Point>::from(pallas::Point::from_bytes(
+            &crate::value_commitment_circuit::value_commitment_bytes(value, randomness),
+        ))
+        .unwrap()
+        .to_affine()
     }
 
     #[test]
@@ -522,6 +589,10 @@ mod tests {
             position,
             nullifier_key,
             rho,
+            input_value_randomness: Fp::from(101),
+            input_value_commitment: value_commitment(30, Fp::from(101)),
+            output_value_randomness: Fp::from(102),
+            output_value_commitment: value_commitment(25, Fp::from(102)),
         };
         let proof = create_transfer_proof(K, &witness, 5, anchor, nullifier).unwrap();
         let mut mismatched_opening = witness.clone();
@@ -551,6 +622,14 @@ mod tests {
             pallas::Point::generator().to_bytes();
         assert_eq!(
             verify_transfer_proof::<DEPTH>(K, &wrong_randomized_key),
+            Err(ProofError::VerificationFailed)
+        );
+
+        let mut substituted_commitment = transaction.clone();
+        substituted_commitment.preimage.outputs[0].value_commitment =
+            crate::value_commitment_circuit::value_commitment_bytes(25, Fp::from(103));
+        assert_eq!(
+            verify_transfer_proof::<DEPTH>(K, &substituted_commitment),
             Err(ProofError::VerificationFailed)
         );
 
@@ -667,6 +746,11 @@ mod tests {
                     position: index as u64,
                     nullifier_key: nullifier_keys[index],
                     rho: rhos[index],
+                    value_randomness: Fp::from(110 + index as u64),
+                    value_commitment: value_commitment(
+                        [30, 20][index],
+                        Fp::from(110 + index as u64),
+                    ),
                 }
             })
             .collect();
@@ -675,6 +759,11 @@ mod tests {
             output_values: vec![25, 20],
             spends,
             output_notes,
+            output_value_randomness: vec![Fp::from(120), Fp::from(121)],
+            output_value_commitments: vec![
+                value_commitment(25, Fp::from(120)),
+                value_commitment(20, Fp::from(121)),
+            ],
         };
         let proof = create_multi_transfer_proof::<DEPTH, 2, 2>(K, &witness, 5, anchor, &nullifiers)
             .unwrap();

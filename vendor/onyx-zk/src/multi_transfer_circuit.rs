@@ -9,16 +9,20 @@ use crate::note_commitment_circuit::{
     synthesize_note_commitment, NoteCommitmentCircuit, NoteCommitmentConfig, NOTE_COMMITMENT_INPUTS,
 };
 use crate::spend_auth_circuit::{
-    configure_spend_authority, synthesize_spend_authority, SpendAuthCircuit, SpendAuthConfig,
+    configure_spend_authority, synthesize_spend_authority, synthesize_value_commitment,
+    SpendAuthCircuit, SpendAuthConfig,
 };
 use crate::transaction::{MAX_OUTPUTS, MAX_SPENDS};
 use crate::transfer_circuit::{synthesize_native_values, NativeValueCircuit, ValueConfig};
+use pasta_curves::pallas;
 
 #[derive(Clone)]
 pub struct LinkedSpend<const DEPTH: usize> {
     membership: MembershipCircuit<DEPTH>,
     note: [Option<Fp>; NOTE_COMMITMENT_INPUTS],
     authorization: SpendAuthCircuit,
+    value_randomness: Option<Fp>,
+    value_commitment: Option<pallas::Affine>,
 }
 
 impl<const DEPTH: usize> LinkedSpend<DEPTH> {
@@ -26,11 +30,15 @@ impl<const DEPTH: usize> LinkedSpend<DEPTH> {
         membership: MembershipCircuit<DEPTH>,
         note: [Fp; NOTE_COMMITMENT_INPUTS],
         authorization: SpendAuthCircuit,
+        value_randomness: Fp,
+        value_commitment: pallas::Affine,
     ) -> Self {
         Self {
             membership,
             note: note.map(Some),
             authorization,
+            value_randomness: Some(value_randomness),
+            value_commitment: Some(value_commitment),
         }
     }
 
@@ -39,6 +47,8 @@ impl<const DEPTH: usize> LinkedSpend<DEPTH> {
             membership: self.membership.without_witnesses(),
             note: [None; NOTE_COMMITMENT_INPUTS],
             authorization: self.authorization.without_witnesses(),
+            value_randomness: None,
+            value_commitment: None,
         }
     }
 }
@@ -56,6 +66,8 @@ pub struct MultiTransferCircuit<const DEPTH: usize, const SPENDS: usize, const O
     values: NativeValueCircuit,
     spends: Vec<LinkedSpend<DEPTH>>,
     outputs: Vec<[Option<Fp>; NOTE_COMMITMENT_INPUTS]>,
+    output_value_randomness: Vec<Option<Fp>>,
+    output_value_commitments: Vec<Option<pallas::Affine>>,
 }
 
 impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
@@ -66,6 +78,8 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
         output_values: &[u64],
         spends: Vec<LinkedSpend<DEPTH>>,
         outputs: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
+        output_value_randomness: Vec<Fp>,
+        output_value_commitments: Vec<pallas::Affine>,
     ) -> Result<Self, &'static str> {
         if SPENDS == 0
             || OUTPUTS == 0
@@ -75,6 +89,8 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
             || output_values.len() != OUTPUTS
             || spends.len() != SPENDS
             || outputs.len() != OUTPUTS
+            || output_value_randomness.len() != OUTPUTS
+            || output_value_commitments.len() != OUTPUTS
         {
             return Err("witness does not match circuit-family shape");
         }
@@ -82,6 +98,8 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
             values: NativeValueCircuit::new(input_values, output_values)?,
             spends,
             outputs: outputs.into_iter().map(|note| note.map(Some)).collect(),
+            output_value_randomness: output_value_randomness.into_iter().map(Some).collect(),
+            output_value_commitments: output_value_commitments.into_iter().map(Some).collect(),
         })
     }
 }
@@ -101,6 +119,8 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 .map(LinkedSpend::without_witnesses)
                 .collect(),
             outputs: vec![[None; NOTE_COMMITMENT_INPUTS]; OUTPUTS],
+            output_value_randomness: vec![None; OUTPUTS],
+            output_value_commitments: vec![None; OUTPUTS],
         }
     }
 
@@ -141,6 +161,16 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 Some((&authority.x, &authority.y)),
                 true,
             )?;
+            synthesize_value_commitment(
+                &config.authorization,
+                layouter.namespace(|| format!("spend {index} value commitment")),
+                &values.input_cells[index],
+                spend.value_randomness,
+                spend.value_commitment,
+                false,
+                SPENDS * 2 + index * 2,
+                SPENDS * 2 + index * 2 + 1,
+            )?;
             synthesize_membership(
                 &spend.membership,
                 &config.membership,
@@ -152,6 +182,16 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
         }
 
         for (index, note) in self.outputs.iter().enumerate() {
+            synthesize_value_commitment(
+                &config.authorization,
+                layouter.namespace(|| format!("output {index} value commitment")),
+                &values.output_cells[index],
+                self.output_value_randomness[index],
+                self.output_value_commitments[index],
+                false,
+                SPENDS * 4 + index * 2,
+                SPENDS * 4 + index * 2 + 1,
+            )?;
             let commitment = synthesize_note_commitment(
                 &config.notes,
                 layouter.namespace(|| format!("output {index} note")),
@@ -215,6 +255,7 @@ mod tests {
         let rhos = [Fp::from(71), Fp::from(72)];
         let mut nullifiers = Vec::new();
         let mut randomized_public = Vec::new();
+        let mut input_value_public = Vec::new();
         for index in 0..2 {
             let position = index as u64;
             let siblings = [leaves[1 - index], other];
@@ -236,17 +277,50 @@ mod tests {
             .to_affine();
             let coordinates = randomized.coordinates().unwrap();
             randomized_public.extend([*coordinates.x(), *coordinates.y()]);
+            let value_randomness = Fp::from(50 + index as u64);
+            let value_commitment = (crate::spend_auth_circuit::value_generator()
+                * pallas::Scalar::from([30, 20][index])
+                + crate::spend_auth_circuit::binding_generator()
+                    * pallas::Scalar::from(50 + index as u64))
+            .to_affine();
+            let value_coordinates = value_commitment.coordinates().unwrap();
+            input_value_public.extend([*value_coordinates.x(), *value_coordinates.y()]);
             spends.push(LinkedSpend::new(
                 membership,
                 input_notes[index],
                 SpendAuthCircuit::new(authorities[index], randomizer, randomized),
+                value_randomness,
+                value_commitment,
             ));
         }
         let outputs = vec![note(100, 25), note(130, 20)];
         let output_commitments: Vec<_> = outputs.iter().copied().map(commitment).collect();
-        let circuit =
-            MultiTransferCircuit::<DEPTH, 2, 2>::new(&[30, 20], &[25, 20], spends, outputs)
-                .unwrap();
+        let output_value_randomness = vec![Fp::from(60), Fp::from(61)];
+        let output_value_commitments = [25u64, 20]
+            .into_iter()
+            .zip([60u64, 61])
+            .map(|(value, randomness)| {
+                (crate::spend_auth_circuit::value_generator() * pallas::Scalar::from(value)
+                    + crate::spend_auth_circuit::binding_generator()
+                        * pallas::Scalar::from(randomness))
+                .to_affine()
+            })
+            .collect::<Vec<_>>();
+        let mut value_public = input_value_public;
+        for commitment in &output_value_commitments {
+            let coordinates = commitment.coordinates().unwrap();
+            value_public.extend([*coordinates.x(), *coordinates.y()]);
+        }
+        randomized_public.extend(value_public);
+        let circuit = MultiTransferCircuit::<DEPTH, 2, 2>::new(
+            &[30, 20],
+            &[25, 20],
+            spends,
+            outputs,
+            output_value_randomness,
+            output_value_commitments,
+        )
+        .unwrap();
         let instances = vec![
             vec![Fp::from(5)],
             vec![root, nullifiers[0], nullifiers[1]],
@@ -267,8 +341,15 @@ mod tests {
 
     #[test]
     fn circuit_family_rejects_empty_mismatched_and_oversized_shapes() {
-        assert!(MultiTransferCircuit::<2, 0, 0>::new(&[], &[], vec![], vec![]).is_err());
-        assert!(MultiTransferCircuit::<2, 1, 1>::new(&[], &[], vec![], vec![]).is_err());
-        assert!(MultiTransferCircuit::<2, 17, 1>::new(&[], &[], vec![], vec![]).is_err());
+        assert!(
+            MultiTransferCircuit::<2, 0, 0>::new(&[], &[], vec![], vec![], vec![], vec![]).is_err()
+        );
+        assert!(
+            MultiTransferCircuit::<2, 1, 1>::new(&[], &[], vec![], vec![], vec![], vec![]).is_err()
+        );
+        assert!(
+            MultiTransferCircuit::<2, 17, 1>::new(&[], &[], vec![], vec![], vec![], vec![])
+                .is_err()
+        );
     }
 }
