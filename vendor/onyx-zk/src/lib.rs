@@ -38,6 +38,7 @@ pub mod state;
 pub mod transaction;
 pub mod transfer_circuit;
 pub mod types;
+pub mod value_commitment_circuit;
 
 const SINSEMILLA_DOMAIN: &str = "z.cash:Onyx-test-v6";
 const TOY_K: u32 = 4; // 2^4 rows is ample for the one-multiplication toy circuit

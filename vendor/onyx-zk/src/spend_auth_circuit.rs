@@ -17,11 +17,15 @@ use halo2_proofs::circuit::{AssignedCell, Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::plonk::TableColumn;
 use halo2_proofs::plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance};
-use pasta_curves::pallas;
+use pasta_curves::{arithmetic::CurveExt, pallas};
 
 pub const SPEND_AUTH_BASEPOINT_BYTES: [u8; 32] = [
     99, 201, 117, 184, 132, 114, 26, 141, 12, 161, 112, 123, 227, 12, 127, 12, 95, 68, 95, 62, 124,
     24, 141, 59, 6, 214, 241, 40, 179, 35, 85, 183,
+];
+pub const BINDING_BASEPOINT_BYTES: [u8; 32] = [
+    145, 90, 60, 136, 104, 198, 195, 14, 47, 128, 144, 238, 69, 215, 110, 64, 72, 32, 141, 234, 91,
+    35, 102, 79, 187, 9, 164, 15, 85, 68, 244, 7,
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +41,16 @@ pub struct UnusedBase;
 pub(crate) fn spend_auth_generator() -> pallas::Affine {
     Option::<pallas::Point>::from(pallas::Point::from_bytes(&SPEND_AUTH_BASEPOINT_BYTES))
         .expect("frozen RedPallas SpendAuth basepoint is canonical")
+        .to_affine()
+}
+
+pub(crate) fn value_generator() -> pallas::Affine {
+    pallas::Point::hash_to_curve("bytecoin.onyx.v6.value-commitment")(b"v").to_affine()
+}
+
+pub(crate) fn binding_generator() -> pallas::Affine {
+    Option::<pallas::Point>::from(pallas::Point::from_bytes(&BINDING_BASEPOINT_BYTES))
+        .expect("frozen RedPallas Binding basepoint is canonical")
         .to_affine()
 }
 
@@ -89,6 +103,52 @@ pub struct SpendAuthCircuit {
 pub(crate) struct AssignedSpendAuthority {
     pub x: AssignedCell<Fp, Fp>,
     pub y: AssignedCell<Fp, Fp>,
+}
+
+#[allow(dead_code)]
+pub(crate) struct AssignedValueCommitment {
+    pub x: AssignedCell<Fp, Fp>,
+    pub y: AssignedCell<Fp, Fp>,
+}
+
+fn load_range_table(
+    config: &SpendAuthConfig,
+    layouter: &mut impl Layouter<Fp>,
+) -> Result<(), Error> {
+    layouter.assign_table(
+        || "10-bit range table",
+        |mut table| {
+            for value in 0..1024 {
+                table.assign_cell(
+                    || "range value",
+                    config.lookup_table,
+                    value,
+                    || Value::known(Fp::from(value as u64)),
+                )?;
+            }
+            Ok(())
+        },
+    )
+}
+
+fn bound_generator(
+    chip: &AuthEccChip,
+    mut layouter: impl Layouter<Fp>,
+    point: pallas::Affine,
+    name: &'static str,
+) -> Result<NonIdentityPoint<pallas::Affine, AuthEccChip>, Error> {
+    let witness = NonIdentityPoint::new(
+        chip.clone(),
+        layouter.namespace(|| format!("{name} witness")),
+        Value::known(point),
+    )?;
+    let constant = Point::new_from_constant(
+        chip.clone(),
+        layouter.namespace(|| format!("{name} constant")),
+        point,
+    )?;
+    witness.constrain_equal(layouter.namespace(|| format!("bind {name}")), &constant)?;
+    Ok(witness)
 }
 
 impl SpendAuthCircuit {
@@ -156,20 +216,7 @@ pub(crate) fn synthesize_spend_authority(
     randomized_y_row: usize,
 ) -> Result<AssignedSpendAuthority, Error> {
     if load_range_table {
-        layouter.assign_table(
-            || "10-bit range table",
-            |mut table| {
-                for value in 0..1024 {
-                    table.assign_cell(
-                        || "range value",
-                        config.lookup_table,
-                        value,
-                        || Value::known(Fp::from(value as u64)),
-                    )?;
-                }
-                Ok(())
-            },
-        )?;
+        self::load_range_table(config, &mut layouter)?;
     }
 
     let chip = AuthEccChip::construct(config.ecc.clone(), CircuitVersion::AnchoredBase);
@@ -237,6 +284,68 @@ pub(crate) fn synthesize_spend_authority(
     Ok(AssignedSpendAuthority {
         x: authority_key.inner().x(),
         y: authority_key.inner().y(),
+    })
+}
+
+pub(crate) fn synthesize_value_commitment(
+    config: &SpendAuthConfig,
+    mut layouter: impl Layouter<Fp>,
+    value: &AssignedCell<Fp, Fp>,
+    randomness: Option<Fp>,
+    expected: Option<pallas::Affine>,
+    load_table: bool,
+    x_row: usize,
+    y_row: usize,
+) -> Result<AssignedValueCommitment, Error> {
+    if load_table {
+        load_range_table(config, &mut layouter)?;
+    }
+    let chip = AuthEccChip::construct(config.ecc.clone(), CircuitVersion::AnchoredBase);
+    let value_base = bound_generator(
+        &chip,
+        layouter.namespace(|| "bind value generator"),
+        value_generator(),
+        "value generator",
+    )?;
+    let randomness_base = bound_generator(
+        &chip,
+        layouter.namespace(|| "bind randomness generator"),
+        binding_generator(),
+        "randomness generator",
+    )?;
+    let value_scalar =
+        ScalarVar::from_base(chip.clone(), layouter.namespace(|| "value scalar"), value)?;
+    let (value_point, _) =
+        value_base.mul(layouter.namespace(|| "value times generator"), value_scalar)?;
+    let randomness_cell = chip.load_private(
+        layouter.namespace(|| "commitment randomness"),
+        config.ecc.advices[0],
+        randomness.map_or(Value::unknown(), Value::known),
+    )?;
+    let randomness_scalar = ScalarVar::from_base(
+        chip.clone(),
+        layouter.namespace(|| "commitment randomness scalar"),
+        &randomness_cell,
+    )?;
+    let (randomness_point, _) = randomness_base.mul(
+        layouter.namespace(|| "randomness times generator"),
+        randomness_scalar,
+    )?;
+    let calculated = value_point.add(
+        layouter.namespace(|| "value commitment sum"),
+        &randomness_point,
+    )?;
+    let expected = NonIdentityPoint::new(
+        chip,
+        layouter.namespace(|| "public value commitment"),
+        expected.map_or(Value::unknown(), Value::known),
+    )?;
+    calculated.constrain_equal(layouter.namespace(|| "bind value commitment"), &expected)?;
+    layouter.constrain_instance(expected.inner().x().cell(), config.instance, x_row)?;
+    layouter.constrain_instance(expected.inner().y().cell(), config.instance, y_row)?;
+    Ok(AssignedValueCommitment {
+        x: expected.inner().x(),
+        y: expected.inner().y(),
     })
 }
 

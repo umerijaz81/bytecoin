@@ -61,10 +61,16 @@ that the canonical spend-authority encoding is decoded and committed as its affi
 coordinates. Invalid or identity authority points are rejected. Memo bytes are excluded from the
 consensus commitment and instead integrity-protected by the authenticated note ciphertext.
 
-`OnyxOutput` contains a note commitment, ephemeral encryption key, encrypted note ciphertext, and
-outgoing-view ciphertext. `OnyxSpend` contains a nullifier and randomized spend-authority key. The
+`OnyxOutput` contains a note commitment, non-identity value commitment, ephemeral encryption key,
+encrypted note ciphertext, and outgoing-view ciphertext. `OnyxSpend` contains a nullifier,
+non-identity value commitment, and randomized spend-authority key. The
 spent commitment remains a private witness shared directly between note-opening and Merkle-path
 constraints.
+
+Value commitments use `cv = [value]V + [rcv]R`, where
+`V = hash_to_curve("bytecoin.onyx.v6.value-commitment", "v")` and `R` is the frozen Orchard
+RedPallas binding generator. Their canonical compressed encodings are public; values and trapdoors
+remain private. Identity and non-canonical commitment encodings fail before proof verification.
 Membership paths, note plaintexts, spending keys, and randomness remain private witnesses.
 
 `OnyxTransaction` contains: version, network id, anchor, expiry height, fee, ordered spends, ordered

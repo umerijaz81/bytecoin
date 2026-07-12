@@ -485,10 +485,18 @@ mod tests {
             fee: 5,
             spends: vec![PublicSpend {
                 nullifier: Nullifier(nullifier),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    30,
+                    Fp::from(101),
+                ),
                 randomized_key: [0; 32],
             }],
             outputs: vec![PublicOutput {
                 commitment: CanonicalField::from_field(output_commitment),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    25,
+                    Fp::from(102),
+                ),
                 ephemeral_key: [32; 32],
                 ciphertext: vec![33; 48],
                 outgoing_ciphertext: vec![34; 32],
@@ -609,8 +617,13 @@ mod tests {
         }
         let outputs = output_notes
             .iter()
-            .map(|note| PublicOutput {
+            .enumerate()
+            .map(|(index, note)| PublicOutput {
                 commitment: CanonicalField::from_field(commitment(*note)),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    [25, 20][index],
+                    Fp::from(120 + index as u64),
+                ),
                 ephemeral_key: [32; 32],
                 ciphertext: vec![33; 48],
                 outgoing_ciphertext: vec![34; 32],
@@ -623,8 +636,13 @@ mod tests {
             fee: 5,
             spends: nullifiers
                 .iter()
-                .map(|nf| PublicSpend {
+                .enumerate()
+                .map(|(index, nf)| PublicSpend {
                     nullifier: Nullifier(*nf),
+                    value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                        [30, 20][index],
+                        Fp::from(110 + index as u64),
+                    ),
                     randomized_key: [0; 32],
                 })
                 .collect(),

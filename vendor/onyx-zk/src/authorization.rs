@@ -200,10 +200,18 @@ mod tests {
             fee: 7,
             spends: vec![PublicSpend {
                 nullifier: Nullifier([3; 32]),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    halo2_proofs::pasta::Fp::from(2),
+                ),
                 randomized_key: [0; 32],
             }],
             outputs: vec![PublicOutput {
                 commitment: field(5),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    halo2_proofs::pasta::Fp::from(3),
+                ),
                 ephemeral_key: [6; 32],
                 ciphertext: vec![7; 48],
                 outgoing_ciphertext: vec![8; 32],

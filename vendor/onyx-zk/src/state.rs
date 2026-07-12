@@ -662,10 +662,18 @@ mod tests {
             fee: 1,
             spends: vec![PublicSpend {
                 nullifier: Nullifier([nullifier; 32]),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    Fp::from(2),
+                ),
                 randomized_key: [20; 32],
             }],
             outputs: vec![PublicOutput {
                 commitment: field(commitment),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    Fp::from(3),
+                ),
                 ephemeral_key: [21; 32],
                 ciphertext: vec![1, 2, 3],
                 outgoing_ciphertext: vec![4, 5],

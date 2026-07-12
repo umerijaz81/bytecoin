@@ -2,6 +2,8 @@
 
 use crate::state::{CanonicalField, Nullifier};
 use crate::types::{write_varint, DecodeError, Reader, NETWORK_ID_BYTES};
+use group::{Curve, GroupEncoding};
+use pasta_curves::{arithmetic::CurveAffine, pallas};
 use sha2::{Digest, Sha256};
 
 pub const ONYX_TRANSACTION_VERSION: u8 = 6;
@@ -17,12 +19,14 @@ const TRANSACTION_ID_DOMAIN: &[u8] = b"bytecoin.onyx.v6.transaction-id";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicSpend {
     pub nullifier: Nullifier,
+    pub value_commitment: [u8; 32],
     pub randomized_key: [u8; 32],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicOutput {
     pub commitment: CanonicalField,
+    pub value_commitment: [u8; 32],
     pub ephemeral_key: [u8; 32],
     pub ciphertext: Vec<u8>,
     pub outgoing_ciphertext: Vec<u8>,
@@ -66,6 +70,7 @@ pub enum TransactionError {
     ProofTooLarge,
     WrongSignatureCount,
     NonCanonicalNullifier,
+    InvalidValueCommitment,
 }
 
 impl From<DecodeError> for TransactionError {
@@ -92,6 +97,15 @@ impl TransactionPreimage {
         if self.outputs.len() > MAX_OUTPUTS {
             return Err(TransactionError::TooManyOutputs);
         }
+        if self
+            .spends
+            .iter()
+            .map(|spend| &spend.value_commitment)
+            .chain(self.outputs.iter().map(|output| &output.value_commitment))
+            .any(|bytes| !valid_nonidentity_point(bytes))
+        {
+            return Err(TransactionError::InvalidValueCommitment);
+        }
         if self.programs.len() > MAX_PROGRAMS {
             return Err(TransactionError::TooManyPrograms);
         }
@@ -115,11 +129,13 @@ impl TransactionPreimage {
         write_varint(self.spends.len() as u64, &mut out);
         for spend in &self.spends {
             out.extend_from_slice(&spend.nullifier.0);
+            out.extend_from_slice(&spend.value_commitment);
             out.extend_from_slice(&spend.randomized_key);
         }
         write_varint(self.outputs.len() as u64, &mut out);
         for output in &self.outputs {
             out.extend_from_slice(&output.commitment.bytes());
+            out.extend_from_slice(&output.value_commitment);
             out.extend_from_slice(&output.ephemeral_key);
             write_bytes(&output.ciphertext, &mut out);
             write_bytes(&output.outgoing_ciphertext, &mut out);
@@ -152,6 +168,7 @@ impl TransactionPreimage {
         for _ in 0..spend_count {
             spends.push(PublicSpend {
                 nullifier: Nullifier(reader.array()?),
+                value_commitment: reader.array()?,
                 randomized_key: reader.array()?,
             });
         }
@@ -164,11 +181,13 @@ impl TransactionPreimage {
         let mut outputs = Vec::with_capacity(output_count);
         for _ in 0..output_count {
             let commitment = reader.field()?;
+            let value_commitment = reader.array()?;
             let ephemeral_key = reader.array()?;
             let ciphertext = read_bytes(&mut reader, MAX_CIPHERTEXT_BYTES)?;
             let outgoing_ciphertext = read_bytes(&mut reader, MAX_OUT_CIPHERTEXT_BYTES)?;
             outputs.push(PublicOutput {
                 commitment,
+                value_commitment,
                 ephemeral_key,
                 ciphertext,
                 outgoing_ciphertext,
@@ -208,6 +227,12 @@ impl TransactionPreimage {
         tx.validate()?;
         Ok(tx)
     }
+}
+
+fn valid_nonidentity_point(bytes: &[u8; 32]) -> bool {
+    Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
+        .map(|point| bool::from(point.to_affine().coordinates().is_some()))
+        .unwrap_or(false)
 }
 
 impl AuthorizedTransaction {
@@ -352,10 +377,18 @@ mod tests {
             fee: 7,
             spends: vec![PublicSpend {
                 nullifier: Nullifier([3; 32]),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    Fp::from(2),
+                ),
                 randomized_key: [4; 32],
             }],
             outputs: vec![PublicOutput {
                 commitment: field(5),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    Fp::from(3),
+                ),
                 ephemeral_key: [6; 32],
                 ciphertext: vec![7; 48],
                 outgoing_ciphertext: vec![8; 32],
@@ -396,6 +429,10 @@ mod tests {
         tx.spends = (0..=MAX_SPENDS)
             .map(|value| PublicSpend {
                 nullifier: Nullifier([value as u8; 32]),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    1,
+                    Fp::from(value as u64 + 1),
+                ),
                 randomized_key: [value as u8; 32],
             })
             .collect();
@@ -419,6 +456,16 @@ mod tests {
         let mut tx = transaction();
         tx.spends[0].nullifier = Nullifier([0xff; 32]);
         assert_eq!(tx.encode(), Err(TransactionError::NonCanonicalNullifier));
+    }
+
+    #[test]
+    fn public_statement_rejects_invalid_value_commitments() {
+        let mut tx = transaction();
+        tx.outputs[0].value_commitment = [0xff; 32];
+        assert_eq!(tx.encode(), Err(TransactionError::InvalidValueCommitment));
+        tx = transaction();
+        tx.spends[0].value_commitment = [0; 32];
+        assert_eq!(tx.encode(), Err(TransactionError::InvalidValueCommitment));
     }
 
     #[test]
