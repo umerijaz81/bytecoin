@@ -1,8 +1,7 @@
 //! Transaction transcript binding and Orchard RedPallas spend authorization.
 
-use ff::FromUniformBytes;
+use ff::{Field, PrimeField};
 use pasta_curves::pallas;
-use rand::RngCore;
 use reddsa::orchard::SpendAuth;
 use reddsa::{Signature, SigningKey, VerificationKey};
 use sha2::{Digest, Sha256};
@@ -23,7 +22,68 @@ pub enum AuthorizationError {
     InvalidVerificationKey,
     InvalidSignature,
     WrongSignatureCount,
+    PreparedKeyMismatch,
     Transaction(TransactionError),
+}
+
+pub struct PreparedSpendAuthorizations {
+    randomized_keys: Vec<SigningKey<SpendAuth>>,
+    randomizers: Vec<halo2_proofs::pasta::Fp>,
+}
+
+impl PreparedSpendAuthorizations {
+    pub fn randomizers(&self) -> &[halo2_proofs::pasta::Fp] {
+        &self.randomizers
+    }
+}
+
+pub fn prepare_same_owner_spends(
+    keys: &KeyBundle,
+    transaction: &mut TransactionPreimage,
+) -> Result<PreparedSpendAuthorizations, AuthorizationError> {
+    let signing_key = SigningKey::<SpendAuth>::try_from(keys.spend_key_bytes())
+        .map_err(|_| AuthorizationError::InvalidSpendKey)?;
+    let mut rng = rand::rngs::OsRng;
+    let mut randomized_keys = Vec::with_capacity(transaction.spends.len());
+    let mut randomizers = Vec::with_capacity(transaction.spends.len());
+    for spend in &mut transaction.spends {
+        let randomizer = halo2_proofs::pasta::Fp::random(&mut rng);
+        let scalar =
+            Option::<pallas::Scalar>::from(pallas::Scalar::from_repr(randomizer.to_repr()))
+                .expect("every Pallas base element is canonical in its scalar field");
+        let randomized = signing_key.randomize(&scalar);
+        spend.randomized_key = VerificationKey::from(&randomized).into();
+        randomized_keys.push(randomized);
+        randomizers.push(randomizer);
+    }
+    Ok(PreparedSpendAuthorizations {
+        randomized_keys,
+        randomizers,
+    })
+}
+
+pub fn sign_prepared_spends(
+    prepared: &PreparedSpendAuthorizations,
+    transaction: &TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+) -> Result<Vec<[u8; 64]>, AuthorizationError> {
+    if prepared.randomized_keys.len() != transaction.spends.len() {
+        return Err(AuthorizationError::WrongSignatureCount);
+    }
+    for (key, spend) in prepared.randomized_keys.iter().zip(&transaction.spends) {
+        let expected: [u8; 32] = VerificationKey::from(key).into();
+        if expected != spend.randomized_key {
+            return Err(AuthorizationError::PreparedKeyMismatch);
+        }
+    }
+    let digest = authorization_digest(transaction, backend_id, proof)?;
+    let mut rng = rand::rngs::OsRng;
+    Ok(prepared
+        .randomized_keys
+        .iter()
+        .map(|key| key.sign(&mut rng, &digest).into())
+        .collect())
 }
 
 impl From<TransactionError> for AuthorizationError {
@@ -63,23 +123,8 @@ pub fn authorize_same_owner_spends(
     backend_id: &str,
     proof: &[u8],
 ) -> Result<Vec<[u8; 64]>, AuthorizationError> {
-    let signing_key = SigningKey::<SpendAuth>::try_from(keys.spend_key_bytes())
-        .map_err(|_| AuthorizationError::InvalidSpendKey)?;
-    let mut rng = rand::rngs::OsRng;
-    let mut randomized_keys = Vec::with_capacity(transaction.spends.len());
-    for spend in &mut transaction.spends {
-        let mut wide = [0u8; 64];
-        rng.fill_bytes(&mut wide);
-        let randomizer = pallas::Scalar::from_uniform_bytes(&wide);
-        let randomized = signing_key.randomize(&randomizer);
-        spend.randomized_key = VerificationKey::from(&randomized).into();
-        randomized_keys.push(randomized);
-    }
-    let digest = authorization_digest(transaction, backend_id, proof)?;
-    Ok(randomized_keys
-        .iter()
-        .map(|key| key.sign(&mut rng, &digest).into())
-        .collect())
+    let prepared = prepare_same_owner_spends(keys, transaction)?;
+    sign_prepared_spends(&prepared, transaction, backend_id, proof)
 }
 
 pub fn verify_spend_authorizations(

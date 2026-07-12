@@ -1,19 +1,22 @@
 //! Proof creation and verification for the current O2 linked transfer circuit.
 //!
 //! This API is deliberately not exported over the consensus FFI yet. The circuit binds native
-//! balance, input/output note commitments, anchor, and nullifier. In-circuit authorization remains
-//! required before the backend can be marked consensus-capable.
+//! balance, input/output note commitments, anchor, nullifier, and randomized spend authority. It
+//! remains experimental while it supports only one spend/output and lacks consensus FFI wiring.
 
+use group::{Curve, Group, GroupEncoding};
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PrimitiveHash, P128Pow5T3};
 use halo2_proofs::pasta::{EqAffine, Fp};
 use halo2_proofs::plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier};
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
+use pasta_curves::{arithmetic::CurveAffine, pallas};
 
 use crate::authorization::{verify_authorized_transaction, AuthorizationError};
 use crate::linked_transfer_circuit::LinkedTransferCircuit;
 use crate::membership_circuit::MembershipCircuit;
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
+use crate::spend_auth_circuit::SpendAuthCircuit;
 use crate::state::CanonicalField;
 use crate::transaction::{AuthorizedTransaction, TransactionError, MAX_PROOF_BYTES};
 
@@ -49,6 +52,9 @@ pub struct TransferWitness<const DEPTH: usize> {
     pub commitment: Fp,
     pub input_note: [Fp; NOTE_COMMITMENT_INPUTS],
     pub output_note: [Fp; NOTE_COMMITMENT_INPUTS],
+    pub authority_key: pallas::Affine,
+    pub authorization_randomizer: Fp,
+    pub randomized_key: pallas::Affine,
     pub siblings: Vec<Fp>,
     pub position: u64,
     pub nullifier_key: Fp,
@@ -73,6 +79,11 @@ impl<const DEPTH: usize> TransferWitness<DEPTH> {
             .map_err(|_| ProofError::InvalidShape)?,
             self.input_note,
             self.output_note,
+            SpendAuthCircuit::new(
+                self.authority_key,
+                self.authorization_randomizer,
+                self.randomized_key,
+            ),
         ))
     }
 }
@@ -95,12 +106,18 @@ pub fn create_transfer_proof<const DEPTH: usize>(
         PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
             .hash(witness.output_note),
     ];
+    let randomized_coordinates = witness.randomized_key.coordinates();
+    if bool::from(randomized_coordinates.is_none()) {
+        return Err(ProofError::InvalidPublicInput);
+    }
+    let randomized_coordinates = randomized_coordinates.unwrap();
+    let authorization = [*randomized_coordinates.x(), *randomized_coordinates.y()];
     let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
     create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
         &params,
         &pk,
         &[circuit],
-        &[&[&public, &membership, &notes]],
+        &[&[&public, &membership, &notes, &authorization]],
         rand::rngs::OsRng,
         &mut transcript,
     )
@@ -134,19 +151,35 @@ pub fn verify_transfer_proof<const DEPTH: usize>(
             .map_err(|_| ProofError::InvalidShape)?,
         [Fp::zero(); NOTE_COMMITMENT_INPUTS],
         [Fp::zero(); NOTE_COMMITMENT_INPUTS],
+        SpendAuthCircuit::new(
+            pallas::Point::generator().to_affine(),
+            Fp::zero(),
+            pallas::Point::generator().to_affine(),
+        ),
     );
     let params: Params<EqAffine> = Params::new(k);
     let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
     let public = [Fp::from(transaction.preimage.fee)];
     let membership = [transaction.preimage.anchor.field(), nullifier.field()];
     let notes = [transaction.preimage.outputs[0].commitment.field()];
+    let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+        &transaction.preimage.spends[0].randomized_key,
+    ))
+    .ok_or(ProofError::InvalidPublicInput)?
+    .to_affine();
+    let randomized_coordinates = randomized_key.coordinates();
+    if bool::from(randomized_coordinates.is_none()) {
+        return Err(ProofError::InvalidPublicInput);
+    }
+    let randomized_coordinates = randomized_coordinates.unwrap();
+    let authorization = [*randomized_coordinates.x(), *randomized_coordinates.y()];
     let mut transcript =
         Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
     verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
         &params,
         &vk,
         SingleVerifier::new(&params),
-        &[&[&public, &membership, &notes]],
+        &[&[&public, &membership, &notes, &authorization]],
         &mut transcript,
     )
     .map_err(|_| ProofError::VerificationFailed)
@@ -165,7 +198,7 @@ mod tests {
     use ff::PrimeField;
     use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PrimitiveHash, P128Pow5T3};
 
-    use crate::authorization::authorize_transaction;
+    use crate::authorization::{prepare_same_owner_spends, sign_prepared_spends};
     use crate::keys::MasterSeed;
     use crate::state::Nullifier;
     use crate::transaction::{PublicOutput, PublicSpend, TransactionPreimage};
@@ -181,8 +214,19 @@ mod tests {
     fn experimental_transfer_backend_proves_then_authenticates() {
         const DEPTH: usize = 4;
         const K: u32 = 14;
+        let keys = MasterSeed::new([9; 32])
+            .derive([1; NETWORK_ID_BYTES])
+            .unwrap();
+        let address = keys.address(0).unwrap();
+        let authority_key =
+            Option::<pallas::Point>::from(pallas::Point::from_bytes(&address.spend_authority_key))
+                .unwrap()
+                .to_affine();
+        let authority_coordinates = authority_key.coordinates().unwrap();
         let mut input_note = std::array::from_fn(|index| Fp::from(index as u64 + 40));
         input_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(30);
+        input_note[10] = *authority_coordinates.x();
+        input_note[11] = *authority_coordinates.y();
         let commitment =
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
                 .hash(input_note);
@@ -209,24 +253,8 @@ mod tests {
             hash2(hash2(nullifier_key, rho), Fp::from(position)),
         )
         .to_repr();
-        let witness: TransferWitness<DEPTH> = TransferWitness {
-            input_values: vec![30],
-            output_values: vec![25],
-            commitment,
-            input_note,
-            output_note,
-            siblings,
-            position,
-            nullifier_key,
-            rho,
-        };
         let anchor = CanonicalField::from_field(root);
-        let proof = create_transfer_proof(K, &witness, 5, anchor, nullifier).unwrap();
-        let mut mismatched_opening = witness.clone();
-        mismatched_opening.input_note[0] += Fp::one();
-        let mismatched_proof =
-            create_transfer_proof(K, &mismatched_opening, 5, anchor, nullifier).unwrap();
-        let preimage = TransactionPreimage {
+        let mut preimage = TransactionPreimage {
             network_id: [1; NETWORK_ID_BYTES],
             anchor,
             expiry_height: 100,
@@ -243,22 +271,54 @@ mod tests {
             }],
             programs: vec![],
         };
-        let keys = MasterSeed::new([9; 32])
-            .derive([1; NETWORK_ID_BYTES])
-            .unwrap();
-        let transaction = authorize_transaction(
-            &keys,
+        let prepared = prepare_same_owner_spends(&keys, &mut preimage).unwrap();
+        let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+            &preimage.spends[0].randomized_key,
+        ))
+        .unwrap()
+        .to_affine();
+        let witness: TransferWitness<DEPTH> = TransferWitness {
+            input_values: vec![30],
+            output_values: vec![25],
+            commitment,
+            input_note,
+            output_note,
+            authority_key,
+            authorization_randomizer: prepared.randomizers()[0],
+            randomized_key,
+            siblings,
+            position,
+            nullifier_key,
+            rho,
+        };
+        let proof = create_transfer_proof(K, &witness, 5, anchor, nullifier).unwrap();
+        let mut mismatched_opening = witness.clone();
+        mismatched_opening.input_note[0] += Fp::one();
+        let mismatched_proof =
+            create_transfer_proof(K, &mismatched_opening, 5, anchor, nullifier).unwrap();
+        let spend_signatures =
+            sign_prepared_spends(&prepared, &preimage, EXPERIMENTAL_TRANSFER_BACKEND, &proof)
+                .unwrap();
+        let transaction = AuthorizedTransaction {
             preimage,
-            EXPERIMENTAL_TRANSFER_BACKEND.to_owned(),
+            backend_id: EXPERIMENTAL_TRANSFER_BACKEND.to_owned(),
             proof,
-        )
-        .unwrap();
+            spend_signatures,
+        };
         assert!(verify_authorized_transfer::<DEPTH>(K, &transaction).is_ok());
 
         let mut mismatched_transaction = transaction.clone();
         mismatched_transaction.proof = mismatched_proof;
         assert_eq!(
             verify_transfer_proof::<DEPTH>(K, &mismatched_transaction),
+            Err(ProofError::VerificationFailed)
+        );
+
+        let mut wrong_randomized_key = transaction.clone();
+        wrong_randomized_key.preimage.spends[0].randomized_key =
+            pallas::Point::generator().to_bytes();
+        assert_eq!(
+            verify_transfer_proof::<DEPTH>(K, &wrong_randomized_key),
             Err(ProofError::VerificationFailed)
         );
 

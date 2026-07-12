@@ -1,8 +1,10 @@
 //! Canonical Onyx O1 note encodings and deterministic identifiers.
 
 use ff::PrimeField;
+use group::{Curve, GroupEncoding};
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, P128Pow5T3};
 use halo2_proofs::pasta::Fp;
+use pasta_curves::{arithmetic::CurveAffine, pallas};
 
 use crate::state::{CanonicalField, Nullifier};
 
@@ -22,6 +24,7 @@ pub enum DecodeError {
     NonMinimalVarint,
     VarintOverflow,
     MemoTooLarge,
+    InvalidSpendAuthorityKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,6 +46,7 @@ impl NotePlaintext {
         if self.memo.len() > MAX_MEMO_BYTES {
             return Err(DecodeError::MemoTooLarge);
         }
+        self.spend_authority_coordinates()?;
         let mut out = Vec::with_capacity(190 + self.memo.len());
         out.push(ONYX_NOTE_VERSION);
         out.extend_from_slice(&self.network_id);
@@ -81,7 +85,7 @@ impl NotePlaintext {
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData);
         }
-        Ok(Self {
+        let note = Self {
             network_id,
             program_id,
             asset_id,
@@ -92,22 +96,24 @@ impl NotePlaintext {
             rho,
             randomness,
             memo,
-        })
+        };
+        note.spend_authority_coordinates()?;
+        Ok(note)
     }
 
     pub fn commitment(&self) -> Result<CanonicalField, DecodeError> {
-        let inputs = self.commitment_inputs();
+        let inputs = self.commitment_inputs()?;
         Ok(CanonicalField::from_field(
             PoseidonHash::<Fp, P128Pow5T3, ConstantLength<14>, 3, 2>::init().hash(inputs),
         ))
     }
 
-    pub fn commitment_inputs(&self) -> [Fp; 14] {
+    pub fn commitment_inputs(&self) -> Result<[Fp; 14], DecodeError> {
         let program = pack_32(&self.program_id);
         let asset = pack_32(&self.asset_id);
         let transmission = pack_32(&self.transmission_key);
-        let spend_authority = pack_32(&self.spend_authority_key);
-        [
+        let spend_authority = self.spend_authority_coordinates()?;
+        Ok([
             Fp::from(NOTE_TAG),
             pack_short(&self.network_id),
             program[0],
@@ -122,7 +128,20 @@ impl NotePlaintext {
             spend_authority[1],
             self.rho.field(),
             self.randomness.field(),
-        ]
+        ])
+    }
+
+    pub fn spend_authority_coordinates(&self) -> Result<[Fp; 2], DecodeError> {
+        let point =
+            Option::<pallas::Point>::from(pallas::Point::from_bytes(&self.spend_authority_key))
+                .ok_or(DecodeError::InvalidSpendAuthorityKey)?
+                .to_affine();
+        let coordinates = point.coordinates();
+        if bool::from(coordinates.is_none()) {
+            return Err(DecodeError::InvalidSpendAuthorityKey);
+        }
+        let coordinates = coordinates.unwrap();
+        Ok([*coordinates.x(), *coordinates.y()])
     }
 
     pub fn nullifier(&self, nullifier_key: CanonicalField, position: u64) -> Nullifier {
@@ -226,7 +245,10 @@ mod tests {
             value: 42,
             diversifier: [4; DIVERSIFIER_BYTES],
             transmission_key: [5; 32],
-            spend_authority_key: [8; 32],
+            spend_authority_key: [
+                99, 201, 117, 184, 132, 114, 26, 141, 12, 161, 112, 123, 227, 12, 127, 12, 95, 68,
+                95, 62, 124, 24, 141, 59, 6, 214, 241, 40, 179, 35, 85, 183,
+            ],
             rho: CanonicalField::from_field(Fp::from(6)),
             randomness: CanonicalField::from_field(Fp::from(7)),
             memo: b"onyx".to_vec(),
@@ -241,7 +263,7 @@ mod tests {
         let commitment = note.commitment().unwrap();
         assert_eq!(
             hex(&commitment.bytes()),
-            "96d53da24b9fb5774f6e3fb68966a52951c6035ea157e82f19a76c570e2adc2a"
+            "971ffe49dde4e2b5f6ae85f917c44b962dfbd27ae05cb1f550307a4881177f0d"
         );
         let mut changed = note.clone();
         changed.value += 1;
@@ -285,6 +307,13 @@ mod tests {
         let mut oversized = note();
         oversized.memo = vec![0; MAX_MEMO_BYTES + 1];
         assert_eq!(oversized.encode(), Err(DecodeError::MemoTooLarge));
+
+        let mut invalid_authority = note();
+        invalid_authority.spend_authority_key = [0xff; 32];
+        assert_eq!(
+            invalid_authority.encode(),
+            Err(DecodeError::InvalidSpendAuthorityKey)
+        );
     }
 
     #[test]

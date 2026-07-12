@@ -32,6 +32,7 @@ pub mod linked_transfer_circuit;
 pub mod membership_circuit;
 pub mod note_commitment_circuit;
 pub mod proof;
+pub mod spend_auth_circuit;
 pub mod state;
 pub mod transaction;
 pub mod transfer_circuit;

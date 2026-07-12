@@ -67,6 +67,7 @@ impl Circuit<Fp> for NoteCommitmentCircuit {
             layouter.namespace(|| "note commitment"),
             &self.inputs,
             None,
+            None,
         )?;
         layouter.constrain_instance(commitment.cell(), config.instance, 0)
     }
@@ -77,6 +78,7 @@ pub(crate) fn synthesize_note_commitment(
     mut layouter: impl Layouter<Fp>,
     inputs: &[Option<Fp>; NOTE_COMMITMENT_INPUTS],
     external_value: Option<&AssignedCell<Fp, Fp>>,
+    external_authority: Option<(&AssignedCell<Fp, Fp>, &AssignedCell<Fp, Fp>)>,
 ) -> Result<AssignedCell<Fp, Fp>, Error> {
     let message = layouter.assign_region(
         || "load note fields",
@@ -94,6 +96,23 @@ pub(crate) fn synthesize_note_commitment(
                     } else {
                         region.assign_advice(
                             || "note value",
+                            config.state[0],
+                            index,
+                            || input.map_or(Value::unknown(), Value::known),
+                        )?
+                    }
+                } else if index == 10 || index == 11 {
+                    if let Some((x, y)) = external_authority {
+                        let coordinate = if index == 10 { x } else { y };
+                        coordinate.copy_advice(
+                            || "linked spend-authority coordinate",
+                            &mut region,
+                            config.state[0],
+                            index,
+                        )?
+                    } else {
+                        region.assign_advice(
+                            || "spend-authority coordinate",
                             config.state[0],
                             index,
                             || input.map_or(Value::unknown(), Value::known),
@@ -137,7 +156,10 @@ mod tests {
             value: 42,
             diversifier: [4; DIVERSIFIER_BYTES],
             transmission_key: [5; 32],
-            spend_authority_key: [8; 32],
+            spend_authority_key: [
+                99, 201, 117, 184, 132, 114, 26, 141, 12, 161, 112, 123, 227, 12, 127, 12, 95, 68,
+                95, 62, 124, 24, 141, 59, 6, 214, 241, 40, 179, 35, 85, 183,
+            ],
             rho: CanonicalField::from_field(Fp::from(6)),
             randomness: CanonicalField::from_field(Fp::from(7)),
             memo: b"not committed; authenticated by AEAD".to_vec(),
@@ -148,7 +170,7 @@ mod tests {
     fn note_commitment_circuit_matches_native_encoding() {
         let note = note();
         let commitment = Fp::from_repr(note.commitment().unwrap().bytes()).unwrap();
-        let circuit = NoteCommitmentCircuit::new(note.commitment_inputs());
+        let circuit = NoteCommitmentCircuit::new(note.commitment_inputs().unwrap());
         let prover = MockProver::run(11, &circuit, vec![vec![commitment]]).unwrap();
         prover.assert_satisfied();
         let bad = MockProver::run(11, &circuit, vec![vec![commitment + Fp::one()]]).unwrap();

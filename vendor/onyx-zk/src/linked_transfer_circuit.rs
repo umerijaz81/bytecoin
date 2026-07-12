@@ -12,6 +12,9 @@ use crate::membership_circuit::{synthesize_membership, MembershipCircuit, Member
 use crate::note_commitment_circuit::{
     synthesize_note_commitment, NoteCommitmentConfig, NOTE_COMMITMENT_INPUTS,
 };
+use crate::spend_auth_circuit::{
+    configure_spend_authority, synthesize_spend_authority, SpendAuthCircuit, SpendAuthConfig,
+};
 use crate::transfer_circuit::{synthesize_native_values, NativeValueCircuit, ValueConfig};
 
 #[derive(Clone)]
@@ -19,6 +22,7 @@ pub struct LinkedTransferConfig {
     values: ValueConfig,
     membership: MembershipConfig,
     notes: NoteCommitmentConfig,
+    authorization: SpendAuthConfig,
 }
 
 #[derive(Clone)]
@@ -27,6 +31,7 @@ pub struct LinkedTransferCircuit<const DEPTH: usize> {
     membership: MembershipCircuit<DEPTH>,
     input_note: [Option<Fp>; NOTE_COMMITMENT_INPUTS],
     output_note: [Option<Fp>; NOTE_COMMITMENT_INPUTS],
+    authorization: SpendAuthCircuit,
 }
 
 impl<const DEPTH: usize> LinkedTransferCircuit<DEPTH> {
@@ -36,6 +41,7 @@ impl<const DEPTH: usize> LinkedTransferCircuit<DEPTH> {
         membership: MembershipCircuit<DEPTH>,
         input_note: [Fp; NOTE_COMMITMENT_INPUTS],
         output_note: [Fp; NOTE_COMMITMENT_INPUTS],
+        authorization: SpendAuthCircuit,
     ) -> Self {
         Self {
             values: NativeValueCircuit::new(&[input_value], &[output_value])
@@ -43,6 +49,7 @@ impl<const DEPTH: usize> LinkedTransferCircuit<DEPTH> {
             membership,
             input_note: input_note.map(Some),
             output_note: output_note.map(Some),
+            authorization,
         }
     }
 }
@@ -57,6 +64,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             membership: self.membership.without_witnesses(),
             input_note: [None; NOTE_COMMITMENT_INPUTS],
             output_note: [None; NOTE_COMMITMENT_INPUTS],
+            authorization: self.authorization.without_witnesses(),
         }
     }
 
@@ -65,6 +73,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             values: NativeValueCircuit::configure(meta),
             membership: MembershipCircuit::<DEPTH>::configure(meta),
             notes: crate::note_commitment_circuit::NoteCommitmentCircuit::configure(meta),
+            authorization: configure_spend_authority(meta),
         }
     }
 
@@ -78,17 +87,24 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &config.values,
             layouter.namespace(|| "native values"),
         )?;
+        let authority = synthesize_spend_authority(
+            &self.authorization,
+            &config.authorization,
+            layouter.namespace(|| "spend authorization"),
+        )?;
         let input_commitment = synthesize_note_commitment(
             &config.notes,
             layouter.namespace(|| "input note"),
             &self.input_note,
             Some(&values.input_cells[0]),
+            Some((&authority.x, &authority.y)),
         )?;
         let output_commitment = synthesize_note_commitment(
             &config.notes,
             layouter.namespace(|| "output note"),
             &self.output_note,
             Some(&values.output_cells[0]),
+            None,
         )?;
         layouter.constrain_instance(output_commitment.cell(), config.notes.instance, 0)?;
         synthesize_membership(
@@ -102,8 +118,10 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
 
 #[cfg(test)]
 mod tests {
+    use group::Curve;
     use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PrimitiveHash, P128Pow5T3};
     use halo2_proofs::dev::MockProver;
+    use pasta_curves::{arithmetic::CurveAffine, pallas};
 
     use super::*;
 
@@ -128,7 +146,15 @@ mod tests {
     #[test]
     fn links_balanced_values_to_input_and_output_notes() {
         const DEPTH: usize = 4;
-        let input_note = note(10, 30);
+        let generator = crate::spend_auth_circuit::spend_auth_generator();
+        let authority_key = (generator * pallas::Scalar::from(17)).to_affine();
+        let randomizer = Fp::from(23);
+        let randomized_key = (authority_key + generator * pallas::Scalar::from(23)).to_affine();
+        let authority_coordinates = authority_key.coordinates().unwrap();
+        let randomized_coordinates = randomized_key.coordinates().unwrap();
+        let mut input_note = note(10, 30);
+        input_note[10] = *authority_coordinates.x();
+        input_note[11] = *authority_coordinates.y();
         let output_note = note(100, 25);
         let input_commitment = commitment(input_note);
         let output_commitment = commitment(output_note);
@@ -157,11 +183,19 @@ mod tests {
             rho,
         )
         .unwrap();
-        let circuit = LinkedTransferCircuit::new(30, 25, membership, input_note, output_note);
+        let circuit = LinkedTransferCircuit::new(
+            30,
+            25,
+            membership,
+            input_note,
+            output_note,
+            SpendAuthCircuit::new(authority_key, randomizer, randomized_key),
+        );
         let instances = vec![
             vec![Fp::from(5)],
             vec![root, nullifier],
             vec![output_commitment],
+            vec![*randomized_coordinates.x(), *randomized_coordinates.y()],
         ];
         MockProver::run(15, &circuit, instances.clone())
             .unwrap()

@@ -53,8 +53,9 @@ No domain constant may be reused for another purpose.
 `OnyxNotePlaintext` contains: format version, network id, program id, asset id, unsigned 64-bit
 value, owner diversifier, owner transmission key, RedPallas spend-authority key, rho, randomness,
 memo length, and memo. Value is private witness data and never serialized in the public transaction.
-The Poseidon note commitment
-binds every consensus field through fixed 31-byte field packing. Memo bytes are excluded from the
+The Poseidon note commitment binds every consensus field through fixed 31-byte field packing, except
+that the canonical spend-authority encoding is decoded and committed as its affine `(x, y)` field
+coordinates. Invalid or identity authority points are rejected. Memo bytes are excluded from the
 consensus commitment and instead integrity-protected by the authenticated note ciphertext.
 
 `OnyxOutput` contains a note commitment, ephemeral encryption key, encrypted note ciphertext, and
@@ -93,6 +94,11 @@ The circuit proves note membership, correct nullifiers, spend authorization, 64-
 per-asset conservation, output commitment construction, and registered program predicates. For the
 native asset, `sum(inputs) = sum(outputs) + fee`. A binding signature covers the transaction sighash
 and net value-commitment balance. The toy O0 verifier is forbidden on consensus paths.
+
+Spend authorization is prepared before proving: a private base-field randomizer is converted
+canonically into a Pallas scalar, `rk = ak + [alpha] SpendAuthG` is written into the transaction, the
+proof binds `rk` to the private `ak` committed in the spent note, and only then does the randomized
+RedPallas key sign the final transaction-and-proof digest.
 
 ## 6. Keys and encryption
 
