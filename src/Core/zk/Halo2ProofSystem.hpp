@@ -37,6 +37,11 @@ public:
 	// Toy circuit prover (knowledge of a, b with a*b = public). Fills proof/vk/public_out.
 	static bool toy_prove(
 	    uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out);
+
+	// Canonical Onyx authorized-envelope verification. Consensus callers use frozen depth/K
+	// constants; malformed, unsupported, and invalid envelopes all fail closed.
+	static bool verify_authorized_transfer(
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k);
 };
 
 }  // namespace zk

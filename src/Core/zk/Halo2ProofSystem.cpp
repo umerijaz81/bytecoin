@@ -29,6 +29,14 @@ bool Halo2ProofSystem::sinsemilla_hash(const BinaryArray &in, uint8_t out[32]) {
 	return onyx_sinsemilla_hash(in.empty() ? nullptr : in.data(), in.size(), out) == 0;
 }
 
+bool Halo2ProofSystem::verify_authorized_transfer(
+    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k) {
+	if (encoded.empty())
+		return false;
+	return onyx_verify_authorized_transfer(
+	           encoded.data(), encoded.size(), merkle_depth, circuit_k) == 1;
+}
+
 bool Halo2ProofSystem::toy_prove(
     uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out) {
 	uint8_t *proof_ptr = nullptr;

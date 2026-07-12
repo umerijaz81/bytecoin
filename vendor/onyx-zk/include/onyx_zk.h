@@ -44,6 +44,13 @@ int onyx_toy_verify(const uint8_t *vk, size_t vk_len,
                     const uint8_t *proof, size_t proof_len,
                     const uint8_t public_input[32]);
 
+/* Verify a canonical Rust-encoded AuthorizedTransaction using an explicitly selected, bounded
+ * circuit family. This is the integration boundary used by the inactive V6 consensus adapter;
+ * unsupported shapes/depths/K values fail closed. 1 = valid, 0 = invalid, <0 = malformed or
+ * unsupported. Input is limited to 384 KiB. */
+int onyx_verify_authorized_transfer(const uint8_t *encoded, size_t encoded_len,
+                                    uint32_t merkle_depth, uint32_t circuit_k);
+
 /* Release a buffer previously returned by this library. */
 void onyx_free(uint8_t *ptr, size_t len);
 

@@ -45,10 +45,72 @@ const TOY_K: u32 = 4; // 2^4 rows is ample for the one-multiplication toy circui
 const MAX_HASH_INPUT: usize = 4 * 1024;
 const MAX_PROOF_BYTES: usize = 192 * 1024;
 const MAX_VK_BYTES: usize = 1024 * 1024;
+const MAX_AUTHORIZED_TRANSACTION_BYTES: usize = 384 * 1024;
 const ERR_PANIC: i32 = -127;
 
 fn ffi_i32(f: impl FnOnce() -> i32) -> i32 {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(ERR_PANIC)
+}
+
+/// Verify a canonical authorized Onyx transfer envelope.
+///
+/// This bounded integration surface deliberately supports only audited circuit-family shapes.
+/// Return values: 1 valid, 0 cryptographically invalid, -1 bad pointer/length, -2 malformed
+/// encoding, -3 unsupported depth/shape/K.
+#[no_mangle]
+pub extern "C" fn onyx_verify_authorized_transfer(
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null() || encoded_len == 0 || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES {
+            return -1;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
+        }
+        let bytes = unsafe { slice::from_raw_parts(encoded, encoded_len) };
+        let transaction = match transaction::AuthorizedTransaction::decode(bytes) {
+            Ok(transaction) => transaction,
+            Err(_) => return -2,
+        };
+        let shape = (
+            merkle_depth,
+            transaction.preimage.spends.len(),
+            transaction.preimage.outputs.len(),
+        );
+        let result = match shape {
+            (2, 1, 1) => {
+                proof::verify_authorized_multi_transfer::<2, 1, 1>(circuit_k, &transaction)
+            }
+            (2, 2, 2) => {
+                proof::verify_authorized_multi_transfer::<2, 2, 2>(circuit_k, &transaction)
+            }
+            (4, 1, 1) if transaction.backend_id == proof::EXPERIMENTAL_TRANSFER_BACKEND => {
+                proof::verify_authorized_transfer::<4>(circuit_k, &transaction)
+            }
+            (4, 1, 1) => {
+                proof::verify_authorized_multi_transfer::<4, 1, 1>(circuit_k, &transaction)
+            }
+            (4, 2, 2) => {
+                proof::verify_authorized_multi_transfer::<4, 2, 2>(circuit_k, &transaction)
+            }
+            (32, 1, 1) => {
+                proof::verify_authorized_multi_transfer::<32, 1, 1>(circuit_k, &transaction)
+            }
+            (32, 2, 2) => {
+                proof::verify_authorized_multi_transfer::<32, 2, 2>(circuit_k, &transaction)
+            }
+            _ => return -3,
+        };
+        if result.is_ok() {
+            1
+        } else {
+            0
+        }
+    })
 }
 
 #[no_mangle]
@@ -419,6 +481,27 @@ mod tests {
                 MAX_PROOF_BYTES + 1,
                 public.as_ptr(),
             ),
+            -1
+        );
+        assert_eq!(
+            onyx_verify_authorized_transfer(
+                input.as_ptr(),
+                MAX_AUTHORIZED_TRANSACTION_BYTES + 1,
+                32,
+                20,
+            ),
+            -1
+        );
+        assert_eq!(
+            onyx_verify_authorized_transfer(input.as_ptr(), 1, 32, 20),
+            -2
+        );
+        assert_eq!(
+            onyx_verify_authorized_transfer(input.as_ptr(), 1, 32, 21),
+            -3
+        );
+        assert_eq!(
+            onyx_verify_authorized_transfer(std::ptr::null(), 1, 32, 20),
             -1
         );
         assert_eq!(

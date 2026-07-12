@@ -76,5 +76,18 @@ void test_zk() {
 		std::cout << "  [zk] verify_batch ok" << std::endl;
 	}
 
+	// 5. Canonical authorized-envelope boundary fails closed on empty, malformed, and unsupported
+	// circuit selections before any proof work.
+	{
+		invariant(!Halo2ProofSystem::verify_authorized_transfer(BinaryArray{}, 32, 20),
+		    "empty authorized transfer must fail");
+		const BinaryArray malformed{0x06, 0x00, 0xff};
+		invariant(!Halo2ProofSystem::verify_authorized_transfer(malformed, 32, 20),
+		    "malformed authorized transfer must fail");
+		invariant(!Halo2ProofSystem::verify_authorized_transfer(malformed, 32, 21),
+		    "unsupported circuit K must fail");
+		std::cout << "  [zk] authorized-transfer boundary rejects malformed input" << std::endl;
+	}
+
 	std::cout << "  test_zk: OK" << std::endl;
 }

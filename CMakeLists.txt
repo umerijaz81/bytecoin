@@ -175,11 +175,13 @@ if(ONYX_ZK)
     else()
         set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/libonyx_zk.a)
     endif()
+    file(GLOB ONYX_ZK_RUST_SOURCES CONFIGURE_DEPENDS ${ONYX_ZK_DIR}/src/*.rs)
     add_custom_command(
         OUTPUT ${ONYX_ZK_LIB}
         COMMAND ${CARGO_EXECUTABLE} build --release --locked --offline --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
         WORKING_DIRECTORY ${ONYX_ZK_DIR}
-        DEPENDS ${ONYX_ZK_DIR}/src/lib.rs ${ONYX_ZK_DIR}/Cargo.toml ${ONYX_ZK_DIR}/include/onyx_zk.h
+        DEPENDS ${ONYX_ZK_RUST_SOURCES} ${ONYX_ZK_DIR}/Cargo.toml ${ONYX_ZK_DIR}/Cargo.lock
+                ${ONYX_ZK_DIR}/include/onyx_zk.h
         COMMENT "Building Onyx ZK backend (cargo build --release)"
         VERBATIM)
     add_custom_target(onyx_zk_build DEPENDS ${ONYX_ZK_LIB})
