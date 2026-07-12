@@ -42,6 +42,7 @@ impl From<TransactionError> for ProofError {
     }
 }
 
+#[derive(Clone)]
 pub struct TransferWitness<const DEPTH: usize> {
     pub input_values: Vec<u64>,
     pub output_values: Vec<u64>,
@@ -89,9 +90,8 @@ pub fn create_transfer_proof<const DEPTH: usize>(
     let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::ProvingFailed)?;
     let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
     let public = [Fp::from(fee)];
-    let membership = [anchor.field(), nullifier.field(), witness.commitment];
+    let membership = [anchor.field(), nullifier.field()];
     let notes = [
-        witness.commitment,
         PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
             .hash(witness.output_note),
     ];
@@ -138,15 +138,8 @@ pub fn verify_transfer_proof<const DEPTH: usize>(
     let params: Params<EqAffine> = Params::new(k);
     let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
     let public = [Fp::from(transaction.preimage.fee)];
-    let membership = [
-        transaction.preimage.anchor.field(),
-        nullifier.field(),
-        transaction.preimage.spends[0].commitment.field(),
-    ];
-    let notes = [
-        transaction.preimage.spends[0].commitment.field(),
-        transaction.preimage.outputs[0].commitment.field(),
-    ];
+    let membership = [transaction.preimage.anchor.field(), nullifier.field()];
+    let notes = [transaction.preimage.outputs[0].commitment.field()];
     let mut transcript =
         Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
     verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
@@ -229,6 +222,10 @@ mod tests {
         };
         let anchor = CanonicalField::from_field(root);
         let proof = create_transfer_proof(K, &witness, 5, anchor, nullifier).unwrap();
+        let mut mismatched_opening = witness.clone();
+        mismatched_opening.input_note[0] += Fp::one();
+        let mismatched_proof =
+            create_transfer_proof(K, &mismatched_opening, 5, anchor, nullifier).unwrap();
         let preimage = TransactionPreimage {
             network_id: [1; NETWORK_ID_BYTES],
             anchor,
@@ -236,7 +233,6 @@ mod tests {
             fee: 5,
             spends: vec![PublicSpend {
                 nullifier: Nullifier(nullifier),
-                commitment: CanonicalField::from_field(commitment),
                 randomized_key: [0; 32],
             }],
             outputs: vec![PublicOutput {
@@ -258,6 +254,13 @@ mod tests {
         )
         .unwrap();
         assert!(verify_authorized_transfer::<DEPTH>(K, &transaction).is_ok());
+
+        let mut mismatched_transaction = transaction.clone();
+        mismatched_transaction.proof = mismatched_proof;
+        assert_eq!(
+            verify_transfer_proof::<DEPTH>(K, &mismatched_transaction),
+            Err(ProofError::VerificationFailed)
+        );
 
         let mut changed = transaction;
         changed.preimage.fee = 4;

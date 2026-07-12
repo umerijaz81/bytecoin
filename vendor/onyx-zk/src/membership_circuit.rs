@@ -135,101 +135,110 @@ impl<const DEPTH: usize> Circuit<Fp> for MembershipCircuit<DEPTH> {
             self.commitment,
         )?;
         layouter.constrain_instance(commitment.cell(), config.instance, 2)?;
-        let leaf_tag = assign_constant(
-            layouter.namespace(|| "leaf tag"),
-            config.poseidon_state[0],
-            Fp::from(LEAF_TAG),
-        )?;
-        let mut node = hash2(
-            &config.poseidon,
-            &config.poseidon_state,
-            layouter.namespace(|| "leaf hash"),
-            &leaf_tag,
-            &commitment,
-        )?;
-        let mut path_bits = Vec::with_capacity(DEPTH);
-        for level in 0..DEPTH {
-            let sibling = assign_value(
-                layouter.namespace(|| format!("sibling {level}")),
-                config.poseidon_state[0],
-                self.siblings[level],
-            )?;
-            let bit = self
-                .position
-                .map(|position| Fp::from((position >> level) & 1));
-            let (left, right, bit_cell) = order_pair(
-                layouter.namespace(|| format!("path order {level}")),
-                &config,
-                &node,
-                &sibling,
-                bit,
-            )?;
-            path_bits.push(bit_cell);
-            let inner = hash2(
-                &config.poseidon,
-                &config.poseidon_state,
-                layouter.namespace(|| format!("node pair {level}")),
-                &left,
-                &right,
-            )?;
-            let node_tag = assign_constant(
-                layouter.namespace(|| format!("node tag {level}")),
-                config.poseidon_state[0],
-                Fp::from(NODE_TAG),
-            )?;
-            node = hash2(
-                &config.poseidon,
-                &config.poseidon_state,
-                layouter.namespace(|| format!("node hash {level}")),
-                &node_tag,
-                &inner,
-            )?;
-        }
-        layouter.constrain_instance(node.cell(), config.instance, 0)?;
+        synthesize_membership(self, &config, layouter, &commitment)
+    }
+}
 
-        let position = compose_position(
-            layouter.namespace(|| "compose position"),
+pub(crate) fn synthesize_membership<const DEPTH: usize>(
+    circuit: &MembershipCircuit<DEPTH>,
+    config: &MembershipConfig,
+    mut layouter: impl Layouter<Fp>,
+    commitment: &AssignedCell<Fp, Fp>,
+) -> Result<(), Error> {
+    let leaf_tag = assign_constant(
+        layouter.namespace(|| "leaf tag"),
+        config.poseidon_state[0],
+        Fp::from(LEAF_TAG),
+    )?;
+    let mut node = hash2(
+        &config.poseidon,
+        &config.poseidon_state,
+        layouter.namespace(|| "leaf hash"),
+        &leaf_tag,
+        &commitment,
+    )?;
+    let mut path_bits = Vec::with_capacity(DEPTH);
+    for level in 0..DEPTH {
+        let sibling = assign_value(
+            layouter.namespace(|| format!("sibling {level}")),
+            config.poseidon_state[0],
+            circuit.siblings[level],
+        )?;
+        let bit = circuit
+            .position
+            .map(|position| Fp::from((position >> level) & 1));
+        let (left, right, bit_cell) = order_pair(
+            layouter.namespace(|| format!("path order {level}")),
             &config,
-            &path_bits,
+            &node,
+            &sibling,
+            bit,
         )?;
-        let nullifier_key = assign_value(
-            layouter.namespace(|| "nullifier key"),
-            config.poseidon_state[0],
-            self.nullifier_key,
-        )?;
-        let rho = assign_value(
-            layouter.namespace(|| "rho"),
-            config.poseidon_state[0],
-            self.rho,
-        )?;
+        path_bits.push(bit_cell);
         let inner = hash2(
             &config.poseidon,
             &config.poseidon_state,
-            layouter.namespace(|| "nullifier key and rho"),
-            &nullifier_key,
-            &rho,
+            layouter.namespace(|| format!("node pair {level}")),
+            &left,
+            &right,
         )?;
-        let positioned = hash2(
-            &config.poseidon,
-            &config.poseidon_state,
-            layouter.namespace(|| "nullifier position"),
-            &inner,
-            &position,
-        )?;
-        let nullifier_tag = assign_constant(
-            layouter.namespace(|| "nullifier tag"),
+        let node_tag = assign_constant(
+            layouter.namespace(|| format!("node tag {level}")),
             config.poseidon_state[0],
-            Fp::from(NULLIFIER_TAG),
+            Fp::from(NODE_TAG),
         )?;
-        let nullifier = hash2(
+        node = hash2(
             &config.poseidon,
             &config.poseidon_state,
-            layouter.namespace(|| "nullifier hash"),
-            &nullifier_tag,
-            &positioned,
+            layouter.namespace(|| format!("node hash {level}")),
+            &node_tag,
+            &inner,
         )?;
-        layouter.constrain_instance(nullifier.cell(), config.instance, 1)
     }
+    layouter.constrain_instance(node.cell(), config.instance, 0)?;
+
+    let position = compose_position(
+        layouter.namespace(|| "compose position"),
+        &config,
+        &path_bits,
+    )?;
+    let nullifier_key = assign_value(
+        layouter.namespace(|| "nullifier key"),
+        config.poseidon_state[0],
+        circuit.nullifier_key,
+    )?;
+    let rho = assign_value(
+        layouter.namespace(|| "rho"),
+        config.poseidon_state[0],
+        circuit.rho,
+    )?;
+    let inner = hash2(
+        &config.poseidon,
+        &config.poseidon_state,
+        layouter.namespace(|| "nullifier key and rho"),
+        &nullifier_key,
+        &rho,
+    )?;
+    let positioned = hash2(
+        &config.poseidon,
+        &config.poseidon_state,
+        layouter.namespace(|| "nullifier position"),
+        &inner,
+        &position,
+    )?;
+    let nullifier_tag = assign_constant(
+        layouter.namespace(|| "nullifier tag"),
+        config.poseidon_state[0],
+        Fp::from(NULLIFIER_TAG),
+    )?;
+    let nullifier = hash2(
+        &config.poseidon,
+        &config.poseidon_state,
+        layouter.namespace(|| "nullifier hash"),
+        &nullifier_tag,
+        &positioned,
+    )?;
+    layouter.constrain_instance(nullifier.cell(), config.instance, 1)
 }
 
 fn assign_value(

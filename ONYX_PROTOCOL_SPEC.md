@@ -58,10 +58,9 @@ binds every consensus field through fixed 31-byte field packing. Memo bytes are 
 consensus commitment and instead integrity-protected by the authenticated note ciphertext.
 
 `OnyxOutput` contains a note commitment, ephemeral encryption key, encrypted note ciphertext, and
-outgoing-view ciphertext. `OnyxSpend` contains the spent note commitment, nullifier, and randomized
-spend-authority key. Publishing the spent commitment is required by the current Merkle construction;
-its privacy implications and a commitment-hiding alternative require independent review before
-activation.
+outgoing-view ciphertext. `OnyxSpend` contains a nullifier and randomized spend-authority key. The
+spent commitment remains a private witness shared directly between note-opening and Merkle-path
+constraints.
 Membership paths, note plaintexts, spending keys, and randomness remain private witnesses.
 
 `OnyxTransaction` contains: version, network id, anchor, expiry height, fee, ordered spends, ordered

@@ -1,14 +1,14 @@
 //! Linked one-spend, one-output Onyx transfer circuit.
 //!
 //! This composition connects the private values used by balance conservation to the exact input
-//! and output note commitments. The input commitment is also the public leaf consumed by the
-//! membership/nullifier component.
+//! and output note commitments. The input commitment cell is passed privately into the
+//! membership/nullifier component and is never exposed as a public transaction field.
 
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner};
 use halo2_proofs::pasta::Fp;
 use halo2_proofs::plonk::{Circuit, ConstraintSystem, Error};
 
-use crate::membership_circuit::{MembershipCircuit, MembershipConfig};
+use crate::membership_circuit::{synthesize_membership, MembershipCircuit, MembershipConfig};
 use crate::note_commitment_circuit::{
     synthesize_note_commitment, NoteCommitmentConfig, NOTE_COMMITMENT_INPUTS,
 };
@@ -90,11 +90,12 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &self.output_note,
             Some(&values.output_cells[0]),
         )?;
-        layouter.constrain_instance(input_commitment.cell(), config.notes.instance, 0)?;
-        layouter.constrain_instance(output_commitment.cell(), config.notes.instance, 1)?;
-        self.membership.synthesize(
-            config.membership,
+        layouter.constrain_instance(output_commitment.cell(), config.notes.instance, 0)?;
+        synthesize_membership(
+            &self.membership,
+            &config.membership,
             layouter.namespace(|| "membership and nullifier"),
+            &input_commitment,
         )
     }
 }
@@ -159,11 +160,25 @@ mod tests {
         let circuit = LinkedTransferCircuit::new(30, 25, membership, input_note, output_note);
         let instances = vec![
             vec![Fp::from(5)],
-            vec![root, nullifier, input_commitment],
-            vec![input_commitment, output_commitment],
+            vec![root, nullifier],
+            vec![output_commitment],
         ];
-        MockProver::run(15, &circuit, instances)
+        MockProver::run(15, &circuit, instances.clone())
             .unwrap()
             .assert_satisfied();
+
+        let mut wrong_root = instances.clone();
+        wrong_root[1][0] += Fp::one();
+        assert!(MockProver::run(15, &circuit, wrong_root)
+            .unwrap()
+            .verify()
+            .is_err());
+
+        let mut wrong_output = instances;
+        wrong_output[2][0] += Fp::one();
+        assert!(MockProver::run(15, &circuit, wrong_output)
+            .unwrap()
+            .verify()
+            .is_err());
     }
 }
