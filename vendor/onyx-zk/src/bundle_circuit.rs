@@ -112,7 +112,7 @@ mod tests {
             &params,
             &pk,
             &[circuit],
-            &[&[&[fee], &[root, nullifier]]],
+            &[&[&[fee], &[root, nullifier, commitment]]],
             rand::rngs::OsRng,
             &mut transcript,
         )
@@ -124,7 +124,7 @@ mod tests {
             &params,
             &vk,
             SingleVerifier::new(&params),
-            &[&[&[fee], &[root, nullifier]]],
+            &[&[&[fee], &[root, nullifier, commitment]]],
             &mut reader,
         )
         .is_ok());
@@ -134,7 +134,7 @@ mod tests {
             &params,
             &vk,
             SingleVerifier::new(&params),
-            &[&[&[Fp::from(4)], &[root, nullifier]]],
+            &[&[&[Fp::from(4)], &[root, nullifier, commitment]]],
             &mut reader,
         )
         .is_err());

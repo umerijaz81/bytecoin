@@ -29,10 +29,10 @@ Consensus invariants:
 
 | Purpose | Domain |
 |---|---|
-| Note commitment | `bytecoin.onyx.v6.note` |
-| Nullifier | `bytecoin.onyx.v6.nullifier` |
-| Merkle leaf | `bytecoin.onyx.v6.merkle.leaf` |
-| Merkle node | `bytecoin.onyx.v6.merkle.node` |
+| Note commitment | Poseidon fixed-length tag `4` |
+| Nullifier | Poseidon tag `3` |
+| Merkle leaf | Poseidon tag `1` |
+| Merkle node | Poseidon tag `2` |
 | Transaction sighash | `bytecoin.onyx.v6.tx` |
 | Proof transcript | `bytecoin.onyx.v6.proof` |
 | Key derivation | `bytecoin.onyx.v6.keys` |
@@ -51,11 +51,17 @@ No domain constant may be reused for another purpose.
 - Maximum expiry distance: 100 blocks.
 
 `OnyxNotePlaintext` contains: format version, network id, program id, asset id, unsigned 64-bit
-value, owner diversifier, owner transmission key, rho, randomness, memo length, and memo. Value is
-private witness data and never serialized in the public transaction.
+value, owner diversifier, owner transmission key, RedPallas spend-authority key, rho, randomness,
+memo length, and memo. Value is private witness data and never serialized in the public transaction.
+The Poseidon note commitment
+binds every consensus field through fixed 31-byte field packing. Memo bytes are excluded from the
+consensus commitment and instead integrity-protected by the authenticated note ciphertext.
 
 `OnyxOutput` contains a note commitment, ephemeral encryption key, encrypted note ciphertext, and
-outgoing-view ciphertext. `OnyxSpend` contains a nullifier and randomized spend-authority key.
+outgoing-view ciphertext. `OnyxSpend` contains the spent note commitment, nullifier, and randomized
+spend-authority key. Publishing the spent commitment is required by the current Merkle construction;
+its privacy implications and a commitment-hiding alternative require independent review before
+activation.
 Membership paths, note plaintexts, spending keys, and randomness remain private witnesses.
 
 `OnyxTransaction` contains: version, network id, anchor, expiry height, fee, ordered spends, ordered
@@ -143,4 +149,3 @@ duplicate, unknown-version, and cross-network tests. State transitions require a
 crash-recovery, reorg, duplicate-nullifier, stale-anchor, intra-block-anchor, and deterministic-root
 vectors. Circuits require valid vectors plus independently mutated public inputs, witnesses, proofs,
 signatures, commitments, nullifiers, fees, programs, and ciphertext bindings.
-

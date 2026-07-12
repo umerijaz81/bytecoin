@@ -155,6 +155,7 @@ mod tests {
             fee: 7,
             spends: vec![PublicSpend {
                 nullifier: Nullifier([3; 32]),
+                commitment: field(4),
                 randomized_key: [0; 32],
             }],
             outputs: vec![PublicOutput {

@@ -2,7 +2,6 @@
 
 use ff::PrimeField;
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, P128Pow5T3};
-use halo2_gadgets::sinsemilla::primitives::HashDomain;
 use halo2_proofs::pasta::Fp;
 
 use crate::state::{CanonicalField, Nullifier};
@@ -11,7 +10,7 @@ pub const ONYX_NOTE_VERSION: u8 = 1;
 pub const NETWORK_ID_BYTES: usize = 16;
 pub const DIVERSIFIER_BYTES: usize = 11;
 pub const MAX_MEMO_BYTES: usize = 4096;
-const NOTE_DOMAIN: &str = "bytecoin.onyx.v6.note";
+const NOTE_TAG: u64 = 4;
 const NULLIFIER_TAG: u64 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,6 +32,7 @@ pub struct NotePlaintext {
     pub value: u64,
     pub diversifier: [u8; DIVERSIFIER_BYTES],
     pub transmission_key: [u8; 32],
+    pub spend_authority_key: [u8; 32],
     pub rho: CanonicalField,
     pub randomness: CanonicalField,
     pub memo: Vec<u8>,
@@ -51,6 +51,7 @@ impl NotePlaintext {
         write_varint(self.value, &mut out);
         out.extend_from_slice(&self.diversifier);
         out.extend_from_slice(&self.transmission_key);
+        out.extend_from_slice(&self.spend_authority_key);
         out.extend_from_slice(&self.rho.bytes());
         out.extend_from_slice(&self.randomness.bytes());
         write_varint(self.memo.len() as u64, &mut out);
@@ -69,6 +70,7 @@ impl NotePlaintext {
         let value = reader.varint()?;
         let diversifier = reader.array()?;
         let transmission_key = reader.array()?;
+        let spend_authority_key = reader.array()?;
         let rho = reader.field()?;
         let randomness = reader.field()?;
         let memo_len = reader.varint()?;
@@ -86,6 +88,7 @@ impl NotePlaintext {
             value,
             diversifier,
             transmission_key,
+            spend_authority_key,
             rho,
             randomness,
             memo,
@@ -93,15 +96,33 @@ impl NotePlaintext {
     }
 
     pub fn commitment(&self) -> Result<CanonicalField, DecodeError> {
-        let encoding = self.encode()?;
-        let bits = encoding
-            .iter()
-            .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1));
-        let point = HashDomain::new(NOTE_DOMAIN)
-            .hash(bits)
-            .into_option()
-            .ok_or(DecodeError::NonCanonicalField)?;
-        Ok(CanonicalField::from_field(point))
+        let inputs = self.commitment_inputs();
+        Ok(CanonicalField::from_field(
+            PoseidonHash::<Fp, P128Pow5T3, ConstantLength<14>, 3, 2>::init().hash(inputs),
+        ))
+    }
+
+    pub fn commitment_inputs(&self) -> [Fp; 14] {
+        let program = pack_32(&self.program_id);
+        let asset = pack_32(&self.asset_id);
+        let transmission = pack_32(&self.transmission_key);
+        let spend_authority = pack_32(&self.spend_authority_key);
+        [
+            Fp::from(NOTE_TAG),
+            pack_short(&self.network_id),
+            program[0],
+            program[1],
+            asset[0],
+            asset[1],
+            Fp::from(self.value),
+            pack_short(&self.diversifier),
+            transmission[0],
+            transmission[1],
+            spend_authority[0],
+            spend_authority[1],
+            self.rho.field(),
+            self.randomness.field(),
+        ]
     }
 
     pub fn nullifier(&self, nullifier_key: CanonicalField, position: u64) -> Nullifier {
@@ -109,6 +130,17 @@ impl NotePlaintext {
         let positioned = poseidon2(inner, Fp::from(position));
         Nullifier(poseidon2(Fp::from(NULLIFIER_TAG), positioned).to_repr())
     }
+}
+
+fn pack_32(bytes: &[u8; 32]) -> [Fp; 2] {
+    [pack_short(&bytes[..31]), pack_short(&bytes[31..])]
+}
+
+fn pack_short(bytes: &[u8]) -> Fp {
+    assert!(bytes.len() <= 31);
+    let mut representation = [0u8; 32];
+    representation[..bytes.len()].copy_from_slice(bytes);
+    Option::<Fp>::from(Fp::from_repr(representation)).expect("31-byte value is canonical")
 }
 
 fn poseidon2(a: Fp, b: Fp) -> Fp {
@@ -194,6 +226,7 @@ mod tests {
             value: 42,
             diversifier: [4; DIVERSIFIER_BYTES],
             transmission_key: [5; 32],
+            spend_authority_key: [8; 32],
             rho: CanonicalField::from_field(Fp::from(6)),
             randomness: CanonicalField::from_field(Fp::from(7)),
             memo: b"onyx".to_vec(),
@@ -201,18 +234,21 @@ mod tests {
     }
 
     #[test]
-    fn note_round_trip_and_commitment_bind_every_field() {
+    fn note_round_trip_and_commitment_bind_consensus_fields() {
         let note = note();
         let encoded = note.encode().unwrap();
         assert_eq!(NotePlaintext::decode(&encoded), Ok(note.clone()));
         let commitment = note.commitment().unwrap();
         assert_eq!(
             hex(&commitment.bytes()),
-            "4971955b0f0f892f6b39a54dc56b812105c187e7a947b230630fe3bb30c36432"
+            "96d53da24b9fb5774f6e3fb68966a52951c6035ea157e82f19a76c570e2adc2a"
         );
-        let mut changed = note;
+        let mut changed = note.clone();
         changed.value += 1;
         assert_ne!(commitment, changed.commitment().unwrap());
+        changed = note;
+        changed.memo.push(0);
+        assert_eq!(commitment, changed.commitment().unwrap());
     }
 
     #[test]
@@ -239,7 +275,7 @@ mod tests {
     #[test]
     fn parser_rejects_noncanonical_field_and_oversized_memo() {
         let mut encoded = note().encode().unwrap();
-        let rho_offset = 1 + NETWORK_ID_BYTES + 32 + 32 + 1 + DIVERSIFIER_BYTES + 32;
+        let rho_offset = 1 + NETWORK_ID_BYTES + 32 + 32 + 1 + DIVERSIFIER_BYTES + 32 + 32;
         encoded[rho_offset..rho_offset + 32].fill(0xff);
         assert_eq!(
             NotePlaintext::decode(&encoded),

@@ -7,6 +7,8 @@ use halo2_proofs::pasta::Fp;
 use hkdf::Hkdf;
 use pasta_curves::pallas;
 use rand::RngCore;
+use reddsa::orchard::SpendAuth;
+use reddsa::{SigningKey, VerificationKey};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -77,6 +79,7 @@ pub struct RecipientAddress {
     pub network_id: [u8; NETWORK_ID_BYTES],
     pub diversifier: [u8; DIVERSIFIER_BYTES],
     pub transmission_key: [u8; 32],
+    pub spend_authority_key: [u8; 32],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,9 +90,16 @@ pub struct EncryptedNote {
 }
 
 impl KeyBundle {
+    fn spend_authority_key(&self) -> Result<[u8; 32], KeyError> {
+        let signing =
+            SigningKey::<SpendAuth>::try_from(*self.spend).map_err(|_| KeyError::Derivation)?;
+        Ok(VerificationKey::from(&signing).into())
+    }
+
     pub fn address(&self, index: u32) -> Result<RecipientAddress, KeyError> {
         let incoming = StaticSecret::from(*self.incoming);
         let transmission_key = PublicKey::from(&incoming).to_bytes();
+        let spend_authority_key = self.spend_authority_key()?;
         let hk = Hkdf::<Sha256>::new(Some(KEY_DOMAIN), self.diversifier.as_ref());
         let mut diversifier = [0u8; DIVERSIFIER_BYTES];
         let mut info = Vec::with_capacity(NETWORK_ID_BYTES + 16);
@@ -102,6 +112,7 @@ impl KeyBundle {
             network_id: self.network_id,
             diversifier,
             transmission_key,
+            spend_authority_key,
         })
     }
 
@@ -172,6 +183,7 @@ impl KeyBundle {
             plaintext,
             self.network_id,
             PublicKey::from(&secret).to_bytes(),
+            self.spend_authority_key()?,
             commitment,
         )
     }
@@ -223,6 +235,7 @@ pub fn encrypt_note_with_ephemeral(
     }
     if note.diversifier != recipient.diversifier
         || note.transmission_key != recipient.transmission_key
+        || note.spend_authority_key != recipient.spend_authority_key
     {
         return Err(KeyError::RecipientMismatch);
     }
@@ -268,13 +281,15 @@ fn validate_decrypted_note(
     plaintext: Vec<u8>,
     network_id: [u8; NETWORK_ID_BYTES],
     transmission_key: [u8; 32],
+    spend_authority_key: [u8; 32],
     commitment: CanonicalField,
 ) -> Result<NotePlaintext, KeyError> {
     let note = NotePlaintext::decode(&plaintext)?;
     if note.network_id != network_id {
         return Err(KeyError::NetworkMismatch);
     }
-    if note.transmission_key != transmission_key {
+    if note.transmission_key != transmission_key || note.spend_authority_key != spend_authority_key
+    {
         return Err(KeyError::RecipientMismatch);
     }
     if note.commitment()? != commitment {
@@ -394,6 +409,7 @@ mod tests {
             value: 42,
             diversifier: address.diversifier,
             transmission_key: address.transmission_key,
+            spend_authority_key: address.spend_authority_key,
             rho: CanonicalField::from_field(Fp::from(6)),
             randomness: CanonicalField::from_field(Fp::from(7)),
             memo: b"encrypted onyx note".to_vec(),

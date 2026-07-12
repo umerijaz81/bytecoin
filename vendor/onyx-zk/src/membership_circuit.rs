@@ -134,6 +134,7 @@ impl<const DEPTH: usize> Circuit<Fp> for MembershipCircuit<DEPTH> {
             config.poseidon_state[0],
             self.commitment,
         )?;
+        layouter.constrain_instance(commitment.cell(), config.instance, 2)?;
         let leaf_tag = assign_constant(
             layouter.namespace(|| "leaf tag"),
             config.poseidon_state[0],
@@ -402,12 +403,14 @@ mod tests {
         let nf = nullifier(key, rho, position);
         let circuit =
             MembershipCircuit::<DEPTH>::new(commitment, &siblings, position, key, rho).unwrap();
-        let prover = MockProver::run(12, &circuit, vec![vec![root, nf]]).unwrap();
+        let prover = MockProver::run(12, &circuit, vec![vec![root, nf, commitment]]).unwrap();
         prover.assert_satisfied();
 
-        let bad_root = MockProver::run(12, &circuit, vec![vec![root + Fp::one(), nf]]).unwrap();
+        let bad_root =
+            MockProver::run(12, &circuit, vec![vec![root + Fp::one(), nf, commitment]]).unwrap();
         assert!(bad_root.verify().is_err());
-        let bad_nf = MockProver::run(12, &circuit, vec![vec![root, nf + Fp::one()]]).unwrap();
+        let bad_nf =
+            MockProver::run(12, &circuit, vec![vec![root, nf + Fp::one(), commitment]]).unwrap();
         assert!(bad_nf.verify().is_err());
     }
 
@@ -443,7 +446,7 @@ mod tests {
             &params,
             &pk,
             &[circuit],
-            &[&[&[root, nf]]],
+            &[&[&[root, nf, commitment]]],
             rand::rngs::OsRng,
             &mut transcript,
         )
@@ -454,7 +457,7 @@ mod tests {
             &params,
             &vk,
             SingleVerifier::new(&params),
-            &[&[&[root, nf]]],
+            &[&[&[root, nf, commitment]]],
             &mut reader,
         )
         .is_ok());

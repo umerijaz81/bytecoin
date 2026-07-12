@@ -121,46 +121,64 @@ impl Circuit<Fp> for NativeValueCircuit {
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
-        let mut input_cells = Vec::with_capacity(MAX_SPENDS);
-        for (index, value) in self.inputs.iter().enumerate() {
-            input_cells.push(assign_u64(
-                layouter.namespace(|| format!("input {index}")),
-                &config,
-                *value,
-            )?);
-        }
-        let mut output_cells = Vec::with_capacity(MAX_OUTPUTS);
-        for (index, value) in self.outputs.iter().enumerate() {
-            output_cells.push(assign_u64(
-                layouter.namespace(|| format!("output {index}")),
-                &config,
-                *value,
-            )?);
-        }
-        let input_total = assign_sum(layouter.namespace(|| "input total"), &config, &input_cells)?;
-        let output_total = assign_sum(
-            layouter.namespace(|| "output total"),
-            &config,
-            &output_cells,
-        )?;
-
-        layouter.assign_region(
-            || "balance",
-            |mut region| {
-                config.balance_selector.enable(&mut region, 0)?;
-                input_total.copy_advice(|| "inputs", &mut region, config.item, 0)?;
-                output_total.copy_advice(|| "outputs", &mut region, config.accumulator, 0)?;
-                region.assign_advice_from_instance(
-                    || "fee",
-                    config.instance,
-                    0,
-                    config.auxiliary,
-                    0,
-                )?;
-                Ok(())
-            },
-        )
+        synthesize_native_values(self, &config, layouter.namespace(|| "native values"))?;
+        Ok(())
     }
+}
+
+pub(crate) struct AssignedNativeValues {
+    pub input_cells: Vec<AssignedCell<Fp, Fp>>,
+    pub output_cells: Vec<AssignedCell<Fp, Fp>>,
+}
+
+pub(crate) fn synthesize_native_values(
+    circuit: &NativeValueCircuit,
+    config: &ValueConfig,
+    mut layouter: impl Layouter<Fp>,
+) -> Result<AssignedNativeValues, Error> {
+    let mut input_cells = Vec::with_capacity(MAX_SPENDS);
+    for (index, value) in circuit.inputs.iter().enumerate() {
+        input_cells.push(assign_u64(
+            layouter.namespace(|| format!("input {index}")),
+            &config,
+            *value,
+        )?);
+    }
+    let mut output_cells = Vec::with_capacity(MAX_OUTPUTS);
+    for (index, value) in circuit.outputs.iter().enumerate() {
+        output_cells.push(assign_u64(
+            layouter.namespace(|| format!("output {index}")),
+            &config,
+            *value,
+        )?);
+    }
+    let input_total = assign_sum(layouter.namespace(|| "input total"), &config, &input_cells)?;
+    let output_total = assign_sum(
+        layouter.namespace(|| "output total"),
+        &config,
+        &output_cells,
+    )?;
+
+    layouter.assign_region(
+        || "balance",
+        |mut region| {
+            config.balance_selector.enable(&mut region, 0)?;
+            input_total.copy_advice(|| "inputs", &mut region, config.item, 0)?;
+            output_total.copy_advice(|| "outputs", &mut region, config.accumulator, 0)?;
+            region.assign_advice_from_instance(
+                || "fee",
+                config.instance,
+                0,
+                config.auxiliary,
+                0,
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(AssignedNativeValues {
+        input_cells,
+        output_cells,
+    })
 }
 
 fn assign_u64(
