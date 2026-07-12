@@ -39,6 +39,9 @@ Consensus invariants:
 | Note encryption | `bytecoin.onyx.v6.note-encryption` |
 | Program id | `bytecoin.onyx.v6.program` |
 
+The native asset identifier is
+`SHA-256("bytecoin.onyx.v6.native-asset") = 7d3423482b6e8a242fc0e5a2f6a54b36cf4f0342a953ea93ec7025cd7c955be3`.
+
 No domain constant may be reused for another purpose.
 
 ## 3. Consensus objects and development limits
@@ -101,6 +104,10 @@ The circuit proves note membership, correct nullifiers, spend authorization, 64-
 per-asset conservation, output commitment construction, and registered program predicates. For the
 native asset, `sum(inputs) = sum(outputs) + fee`. A binding signature covers the transaction sighash
 and net value-commitment balance. The toy O0 verifier is forbidden on consensus paths.
+
+The base-transfer circuit is native-only: both asset limbs in every input and output note commitment
+are constrained to the frozen native identifier. Generalized assets use separately registered
+program circuits and may not enter the native balance equation.
 
 Spend authorization is prepared before proving: a private base-field randomizer is converted
 canonically into a Pallas scalar, `rk = ak + [alpha] SpendAuthG` is written into the transaction, the

@@ -68,6 +68,7 @@ impl Circuit<Fp> for NoteCommitmentCircuit {
             &self.inputs,
             None,
             None,
+            false,
         )?;
         layouter.constrain_instance(commitment.cell(), config.instance, 0)
     }
@@ -79,6 +80,7 @@ pub(crate) fn synthesize_note_commitment(
     inputs: &[Option<Fp>; NOTE_COMMITMENT_INPUTS],
     external_value: Option<&AssignedCell<Fp, Fp>>,
     external_authority: Option<(&AssignedCell<Fp, Fp>, &AssignedCell<Fp, Fp>)>,
+    enforce_native_asset: bool,
 ) -> Result<AssignedCell<Fp, Fp>, Error> {
     let message = layouter.assign_region(
         || "load note fields",
@@ -101,6 +103,13 @@ pub(crate) fn synthesize_note_commitment(
                             || input.map_or(Value::unknown(), Value::known),
                         )?
                     }
+                } else if enforce_native_asset && (index == 4 || index == 5) {
+                    region.assign_advice_from_constant(
+                        || "native asset identifier",
+                        config.state[0],
+                        index,
+                        crate::types::native_asset_fields()[index - 4],
+                    )?
                 } else if index == 10 || index == 11 {
                     if let Some((x, y)) = external_authority {
                         let coordinate = if index == 10 { x } else { y };

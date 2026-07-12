@@ -445,6 +445,8 @@ mod tests {
         let authority_coordinates = authority_key.coordinates().unwrap();
         let mut input_note = std::array::from_fn(|index| Fp::from(index as u64 + 40));
         input_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(30);
+        input_note[4] = crate::types::native_asset_fields()[0];
+        input_note[5] = crate::types::native_asset_fields()[1];
         input_note[10] = *authority_coordinates.x();
         input_note[11] = *authority_coordinates.y();
         let commitment =
@@ -452,6 +454,8 @@ mod tests {
                 .hash(input_note);
         let mut output_note = std::array::from_fn(|index| Fp::from(index as u64 + 80));
         output_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(25);
+        output_note[4] = crate::types::native_asset_fields()[0];
+        output_note[5] = crate::types::native_asset_fields()[1];
         let output_commitment =
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
                 .hash(output_note);
@@ -566,6 +570,8 @@ mod tests {
         ];
         for (note, value) in input_notes.iter_mut().zip([30u64, 20]) {
             note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
+            note[4] = crate::types::native_asset_fields()[0];
+            note[5] = crate::types::native_asset_fields()[1];
             note[10] = *authority_coordinates.x();
             note[11] = *authority_coordinates.y();
         }
@@ -597,6 +603,10 @@ mod tests {
         ];
         output_notes[0][crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(25);
         output_notes[1][crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(20);
+        for note in &mut output_notes {
+            note[4] = crate::types::native_asset_fields()[0];
+            note[5] = crate::types::native_asset_fields()[1];
+        }
         let outputs = output_notes
             .iter()
             .map(|note| PublicOutput {

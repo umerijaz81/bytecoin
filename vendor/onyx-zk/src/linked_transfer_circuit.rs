@@ -101,6 +101,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &self.input_note,
             Some(&values.input_cells[0]),
             Some((&authority.x, &authority.y)),
+            true,
         )?;
         let output_commitment = synthesize_note_commitment(
             &config.notes,
@@ -108,6 +109,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &self.output_note,
             Some(&values.output_cells[0]),
             None,
+            true,
         )?;
         layouter.constrain_instance(output_commitment.cell(), config.notes.instance, 0)?;
         synthesize_membership(
@@ -140,6 +142,8 @@ mod tests {
             Fp::from(seed)
         });
         inputs[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
+        inputs[4] = crate::types::native_asset_fields()[0];
+        inputs[5] = crate::types::native_asset_fields()[1];
         inputs
     }
 
@@ -213,8 +217,10 @@ mod tests {
             .verify()
             .is_err());
 
+        let mut foreign_output_note = output_note;
+        foreign_output_note[4] += Fp::one();
         let mut wrong_output = instances;
-        wrong_output[2][0] += Fp::one();
+        wrong_output[2][0] = commitment(foreign_output_note);
         assert!(MockProver::run(15, &circuit, wrong_output)
             .unwrap()
             .verify()

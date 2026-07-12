@@ -12,6 +12,10 @@ pub const ONYX_NOTE_VERSION: u8 = 1;
 pub const NETWORK_ID_BYTES: usize = 16;
 pub const DIVERSIFIER_BYTES: usize = 11;
 pub const MAX_MEMO_BYTES: usize = 4096;
+pub const NATIVE_ASSET_ID: [u8; 32] = [
+    0x7d, 0x34, 0x23, 0x48, 0x2b, 0x6e, 0x8a, 0x24, 0x2f, 0xc0, 0xe5, 0xa2, 0xf6, 0xa5, 0x4b, 0x36,
+    0xcf, 0x4f, 0x03, 0x42, 0xa9, 0x53, 0xea, 0x93, 0xec, 0x70, 0x25, 0xcd, 0x7c, 0x95, 0x5b, 0xe3,
+];
 const NOTE_TAG: u64 = 4;
 const NULLIFIER_TAG: u64 = 3;
 
@@ -153,6 +157,10 @@ impl NotePlaintext {
 
 fn pack_32(bytes: &[u8; 32]) -> [Fp; 2] {
     [pack_short(&bytes[..31]), pack_short(&bytes[31..])]
+}
+
+pub(crate) fn native_asset_fields() -> [Fp; 2] {
+    pack_32(&NATIVE_ASSET_ID)
 }
 
 fn pack_short(bytes: &[u8]) -> Fp {

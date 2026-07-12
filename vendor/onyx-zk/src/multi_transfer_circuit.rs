@@ -139,6 +139,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 &spend.note,
                 Some(&values.input_cells[index]),
                 Some((&authority.x, &authority.y)),
+                true,
             )?;
             synthesize_membership(
                 &spend.membership,
@@ -157,6 +158,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 note,
                 Some(&values.output_cells[index]),
                 None,
+                true,
             )?;
             layouter.constrain_instance(commitment.cell(), config.notes.instance, index)?;
         }
@@ -180,6 +182,8 @@ mod tests {
     fn note(seed: u64, value: u64) -> [Fp; NOTE_COMMITMENT_INPUTS] {
         let mut note = std::array::from_fn(|i| Fp::from(seed + i as u64));
         note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
+        note[4] = crate::types::native_asset_fields()[0];
+        note[5] = crate::types::native_asset_fields()[1];
         note
     }
 
