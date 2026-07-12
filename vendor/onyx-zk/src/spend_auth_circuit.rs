@@ -126,7 +126,7 @@ impl Circuit<Fp> for SpendAuthCircuit {
     }
 
     fn synthesize(&self, config: Self::Config, layouter: impl Layouter<Fp>) -> Result<(), Error> {
-        synthesize_spend_authority(self, &config, layouter).map(|_| ())
+        synthesize_spend_authority(self, &config, layouter, true, 0, 1).map(|_| ())
     }
 }
 
@@ -151,21 +151,26 @@ pub(crate) fn synthesize_spend_authority(
     circuit: &SpendAuthCircuit,
     config: &SpendAuthConfig,
     mut layouter: impl Layouter<Fp>,
+    load_range_table: bool,
+    randomized_x_row: usize,
+    randomized_y_row: usize,
 ) -> Result<AssignedSpendAuthority, Error> {
-    layouter.assign_table(
-        || "10-bit range table",
-        |mut table| {
-            for value in 0..1024 {
-                table.assign_cell(
-                    || "range value",
-                    config.lookup_table,
-                    value,
-                    || Value::known(Fp::from(value as u64)),
-                )?;
-            }
-            Ok(())
-        },
-    )?;
+    if load_range_table {
+        layouter.assign_table(
+            || "10-bit range table",
+            |mut table| {
+                for value in 0..1024 {
+                    table.assign_cell(
+                        || "range value",
+                        config.lookup_table,
+                        value,
+                        || Value::known(Fp::from(value as u64)),
+                    )?;
+                }
+                Ok(())
+            },
+        )?;
+    }
 
     let chip = AuthEccChip::construct(config.ecc.clone(), CircuitVersion::AnchoredBase);
     let generator = spend_auth_generator();
@@ -218,8 +223,16 @@ pub(crate) fn synthesize_spend_authority(
             .map_or(Value::unknown(), Value::known),
     )?;
     calculated.constrain_equal(layouter.namespace(|| "bind randomized key"), &expected)?;
-    layouter.constrain_instance(expected.inner().x().cell(), config.instance, 0)?;
-    layouter.constrain_instance(expected.inner().y().cell(), config.instance, 1)?;
+    layouter.constrain_instance(
+        expected.inner().x().cell(),
+        config.instance,
+        randomized_x_row,
+    )?;
+    layouter.constrain_instance(
+        expected.inner().y().cell(),
+        config.instance,
+        randomized_y_row,
+    )?;
 
     Ok(AssignedSpendAuthority {
         x: authority_key.inner().x(),
@@ -231,6 +244,7 @@ pub(crate) fn synthesize_spend_authority(
 mod tests {
     use group::Group;
     use halo2_proofs::dev::MockProver;
+    use pasta_curves::arithmetic::CurveAffine;
 
     use super::*;
 

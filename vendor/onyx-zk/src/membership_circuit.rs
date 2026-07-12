@@ -135,7 +135,7 @@ impl<const DEPTH: usize> Circuit<Fp> for MembershipCircuit<DEPTH> {
             self.commitment,
         )?;
         layouter.constrain_instance(commitment.cell(), config.instance, 2)?;
-        synthesize_membership(self, &config, layouter, &commitment)
+        synthesize_membership(self, &config, layouter, &commitment, 0, 1)
     }
 }
 
@@ -144,6 +144,8 @@ pub(crate) fn synthesize_membership<const DEPTH: usize>(
     config: &MembershipConfig,
     mut layouter: impl Layouter<Fp>,
     commitment: &AssignedCell<Fp, Fp>,
+    anchor_row: usize,
+    nullifier_row: usize,
 ) -> Result<(), Error> {
     let leaf_tag = assign_constant(
         layouter.namespace(|| "leaf tag"),
@@ -195,7 +197,7 @@ pub(crate) fn synthesize_membership<const DEPTH: usize>(
             &inner,
         )?;
     }
-    layouter.constrain_instance(node.cell(), config.instance, 0)?;
+    layouter.constrain_instance(node.cell(), config.instance, anchor_row)?;
 
     let position = compose_position(
         layouter.namespace(|| "compose position"),
@@ -238,7 +240,7 @@ pub(crate) fn synthesize_membership<const DEPTH: usize>(
         &nullifier_tag,
         &positioned,
     )?;
-    layouter.constrain_instance(nullifier.cell(), config.instance, 1)
+    layouter.constrain_instance(nullifier.cell(), config.instance, nullifier_row)
 }
 
 fn assign_value(

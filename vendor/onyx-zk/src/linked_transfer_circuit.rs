@@ -91,6 +91,9 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &self.authorization,
             &config.authorization,
             layouter.namespace(|| "spend authorization"),
+            true,
+            0,
+            1,
         )?;
         let input_commitment = synthesize_note_commitment(
             &config.notes,
@@ -112,6 +115,8 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &config.membership,
             layouter.namespace(|| "membership and nullifier"),
             &input_commitment,
+            0,
+            1,
         )
     }
 }
