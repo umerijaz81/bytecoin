@@ -602,11 +602,20 @@ mod tests {
         let spend_signatures =
             sign_prepared_spends(&prepared, &preimage, EXPERIMENTAL_TRANSFER_BACKEND, &proof)
                 .unwrap();
+        let binding_signature = crate::authorization::sign_binding_authorization(
+            &preimage,
+            EXPERIMENTAL_TRANSFER_BACKEND,
+            &proof,
+            &[Fp::from(101)],
+            &[Fp::from(102)],
+        )
+        .unwrap();
         let transaction = AuthorizedTransaction {
             preimage,
             backend_id: EXPERIMENTAL_TRANSFER_BACKEND.to_owned(),
             proof,
             spend_signatures,
+            binding_signature,
         };
         assert!(verify_authorized_transfer::<DEPTH>(K, &transaction).is_ok());
 
@@ -770,11 +779,20 @@ mod tests {
         let backend_id = multi_transfer_backend_id(2, 2);
         let spend_signatures =
             sign_prepared_spends(&prepared, &preimage, &backend_id, &proof).unwrap();
+        let binding_signature = crate::authorization::sign_binding_authorization(
+            &preimage,
+            &backend_id,
+            &proof,
+            &[Fp::from(110), Fp::from(111)],
+            &[Fp::from(120), Fp::from(121)],
+        )
+        .unwrap();
         let transaction = AuthorizedTransaction {
             preimage,
             backend_id,
             proof,
             spend_signatures,
+            binding_signature,
         };
         assert!(verify_authorized_multi_transfer::<DEPTH, 2, 2>(K, &transaction).is_ok());
         assert_eq!(

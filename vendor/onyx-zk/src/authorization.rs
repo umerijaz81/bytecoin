@@ -1,8 +1,9 @@
 //! Transaction transcript binding and Orchard RedPallas spend authorization.
 
 use ff::{Field, PrimeField};
+use group::{Group, GroupEncoding};
 use pasta_curves::pallas;
-use reddsa::orchard::SpendAuth;
+use reddsa::orchard::{Binding, SpendAuth};
 use reddsa::{Signature, SigningKey, VerificationKey};
 use sha2::{Digest, Sha256};
 
@@ -13,6 +14,7 @@ use crate::transaction::{
 };
 
 const AUTHORIZATION_DOMAIN: &[u8] = b"bytecoin.onyx.v6.spend-authorization";
+const BINDING_DOMAIN: &[u8] = b"bytecoin.onyx.v6.binding-signature";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AuthorizationError {
@@ -23,7 +25,83 @@ pub enum AuthorizationError {
     InvalidSignature,
     WrongSignatureCount,
     PreparedKeyMismatch,
+    WrongBindingTrapdoorCount,
+    InvalidBindingSignature,
     Transaction(TransactionError),
+}
+
+fn fp_to_scalar(value: halo2_proofs::pasta::Fp) -> pallas::Scalar {
+    Option::<pallas::Scalar>::from(pallas::Scalar::from_repr(value.to_repr()))
+        .expect("every Pallas base element is canonical in its scalar field")
+}
+
+pub fn binding_digest(
+    transaction: &TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+) -> Result<[u8; 32], AuthorizationError> {
+    let authorization = authorization_digest(transaction, backend_id, proof)?;
+    let mut hash = Sha256::new();
+    hash.update(BINDING_DOMAIN);
+    hash.update(authorization);
+    Ok(hash.finalize().into())
+}
+
+pub fn sign_binding_authorization(
+    transaction: &TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+    input_randomness: &[halo2_proofs::pasta::Fp],
+    output_randomness: &[halo2_proofs::pasta::Fp],
+) -> Result<[u8; 64], AuthorizationError> {
+    if input_randomness.len() != transaction.spends.len()
+        || output_randomness.len() != transaction.outputs.len()
+    {
+        return Err(AuthorizationError::WrongBindingTrapdoorCount);
+    }
+    let binding_key = input_randomness
+        .iter()
+        .copied()
+        .map(fp_to_scalar)
+        .fold(pallas::Scalar::zero(), |sum, value| sum + value)
+        - output_randomness
+            .iter()
+            .copied()
+            .map(fp_to_scalar)
+            .fold(pallas::Scalar::zero(), |sum, value| sum + value);
+    let signing = SigningKey::<Binding>::try_from(binding_key.to_repr())
+        .map_err(|_| AuthorizationError::InvalidBindingSignature)?;
+    let digest = binding_digest(transaction, backend_id, proof)?;
+    Ok(signing.sign(rand::rngs::OsRng, &digest).into())
+}
+
+pub fn verify_binding_authorization(
+    transaction: &TransactionPreimage,
+    backend_id: &str,
+    proof: &[u8],
+    signature: [u8; 64],
+) -> Result<(), AuthorizationError> {
+    let decode = |bytes: &[u8; 32]| {
+        Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
+            .ok_or(AuthorizationError::InvalidVerificationKey)
+    };
+    let mut binding_key = pallas::Point::identity();
+    for spend in &transaction.spends {
+        binding_key += decode(&spend.value_commitment)?;
+    }
+    for output in &transaction.outputs {
+        binding_key -= decode(&output.value_commitment)?;
+    }
+    binding_key -=
+        crate::spend_auth_circuit::value_generator() * pallas::Scalar::from(transaction.fee);
+    let verification = VerificationKey::<Binding>::try_from(binding_key.to_bytes())
+        .map_err(|_| AuthorizationError::InvalidVerificationKey)?;
+    verification
+        .verify(
+            &binding_digest(transaction, backend_id, proof)?,
+            &Signature::from(signature),
+        )
+        .map_err(|_| AuthorizationError::InvalidBindingSignature)
 }
 
 pub struct PreparedSpendAuthorizations {
@@ -152,13 +230,23 @@ pub fn authorize_transaction(
     mut preimage: TransactionPreimage,
     backend_id: String,
     proof: Vec<u8>,
+    input_value_randomness: &[halo2_proofs::pasta::Fp],
+    output_value_randomness: &[halo2_proofs::pasta::Fp],
 ) -> Result<AuthorizedTransaction, AuthorizationError> {
     let spend_signatures = authorize_same_owner_spends(keys, &mut preimage, &backend_id, &proof)?;
+    let binding_signature = sign_binding_authorization(
+        &preimage,
+        &backend_id,
+        &proof,
+        input_value_randomness,
+        output_value_randomness,
+    )?;
     let transaction = AuthorizedTransaction {
         preimage,
         backend_id,
         proof,
         spend_signatures,
+        binding_signature,
     };
     transaction.encode()?;
     Ok(transaction)
@@ -173,6 +261,12 @@ pub fn verify_authorized_transaction(
         &transaction.backend_id,
         &transaction.proof,
         &transaction.spend_signatures,
+    )?;
+    verify_binding_authorization(
+        &transaction.preimage,
+        &transaction.backend_id,
+        &transaction.proof,
+        transaction.binding_signature,
     )
 }
 
@@ -201,7 +295,7 @@ mod tests {
             spends: vec![PublicSpend {
                 nullifier: Nullifier([3; 32]),
                 value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
-                    1,
+                    8,
                     halo2_proofs::pasta::Fp::from(2),
                 ),
                 randomized_key: [0; 32],
@@ -272,9 +366,22 @@ mod tests {
             transaction(),
             "halo2-ipa-pasta-v1".to_owned(),
             b"proof".to_vec(),
+            &[Fp::from(2)],
+            &[Fp::from(3)],
         )
         .unwrap();
         assert!(verify_authorized_transaction(&transaction).is_ok());
+        let mut bad_binding = transaction.clone();
+        bad_binding.binding_signature[0] ^= 1;
+        assert_eq!(
+            verify_binding_authorization(
+                &bad_binding.preimage,
+                &bad_binding.backend_id,
+                &bad_binding.proof,
+                bad_binding.binding_signature,
+            ),
+            Err(AuthorizationError::InvalidBindingSignature)
+        );
         assert_eq!(
             AuthorizedTransaction::decode(&transaction.encode().unwrap()).unwrap(),
             transaction

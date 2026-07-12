@@ -56,6 +56,7 @@ pub struct AuthorizedTransaction {
     pub backend_id: String,
     pub proof: Vec<u8>,
     pub spend_signatures: Vec<[u8; 64]>,
+    pub binding_signature: [u8; 64],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -270,6 +271,7 @@ impl AuthorizedTransaction {
         for signature in &self.spend_signatures {
             out.extend_from_slice(signature);
         }
+        out.extend_from_slice(&self.binding_signature);
         Ok(out)
     }
 
@@ -302,6 +304,7 @@ impl AuthorizedTransaction {
         for _ in 0..signature_count {
             spend_signatures.push(reader.array()?);
         }
+        let binding_signature = reader.array()?;
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData.into());
         }
@@ -310,6 +313,7 @@ impl AuthorizedTransaction {
             backend_id,
             proof,
             spend_signatures,
+            binding_signature,
         };
         transaction.validate()?;
         Ok(transaction)
@@ -477,6 +481,7 @@ mod tests {
             backend_id: "halo2-ipa-pasta-v1".to_owned(),
             proof: vec![13; 96],
             spend_signatures: vec![[14; 64]],
+            binding_signature: [15; 64],
         };
         let encoded = transaction.encode().unwrap();
         assert_eq!(
@@ -496,6 +501,7 @@ mod tests {
             backend_id: "halo2".to_owned(),
             proof: vec![],
             spend_signatures: vec![],
+            binding_signature: [0; 64],
         };
         assert_eq!(
             transaction.encode(),
