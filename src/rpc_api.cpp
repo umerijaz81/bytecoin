@@ -473,6 +473,17 @@ void ser_members(api::cnd::GetStatus::Response &v, ISeria &s) {
 	seria_kv("top_known_block_height", v.top_known_block_height, s);
 }
 
+void ser_members(api::cnd::GetOnyxSupplyAudit::Request &, ISeria &) {}
+
+void ser_members(api::cnd::GetOnyxSupplyAudit::Response &v, ISeria &s) {
+	seria_kv("total_bridged", v.total_bridged, s);
+	seria_kv("total_fees", v.total_fees, s);
+	seria_kv("circulating_supply", v.circulating_supply, s);
+	seria_kv("commitment_count", v.commitment_count, s);
+	seria_kv("commitment_root", v.commitment_root, s);
+	seria_kv("block_height", v.block_height, s);
+}
+
 void ser_members(api::cnd::GetBlockHeader::Request &v, ISeria &s) {
 	seria_kv("hash", v.hash, s);
 	seria_kv("height_or_depth", v.height_or_depth, s);

@@ -23,6 +23,21 @@ creates exactly one encrypted native-asset Onyx note. There is no implicit deshi
    `send_transaction`.
 6. Wait for confirmation before treating the recovered Onyx note as spendable.
 
+## Supply reconciliation
+
+Call the node's `get_onyx_supply_audit` JSON-RPC method at a recorded block height. Its response
+contains `total_bridged`, `total_fees`, `circulating_supply`, `commitment_count`,
+`commitment_root`, and `block_height`. Every valid snapshot satisfies:
+
+```text
+circulating_supply = total_bridged - total_fees
+```
+
+`total_bridged` is the gross value of consumed legacy outputs. `total_fees` includes bridge fees
+and every subsequent shielded-transfer fee. Compare `total_bridged` against an independent scan of
+accepted bridge transactions and their consumed legacy outputs. Archive the response, tip hash,
+and software build identifier for each audit checkpoint.
+
 ## Consensus and recovery invariants
 
 - The proof enforces `legacy_amount = note_value + fee`; zero-value and inflation attempts fail.

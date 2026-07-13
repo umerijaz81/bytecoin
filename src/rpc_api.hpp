@@ -676,6 +676,19 @@ struct GetStatus {
 	typedef walletd::GetStatus::Response Response;
 };
 
+struct GetOnyxSupplyAudit {
+	static std::string method() { return "get_onyx_supply_audit"; }
+	struct Request {};
+	struct Response {
+		Amount total_bridged = 0;
+		Amount total_fees = 0;
+		Amount circulating_supply = 0;
+		uint64_t commitment_count = 0;
+		Hash commitment_root{};
+		Height block_height = 0;
+	};
+};
+
 struct GetRawBlock {
 	static std::string method() { return "get_raw_block"; }
 	struct Request {
@@ -1047,6 +1060,8 @@ void ser_members(cn::api::walletd::ExtSetPassword::Request &v, ISeria &s);
 
 void ser_members(cn::api::cnd::GetStatus::Request &v, ISeria &s);
 void ser_members(cn::api::cnd::GetStatus::Response &v, ISeria &s);
+void ser_members(cn::api::cnd::GetOnyxSupplyAudit::Request &v, ISeria &s);
+void ser_members(cn::api::cnd::GetOnyxSupplyAudit::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetBlockHeader::Request &v, ISeria &s);
 void ser_members(cn::api::cnd::GetBlockHeader::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetRawBlock::Request &v, ISeria &s);

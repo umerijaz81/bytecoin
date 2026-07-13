@@ -807,7 +807,7 @@ mod tests {
         funding.anchor = prestate.root();
         funding.spends[0].nullifier = Nullifier([9; 32]);
         funding.outputs[0].commitment = CanonicalField::from_field(commitment);
-        prestate.apply_transaction(&funding, 0).unwrap();
+        prestate.apply_bridge(&funding, 30, 0, 0).unwrap();
         assert_eq!(prestate.root(), anchor);
         let previous_snapshot = prestate.encode_snapshot();
 
@@ -840,6 +840,14 @@ mod tests {
         assert!(restored.is_spent(&Nullifier(nullifier)));
         assert_eq!(restored.leaf_count(), 2);
         assert_ne!(restored.root(), anchor);
+        assert_eq!(
+            (
+                restored.total_bridged(),
+                restored.total_fees(),
+                restored.circulating_supply()
+            ),
+            (30, 5, 25)
+        );
 
         let mut rejected_ptr = std::ptr::null_mut();
         let mut rejected_len = 0usize;

@@ -24,6 +24,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 |-----|-----------------------|---------------------------------------------------------------|
 | 1.  | `check_sendproof`     | Checks validity of a sendproof.                               |
 | 2.  | `get_block_header`    | TODO.                                                         |
+|     | `get_onyx_supply_audit` | Returns rollback-safe Onyx bridge, fee, circulating-supply, commitment, and height totals. |
 | 3.  | `get_raw_block`       | Gets raw block from the blockchain.                           |
 | 4.  | `get_raw_transaction` | Gets raw transaction from the blockchain.                     |
 | 5.  | `get_statistics`      | Gets statistics about running `bytecoind`.                    |

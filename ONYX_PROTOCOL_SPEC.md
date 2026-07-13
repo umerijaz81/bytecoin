@@ -184,6 +184,16 @@ and tree appends contribute to weight and fees. Blocks cap aggregate proof bytes
 outputs, program calls, and verification cost. Failed batch verification must preserve attribution or
 safely retry individual proofs.
 
+The version-2 consensus snapshot also commits rollback-safe public supply counters. A bridge adds
+its disclosed legacy amount to `total_bridged`, adds its fee to `total_fees`, and increases
+`circulating_supply` by `legacy_amount - fee`. A transfer adds its fee to `total_fees` and reduces
+circulating supply by that fee. Decoding rejects any snapshot that does not satisfy
+`circulating_supply = total_bridged - total_fees`. Empty version-1 snapshots migrate with zero counters.
+Nodes expose these values, the commitment count/root, and block height through
+`get_onyx_supply_audit` for independent reconciliation. Only an empty version-1 activation
+snapshot upgrades directly; a nonempty version-1 snapshot has no trustworthy historical counters
+and must be rebuilt by deterministic chain replay.
+
 ## 10. Phase gates
 
 | Phase | Exit gate |

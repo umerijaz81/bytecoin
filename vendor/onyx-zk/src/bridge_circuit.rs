@@ -260,6 +260,39 @@ mod tests {
         assert_eq!(extracted_key_image, [7; 32]);
         assert_eq!(extracted_sighash, bridge.ownership_sighash().unwrap());
         assert_eq!(extracted_signature, [0; 64]);
+        let mut total_bridged = 0u64;
+        let mut total_fees = 0u64;
+        let mut circulating_supply = 0u64;
+        let mut commitment_count = 0u64;
+        let mut audit_root = [0u8; 32];
+        assert_eq!(
+            crate::onyx_state_supply_audit(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                &mut total_bridged,
+                &mut total_fees,
+                &mut circulating_supply,
+                &mut commitment_count,
+                audit_root.as_mut_ptr(),
+            ),
+            1
+        );
+        assert_eq!(
+            (
+                total_bridged,
+                total_fees,
+                circulating_supply,
+                commitment_count
+            ),
+            (30, 5, 25, 1)
+        );
+        assert_eq!(
+            audit_root,
+            crate::state::ShieldedState::<32>::decode_snapshot(&snapshot)
+                .unwrap()
+                .root()
+                .bytes()
+        );
 
         // Reorg rollback restores the prior serialized state. Reapplying the
         // same bridge to that exact snapshot must reproduce the same root and

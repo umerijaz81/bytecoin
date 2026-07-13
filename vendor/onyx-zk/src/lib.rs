@@ -221,7 +221,7 @@ fn apply_transfer_to_snapshot<const DEPTH: usize>(
         state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?
     };
     state
-        .apply_transaction(&transaction.preimage, block_height)
+        .apply_transfer(&transaction.preimage, block_height)
         .map_err(|_| ())?;
     Ok(state.encode_snapshot())
 }
@@ -418,7 +418,15 @@ pub extern "C" fn onyx_verify_apply_bridge(
             outputs: vec![bridge.preimage.output.clone()],
             programs: vec![],
         };
-        if state.apply_transaction(&transition, block_height).is_err() {
+        if state
+            .apply_bridge(
+                &transition,
+                bridge.preimage.legacy_amount,
+                bridge.preimage.fee,
+                block_height,
+            )
+            .is_err()
+        {
             return -5;
         }
         let next = state.encode_snapshot();
@@ -447,6 +455,45 @@ pub extern "C" fn onyx_verify_apply_bridge(
                 ownership_signature_out,
                 64,
             );
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_state_supply_audit(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    total_bridged_out: *mut u64,
+    total_fees_out: *mut u64,
+    circulating_supply_out: *mut u64,
+    leaf_count_out: *mut u64,
+    root_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || total_bridged_out.is_null()
+            || total_fees_out.is_null()
+            || circulating_supply_out.is_null()
+            || leaf_count_out.is_null()
+            || root_out.is_null()
+        {
+            return -1;
+        }
+        let state = match state::ShieldedState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(state) => state,
+            Err(_) => return -2,
+        };
+        unsafe {
+            *total_bridged_out = state.total_bridged();
+            *total_fees_out = state.total_fees();
+            *circulating_supply_out = state.circulating_supply();
+            *leaf_count_out = state.leaf_count();
+            std::ptr::copy_nonoverlapping(state.root().bytes().as_ptr(), root_out, 32);
         }
         1
     })

@@ -134,6 +134,18 @@ bool Halo2ProofSystem::verify_bridge(
 	return true;
 }
 
+bool Halo2ProofSystem::state_supply_audit(const BinaryArray &snapshot, SupplyAudit *audit) {
+	if (snapshot.empty() || audit == nullptr)
+		return false;
+	SupplyAudit result;
+	if (onyx_state_supply_audit(snapshot.data(), snapshot.size(), &result.total_bridged,
+	        &result.total_fees, &result.circulating_supply, &result.commitment_count,
+	        result.commitment_root.data()) != 1)
+		return false;
+	*audit = result;
+	return true;
+}
+
 bool Halo2ProofSystem::wallet_address(const std::array<uint8_t, 32> &seed,
     const std::array<uint8_t, 16> &network, uint32_t address_index, std::array<uint8_t, 91> *address) {
 	return address != nullptr &&

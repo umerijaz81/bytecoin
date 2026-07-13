@@ -8,6 +8,7 @@
 #include "CryptoNoteTools.hpp"
 #include "TransactionBuilder.hpp"
 #include "TransactionExtra.hpp"
+#include "zk/Halo2ProofSystem.hpp"
 #include "common/Base58.hpp"
 #include "common/JsonValue.hpp"
 #include "common/StringTools.hpp"
@@ -326,6 +327,7 @@ std::unordered_map<std::string, Node::JSONRPCHandlerFunction> Node::m_jsonrpc_ha
     {api::cnd::GetRandomOutputs::method(), json_rpc::make_member_method(&Node::on_get_random_outputs)},
     {api::cnd::GetStatus::method(), json_rpc::make_member_method(&Node::on_get_status)},
     {api::cnd::GetStatus::method2(), json_rpc::make_member_method(&Node::on_get_status)},
+    {api::cnd::GetOnyxSupplyAudit::method(), json_rpc::make_member_method(&Node::on_get_onyx_supply_audit)},
     {api::cnd::GetStatistics::method(), json_rpc::make_member_method(&Node::on_get_statistics)},
     {api::cnd::GetArchive::method(), json_rpc::make_member_method(&Node::on_get_archive)},
     {api::cnd::SendTransaction::method(), json_rpc::make_member_method(&Node::on_send_transaction)},
@@ -399,6 +401,27 @@ bool Node::on_get_status(http::Client *who, http::RequestBody &&raw_request, jso
 		return false;
 	}
 	return true;
+}
+
+bool Node::on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::cnd::GetOnyxSupplyAudit::Request &&, api::cnd::GetOnyxSupplyAudit::Response &response) {
+	response.block_height = m_block_chain.get_tip_height();
+	BinaryArray snapshot;
+	if (!m_block_chain.read_onyx_snapshot(&snapshot) || snapshot.empty())
+		return true;
+#ifdef onyx_USE_ZK
+	zk::Halo2ProofSystem::SupplyAudit audit;
+	if (!zk::Halo2ProofSystem::state_supply_audit(snapshot, &audit))
+		throw json_rpc::Error(json_rpc::INTERNAL_ERROR, "Corrupted Onyx consensus-state snapshot");
+	response.total_bridged = audit.total_bridged;
+	response.total_fees = audit.total_fees;
+	response.circulating_supply = audit.circulating_supply;
+	response.commitment_count = audit.commitment_count;
+	std::copy(audit.commitment_root.begin(), audit.commitment_root.end(), response.commitment_root.data);
+	return true;
+#else
+	throw json_rpc::Error(json_rpc::INTERNAL_ERROR, "Onyx consensus state requires the ZK backend");
+#endif
 }
 
 api::cnd::GetStatistics::Response Node::create_statistics_response(const api::cnd::GetStatistics::Request &req) const {

@@ -80,6 +80,12 @@ int onyx_verify_apply_bridge(
     uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
     uint8_t ownership_signature_out[64], uint64_t *fee_out);
 
+/* Decode the rollback-safe consensus snapshot and return its public supply-accounting totals. */
+int onyx_state_supply_audit(
+    const uint8_t *snapshot, size_t snapshot_len,
+    uint64_t *total_bridged_out, uint64_t *total_fees_out,
+    uint64_t *circulating_supply_out, uint64_t *leaf_count_out, uint8_t root_out[32]);
+
 /* Verify a bridge proof and extract the public legacy ownership statement without applying state. */
 int onyx_verify_bridge(
     const uint8_t *encoded, size_t encoded_len, uint32_t circuit_k,

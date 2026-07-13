@@ -14,7 +14,8 @@ use crate::transaction::TransactionPreimage;
 use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
-const SNAPSHOT_VERSION: u8 = 1;
+const SNAPSHOT_VERSION: u8 = 2;
+const LEGACY_SNAPSHOT_VERSION: u8 = 1;
 const MAX_SNAPSHOT_NULLIFIERS: usize = 1_000_000;
 const MAX_SNAPSHOT_ANCHORS: usize = 1_000_000;
 
@@ -50,6 +51,8 @@ pub enum StateError {
     UnknownAnchor,
     InvalidTransaction,
     HeightRegression,
+    SupplyOverflow,
+    SupplyUnderflow,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +67,7 @@ pub enum SnapshotError {
     TooManyAnchors,
     DuplicateNullifier,
     InvalidAnchorHistory,
+    InvalidSupply,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -217,6 +221,9 @@ pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     anchors: Vec<Anchor>,
     anchor_window_blocks: u64,
     current_height: u64,
+    total_bridged: u64,
+    total_fees: u64,
+    circulating_supply: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -230,6 +237,9 @@ pub struct ShieldedStateDelta<const DEPTH: usize> {
     nullifiers: NullifierDelta,
     previous_anchors: Vec<Anchor>,
     previous_height: u64,
+    previous_total_bridged: u64,
+    previous_total_fees: u64,
+    previous_circulating_supply: u64,
 }
 
 impl<const DEPTH: usize> ShieldedState<DEPTH> {
@@ -245,6 +255,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             nullifiers: NullifierSet::default(),
             anchor_window_blocks,
             current_height: 0,
+            total_bridged: 0,
+            total_fees: 0,
+            circulating_supply: 0,
         }
     }
 
@@ -254,6 +267,66 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
 
     pub fn leaf_count(&self) -> u64 {
         self.tree.leaf_count()
+    }
+
+    pub fn total_bridged(&self) -> u64 {
+        self.total_bridged
+    }
+
+    pub fn total_fees(&self) -> u64 {
+        self.total_fees
+    }
+
+    pub fn circulating_supply(&self) -> u64 {
+        self.circulating_supply
+    }
+
+    pub fn apply_transfer(
+        &mut self,
+        transaction: &TransactionPreimage,
+        block_height: u64,
+    ) -> Result<ShieldedStateDelta<DEPTH>, StateError> {
+        let next_fees = self
+            .total_fees
+            .checked_add(transaction.fee)
+            .ok_or(StateError::SupplyOverflow)?;
+        let next_supply = self
+            .circulating_supply
+            .checked_sub(transaction.fee)
+            .ok_or(StateError::SupplyUnderflow)?;
+        let delta = self.apply_transaction(transaction, block_height)?;
+        self.total_fees = next_fees;
+        self.circulating_supply = next_supply;
+        Ok(delta)
+    }
+
+    pub fn apply_bridge(
+        &mut self,
+        transaction: &TransactionPreimage,
+        legacy_amount: u64,
+        fee: u64,
+        block_height: u64,
+    ) -> Result<ShieldedStateDelta<DEPTH>, StateError> {
+        let minted = legacy_amount
+            .checked_sub(fee)
+            .ok_or(StateError::SupplyUnderflow)?;
+        let next_bridged = self
+            .total_bridged
+            .checked_add(legacy_amount)
+            .ok_or(StateError::SupplyOverflow)?;
+        let next_fees = self
+            .total_fees
+            .checked_add(fee)
+            .ok_or(StateError::SupplyOverflow)?;
+        let next_supply = self
+            .circulating_supply
+            .checked_add(minted)
+            .ok_or(StateError::SupplyOverflow)?;
+        let delta = self.apply_transaction(transaction, block_height)?;
+        self.total_bridged = next_bridged;
+        self.total_fees = next_fees;
+        self.circulating_supply = next_supply;
+        Ok(delta)
     }
 
     pub fn knows_anchor(&self, anchor: CanonicalField) -> bool {
@@ -283,6 +356,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let previous_tree = self.tree.clone();
         let previous_anchors = self.anchors.clone();
         let previous_height = self.current_height;
+        let previous_total_bridged = self.total_bridged;
+        let previous_total_fees = self.total_fees;
+        let previous_circulating_supply = self.circulating_supply;
         let nullifier_values: Vec<_> = transaction
             .spends
             .iter()
@@ -313,6 +389,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             nullifiers,
             previous_anchors,
             previous_height,
+            previous_total_bridged,
+            previous_total_fees,
+            previous_circulating_supply,
         })
     }
 
@@ -321,6 +400,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.nullifiers.rollback(delta.nullifiers);
         self.anchors = delta.previous_anchors;
         self.current_height = delta.previous_height;
+        self.total_bridged = delta.previous_total_bridged;
+        self.total_fees = delta.previous_total_fees;
+        self.circulating_supply = delta.previous_circulating_supply;
     }
 
     pub fn encode_snapshot(&self) -> Vec<u8> {
@@ -349,6 +431,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         }
 
         write_varint(self.current_height, &mut out);
+        write_varint(self.total_bridged, &mut out);
+        write_varint(self.total_fees, &mut out);
+        write_varint(self.circulating_supply, &mut out);
         write_varint(self.anchor_window_blocks, &mut out);
         write_varint(self.anchors.len() as u64, &mut out);
         for anchor in &self.anchors {
@@ -370,7 +455,8 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             return Err(SnapshotError::WrongDepth);
         }
         let mut reader = Reader::new(input);
-        if reader.byte()? != SNAPSHOT_VERSION {
+        let version = reader.byte()?;
+        if version != SNAPSHOT_VERSION && version != LEGACY_SNAPSHOT_VERSION {
             return Err(SnapshotError::WrongVersion);
         }
         if usize::from(reader.byte()?) != DEPTH {
@@ -405,6 +491,17 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         }
 
         let current_height = reader.varint()?;
+        let (total_bridged, total_fees, circulating_supply) = if version == SNAPSHOT_VERSION {
+            let total_bridged = reader.varint()?;
+            let total_fees = reader.varint()?;
+            let circulating_supply = reader.varint()?;
+            if total_bridged.checked_sub(total_fees) != Some(circulating_supply) {
+                return Err(SnapshotError::InvalidSupply);
+            }
+            (total_bridged, total_fees, circulating_supply)
+        } else {
+            (0, 0, 0)
+        };
         let anchor_window_blocks = reader.varint()?;
         if anchor_window_blocks == 0 {
             return Err(SnapshotError::InvalidAnchorHistory);
@@ -451,6 +548,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             previous = Some(bytes);
             values.insert(Nullifier(bytes));
         }
+        if version == LEGACY_SNAPSHOT_VERSION && (leaf_count != 0 || !values.is_empty()) {
+            return Err(SnapshotError::InvalidSupply);
+        }
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData.into());
         }
@@ -460,6 +560,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             anchors,
             anchor_window_blocks,
             current_height,
+            total_bridged,
+            total_fees,
+            circulating_supply,
         })
     }
 }
@@ -703,6 +806,82 @@ mod tests {
         assert_eq!(state.root(), initial);
         assert_eq!(state.leaf_count(), 0);
         assert!(!state.is_spent(&Nullifier([1; 32])));
+    }
+
+    #[test]
+    fn supply_audit_tracks_bridges_fees_snapshots_and_rollback() {
+        let mut state = ShieldedState::<4>::new(3);
+        let mut bridge = transaction(state.root(), 1, 30);
+        bridge.fee = 0;
+        bridge.spends.clear();
+        let bridge_delta = state.apply_bridge(&bridge, 30, 5, 1).unwrap();
+        assert_eq!(
+            (
+                state.total_bridged(),
+                state.total_fees(),
+                state.circulating_supply()
+            ),
+            (30, 5, 25)
+        );
+
+        let mut transfer = transaction(state.root(), 2, 31);
+        transfer.fee = 2;
+        let transfer_delta = state.apply_transfer(&transfer, 2).unwrap();
+        assert_eq!(
+            (
+                state.total_bridged(),
+                state.total_fees(),
+                state.circulating_supply()
+            ),
+            (30, 7, 23)
+        );
+        state.rollback(transfer_delta);
+        assert_eq!((state.total_fees(), state.circulating_supply()), (5, 25));
+
+        let encoded = state.encode_snapshot();
+        let restored = ShieldedState::<4>::decode_snapshot(&encoded).unwrap();
+        assert_eq!(restored.encode_snapshot(), encoded);
+        let counters = encoded
+            .windows(3)
+            .position(|bytes| bytes == [30, 5, 25])
+            .unwrap();
+        let mut corrupted = encoded.clone();
+        corrupted[counters + 2] = 24;
+        assert_eq!(
+            ShieldedState::<4>::decode_snapshot(&corrupted).err(),
+            Some(SnapshotError::InvalidSupply)
+        );
+
+        let mut nonempty_legacy = encoded;
+        nonempty_legacy[0] = LEGACY_SNAPSHOT_VERSION;
+        nonempty_legacy.drain(counters..counters + 3);
+        assert_eq!(
+            ShieldedState::<4>::decode_snapshot(&nonempty_legacy).err(),
+            Some(SnapshotError::InvalidSupply)
+        );
+
+        let mut legacy = ShieldedState::<4>::new(3).encode_snapshot();
+        legacy[0] = LEGACY_SNAPSHOT_VERSION;
+        legacy.drain(6..9);
+        let migrated = ShieldedState::<4>::decode_snapshot(&legacy).unwrap();
+        assert_eq!(
+            (
+                migrated.total_bridged(),
+                migrated.total_fees(),
+                migrated.circulating_supply()
+            ),
+            (0, 0, 0)
+        );
+
+        state.rollback(bridge_delta);
+        assert_eq!(
+            (
+                state.total_bridged(),
+                state.total_fees(),
+                state.circulating_supply()
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[test]

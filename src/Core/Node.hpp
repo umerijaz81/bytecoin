@@ -52,6 +52,8 @@ public:
 	// json_rpc_node
 	bool on_get_status(http::Client *, http::RequestBody &&, json_rpc::Request &&, api::cnd::GetStatus::Request &&,
 	    api::cnd::GetStatus::Response &);
+	bool on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::cnd::GetOnyxSupplyAudit::Request &&, api::cnd::GetOnyxSupplyAudit::Response &);
 	bool on_get_statistics(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::cnd::GetStatistics::Request &&, api::cnd::GetStatistics::Response &);
 	bool on_get_archive(http::Client *, http::RequestBody &&, json_rpc::Request &&, api::cnd::GetArchive::Request &&,
