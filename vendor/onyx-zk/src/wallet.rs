@@ -6,12 +6,18 @@ use halo2_proofs::pasta::Fp;
 use pasta_curves::pallas;
 use rand::RngCore;
 
+use crate::authorization::{
+    prepare_same_owner_spends, sign_binding_authorization, sign_prepared_spends,
+};
 use crate::bridge::{AuthorizedBridge, BridgePreimage};
 use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
-use crate::proof::{create_bridge_proof, BridgeWitness, BRIDGE_BACKEND};
+use crate::proof::{
+    create_bridge_proof, create_multi_transfer_proof, multi_transfer_backend_id, BridgeWitness,
+    MultiSpendWitness, MultiTransferWitness, BRIDGE_BACKEND,
+};
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
-use crate::transaction::{AuthorizedTransaction, PublicOutput};
+use crate::transaction::{AuthorizedTransaction, PublicOutput, PublicSpend, TransactionPreimage};
 use crate::types::NATIVE_ASSET_ID;
 use crate::types::{write_varint, DecodeError, NotePlaintext, Reader};
 use crate::value_commitment_circuit::value_commitment_bytes;
@@ -42,6 +48,7 @@ pub enum WalletBuildError {
     InvalidValue,
     InvalidRecipient,
     Crypto,
+    InsufficientFunds,
 }
 
 pub fn build_bridge(
@@ -69,13 +76,13 @@ pub fn build_bridge(
     }
     let mut rho_wide = [0u8; 64];
     let mut randomness_wide = [0u8; 64];
-    let mut value_randomness_wide = [0u8; 64];
     rand::rngs::OsRng.fill_bytes(&mut rho_wide);
     rand::rngs::OsRng.fill_bytes(&mut randomness_wide);
-    rand::rngs::OsRng.fill_bytes(&mut value_randomness_wide);
     let rho = CanonicalField::from_field(Fp::from_uniform_bytes(&rho_wide));
     let randomness = CanonicalField::from_field(Fp::from_uniform_bytes(&randomness_wide));
-    let value_randomness = Fp::from_uniform_bytes(&value_randomness_wide);
+    // Reuse the note randomness as the value-commitment trapdoor. Recipients recover it through
+    // authenticated note encryption and therefore retain the opening required for a later spend.
+    let value_randomness = randomness.field();
     let note = NotePlaintext {
         network_id: recipient.network_id,
         program_id: [0; 32],
@@ -188,6 +195,203 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
     pub fn witness(&self, note_index: usize) -> Result<MerklePath, WalletError> {
         let note = self.notes.get(note_index).ok_or(WalletError::Transaction)?;
         Ok(self.tree.witness(note.position)?)
+    }
+
+    pub fn build_transfer(
+        &self,
+        keys: &KeyBundle,
+        recipient: &RecipientAddress,
+        amount: u64,
+        fee: u64,
+        expiry_height: u64,
+        memo: Vec<u8>,
+        circuit_k: u32,
+    ) -> Result<AuthorizedTransaction, WalletBuildError> {
+        let required = amount
+            .checked_add(fee)
+            .filter(|value| amount != 0 && *value != 0)
+            .ok_or(WalletBuildError::InvalidValue)?;
+        let (note_index, input) = self
+            .notes
+            .iter()
+            .enumerate()
+            .find(|(_, note)| !note.spent && note.plaintext.value >= required)
+            .ok_or(WalletBuildError::InsufficientFunds)?;
+        if input.plaintext.network_id != recipient.network_id
+            || recipient.network_id != self.network_id
+        {
+            return Err(WalletBuildError::InvalidRecipient);
+        }
+        let change = input.plaintext.value - required;
+        let mut recipients = vec![(recipient.clone(), amount, memo)];
+        if change != 0 {
+            recipients.push((
+                keys.address(0).map_err(|_| WalletBuildError::Crypto)?,
+                change,
+                vec![],
+            ));
+        }
+
+        let mut output_notes = Vec::with_capacity(recipients.len());
+        let mut output_randomness = Vec::with_capacity(recipients.len());
+        let mut output_commitments = Vec::with_capacity(recipients.len());
+        let mut outputs = Vec::with_capacity(recipients.len());
+        for (recipient, value, memo) in &recipients {
+            let mut rho_wide = [0u8; 64];
+            let mut randomness_wide = [0u8; 64];
+            rand::rngs::OsRng.fill_bytes(&mut rho_wide);
+            rand::rngs::OsRng.fill_bytes(&mut randomness_wide);
+            let note = NotePlaintext {
+                network_id: self.network_id,
+                program_id: [0; 32],
+                asset_id: NATIVE_ASSET_ID,
+                value: *value,
+                diversifier: recipient.diversifier,
+                transmission_key: recipient.transmission_key,
+                spend_authority_key: recipient.spend_authority_key,
+                rho: CanonicalField::from_field(Fp::from_uniform_bytes(&rho_wide)),
+                randomness: CanonicalField::from_field(Fp::from_uniform_bytes(&randomness_wide)),
+                memo: memo.clone(),
+            };
+            let randomness = note.randomness.field();
+            let commitment = note.commitment().map_err(|_| WalletBuildError::Crypto)?;
+            let commitment_bytes = value_commitment_bytes(*value, randomness);
+            let commitment_point =
+                Option::<pallas::Point>::from(pallas::Point::from_bytes(&commitment_bytes))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+            output_notes.push(note);
+            output_randomness.push(randomness);
+            output_commitments.push(commitment_point);
+            outputs.push(PublicOutput {
+                commitment,
+                value_commitment: commitment_bytes,
+                ephemeral_key: [0; 32],
+                ciphertext: vec![],
+                outgoing_ciphertext: vec![],
+            });
+        }
+
+        let input_randomness = input.plaintext.randomness.field();
+        let input_commitment_bytes =
+            value_commitment_bytes(input.plaintext.value, input_randomness);
+        let input_commitment =
+            Option::<pallas::Point>::from(pallas::Point::from_bytes(&input_commitment_bytes))
+                .ok_or(WalletBuildError::Crypto)?
+                .to_affine();
+        let nullifier = input
+            .plaintext
+            .nullifier(keys.nullifier_key(), input.position);
+        let mut preimage = TransactionPreimage {
+            network_id: self.network_id,
+            anchor: self.root(),
+            expiry_height,
+            fee,
+            spends: vec![PublicSpend {
+                nullifier,
+                value_commitment: input_commitment_bytes,
+                randomized_key: [0; 32],
+            }],
+            outputs,
+            programs: vec![],
+        };
+        let prepared =
+            prepare_same_owner_spends(keys, &mut preimage).map_err(|_| WalletBuildError::Crypto)?;
+        let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+            &preimage.spends[0].randomized_key,
+        ))
+        .ok_or(WalletBuildError::Crypto)?
+        .to_affine();
+        let binding = preimage
+            .encryption_binding()
+            .map_err(|_| WalletBuildError::Crypto)?;
+        for (index, (note, recipient)) in output_notes.iter().zip(&recipients).enumerate() {
+            let encrypted = keys
+                .encrypt_note(note, &recipient.0, binding, index as u32)
+                .map_err(|_| WalletBuildError::Crypto)?;
+            preimage.outputs[index].ephemeral_key = encrypted.ephemeral_key;
+            preimage.outputs[index].ciphertext = encrypted.ciphertext;
+            preimage.outputs[index].outgoing_ciphertext = encrypted.outgoing_ciphertext;
+        }
+
+        let path = self
+            .witness(note_index)
+            .map_err(|_| WalletBuildError::Crypto)?;
+        let authority = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+            &input.plaintext.spend_authority_key,
+        ))
+        .ok_or(WalletBuildError::Crypto)?
+        .to_affine();
+        let witness = MultiTransferWitness::<DEPTH> {
+            input_values: vec![input.plaintext.value],
+            output_values: recipients.iter().map(|recipient| recipient.1).collect(),
+            spends: vec![MultiSpendWitness {
+                commitment: input.commitment.field(),
+                input_note: input
+                    .plaintext
+                    .commitment_inputs()
+                    .map_err(|_| WalletBuildError::Crypto)?,
+                authority_key: authority,
+                authorization_randomizer: prepared.randomizers()[0],
+                randomized_key,
+                siblings: path
+                    .siblings
+                    .iter()
+                    .map(|sibling| sibling.field())
+                    .collect(),
+                position: path.position,
+                nullifier_key: keys.nullifier_key().field(),
+                rho: input.plaintext.rho.field(),
+                value_randomness: input_randomness,
+                value_commitment: input_commitment,
+            }],
+            output_notes: output_notes
+                .iter()
+                .map(|note| {
+                    note.commitment_inputs()
+                        .map_err(|_| WalletBuildError::Crypto)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            output_value_randomness: output_randomness.clone(),
+            output_value_commitments: output_commitments,
+        };
+        let backend_id = multi_transfer_backend_id(1, recipients.len());
+        let nullifiers = [nullifier.0];
+        let proof = match recipients.len() {
+            1 => create_multi_transfer_proof::<DEPTH, 1, 1>(
+                circuit_k,
+                &witness,
+                fee,
+                self.root(),
+                &nullifiers,
+            ),
+            2 => create_multi_transfer_proof::<DEPTH, 1, 2>(
+                circuit_k,
+                &witness,
+                fee,
+                self.root(),
+                &nullifiers,
+            ),
+            _ => return Err(WalletBuildError::Crypto),
+        }
+        .map_err(|_| WalletBuildError::Crypto)?;
+        let spend_signatures = sign_prepared_spends(&prepared, &preimage, &backend_id, &proof)
+            .map_err(|_| WalletBuildError::Crypto)?;
+        let binding_signature = sign_binding_authorization(
+            &preimage,
+            &backend_id,
+            &proof,
+            &[input_randomness],
+            &output_randomness,
+        )
+        .map_err(|_| WalletBuildError::Crypto)?;
+        Ok(AuthorizedTransaction {
+            preimage,
+            backend_id,
+            proof,
+            spend_signatures,
+            binding_signature,
+        })
     }
 
     pub fn encode_snapshot(&self) -> Result<Vec<u8>, WalletError> {
@@ -570,6 +774,55 @@ mod tests {
                 .ownership_signature,
             [9; 64]
         );
+
+        // The public wallet FFI is fixed to the consensus tree depth. Build the
+        // transfer snapshot at that depth rather than reusing the compact
+        // depth-8 unit-test wallet above.
+        let mut transfer_wallet = WalletState::<32>::new(network);
+        transfer_wallet
+            .scan_transfer(&receiver_view, &transaction)
+            .unwrap();
+        let wallet_snapshot = transfer_wallet.encode_snapshot().unwrap();
+        let mut recipient_bytes = [0u8; 91];
+        assert_eq!(
+            crate::onyx_wallet_address(
+                [3u8; 32].as_ptr(),
+                network.as_ptr(),
+                0,
+                recipient_bytes.as_mut_ptr(),
+            ),
+            0
+        );
+        let mut payment_ptr = std::ptr::null_mut();
+        let mut payment_len = 0usize;
+        assert_eq!(
+            crate::onyx_wallet_create_transfer(
+                wallet_snapshot.as_ptr(),
+                wallet_snapshot.len(),
+                [2u8; 32].as_ptr(),
+                recipient_bytes.as_ptr(),
+                20,
+                2,
+                101,
+                b"shielded payment".as_ptr(),
+                b"shielded payment".len(),
+                16,
+                &mut payment_ptr,
+                &mut payment_len,
+            ),
+            1
+        );
+        let payment_encoded =
+            unsafe { std::slice::from_raw_parts(payment_ptr, payment_len) }.to_vec();
+        crate::onyx_free(payment_ptr, payment_len);
+        let payment = AuthorizedTransaction::decode(&payment_encoded).unwrap();
+        assert_eq!(payment.preimage.outputs.len(), 2);
+        crate::proof::verify_authorized_multi_transfer::<32, 1, 2>(16, &payment).unwrap();
+        let mut recipient_wallet = WalletState::<8>::new(network);
+        recipient_wallet
+            .scan_transfer(&sender_view, &payment)
+            .unwrap();
+        assert_eq!(recipient_wallet.unspent_balance().unwrap(), 20);
 
         let mut foreign = WalletState::<8>::new(network);
         foreign.scan_transfer(&sender_view, &transaction).unwrap();

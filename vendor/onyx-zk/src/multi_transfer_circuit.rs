@@ -165,16 +165,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 index * 2,
                 index * 2 + 1,
             )?;
-            let commitment = synthesize_note_commitment(
-                &config.notes,
-                layouter.namespace(|| format!("spend {index} note")),
-                &spend.note,
-                Some(&values.input_cells[index]),
-                Some(&network),
-                Some((&authority.x, &authority.y)),
-                true,
-            )?;
-            synthesize_value_commitment(
+            let value_commitment = synthesize_value_commitment(
                 &config.authorization,
                 layouter.namespace(|| format!("spend {index} value commitment")),
                 &values.input_cells[index],
@@ -183,6 +174,16 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 false,
                 SPENDS * 2 + index * 2,
                 SPENDS * 2 + index * 2 + 1,
+            )?;
+            let commitment = synthesize_note_commitment(
+                &config.notes,
+                layouter.namespace(|| format!("spend {index} note")),
+                &spend.note,
+                Some(&values.input_cells[index]),
+                Some(&network),
+                Some((&authority.x, &authority.y)),
+                Some(&value_commitment.randomness),
+                true,
             )?;
             synthesize_membership(
                 &spend.membership,
@@ -195,7 +196,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
         }
 
         for (index, note) in self.outputs.iter().enumerate() {
-            synthesize_value_commitment(
+            let value_commitment = synthesize_value_commitment(
                 &config.authorization,
                 layouter.namespace(|| format!("output {index} value commitment")),
                 &values.output_cells[index],
@@ -212,6 +213,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 Some(&values.output_cells[index]),
                 Some(&network),
                 None,
+                Some(&value_commitment.randomness),
                 true,
             )?;
             layouter.constrain_instance(commitment.cell(), config.notes.instance, index)?;
@@ -261,6 +263,8 @@ mod tests {
             note[10] = *coordinates.x();
             note[11] = *coordinates.y();
         }
+        input_notes[0][13] = Fp::from(50);
+        input_notes[1][13] = Fp::from(51);
         let commitments = input_notes.map(commitment);
         let leaves = commitments.map(|cm| hash2(Fp::from(1), cm));
         let parent = hash2(Fp::from(2), hash2(leaves[0], leaves[1]));
@@ -308,7 +312,9 @@ mod tests {
                 value_commitment,
             ));
         }
-        let outputs = vec![note(100, 25), note(130, 20)];
+        let mut outputs = vec![note(100, 25), note(130, 20)];
+        outputs[0][13] = Fp::from(60);
+        outputs[1][13] = Fp::from(61);
         let output_commitments: Vec<_> = outputs.iter().copied().map(commitment).collect();
         let output_value_randomness = vec![Fp::from(60), Fp::from(61)];
         let output_value_commitments = [25u64, 20]

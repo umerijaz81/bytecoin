@@ -389,6 +389,21 @@ struct GetOnyxStatus {
 	};
 };
 
+struct CreateOnyxTransaction {
+	static std::string method() { return "create_onyx_transaction"; }
+	struct Request {
+		std::string address;  // canonical 91-byte hex Onyx address
+		Amount amount = 0;
+		Amount fee = 0;
+		Height expiry_height = 0;  // zero selects current tip + 20
+		std::string memo;
+	};
+	struct Response {
+		BinaryArray binary_transaction;
+		Hash transaction_hash{};
+	};
+};
+
 struct GetUnspents {
 	static std::string method() { return "get_unspents"; }
 	// This method execution time is proportional to number of unspent coins
@@ -980,6 +995,8 @@ void ser_members(cn::api::walletd::CreateAddresses::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetBalance::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxStatus::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxStatus::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxTransaction::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxTransaction::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetTransfers::Request &v, ISeria &s);

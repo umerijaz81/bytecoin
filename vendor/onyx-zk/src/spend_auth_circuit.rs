@@ -109,6 +109,7 @@ pub(crate) struct AssignedSpendAuthority {
 pub(crate) struct AssignedValueCommitment {
     pub x: AssignedCell<Fp, Fp>,
     pub y: AssignedCell<Fp, Fp>,
+    pub randomness: AssignedCell<Fp, Fp>,
 }
 
 fn load_range_table(
@@ -346,6 +347,7 @@ pub(crate) fn synthesize_value_commitment(
     Ok(AssignedValueCommitment {
         x: expected.inner().x(),
         y: expected.inner().y(),
+        randomness: randomness_cell,
     })
 }
 

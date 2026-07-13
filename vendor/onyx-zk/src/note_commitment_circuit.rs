@@ -69,6 +69,7 @@ impl Circuit<Fp> for NoteCommitmentCircuit {
             None,
             None,
             None,
+            None,
             false,
         )?;
         layouter.constrain_instance(commitment.cell(), config.instance, 0)
@@ -82,6 +83,7 @@ pub(crate) fn synthesize_note_commitment(
     external_value: Option<&AssignedCell<Fp, Fp>>,
     external_network: Option<&AssignedCell<Fp, Fp>>,
     external_authority: Option<(&AssignedCell<Fp, Fp>, &AssignedCell<Fp, Fp>)>,
+    external_randomness: Option<&AssignedCell<Fp, Fp>>,
     enforce_native_asset: bool,
 ) -> Result<AssignedCell<Fp, Fp>, Error> {
     let message = layouter.assign_region(
@@ -136,6 +138,13 @@ pub(crate) fn synthesize_note_commitment(
                             || input.map_or(Value::unknown(), Value::known),
                         )?
                     }
+                } else if index == 13 && external_randomness.is_some() {
+                    external_randomness.unwrap().copy_advice(
+                        || "linked value-commitment randomness",
+                        &mut region,
+                        config.state[0],
+                        index,
+                    )?
                 } else {
                     region.assign_advice(
                         || "note field",

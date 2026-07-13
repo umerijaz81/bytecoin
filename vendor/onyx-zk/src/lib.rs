@@ -72,13 +72,19 @@ fn verify_transfer_dispatch(
     );
     let result = match shape {
         (2, 1, 1) => proof::verify_authorized_multi_transfer::<2, 1, 1>(circuit_k, transaction),
+        (2, 1, 2) => proof::verify_authorized_multi_transfer::<2, 1, 2>(circuit_k, transaction),
+        (2, 2, 1) => proof::verify_authorized_multi_transfer::<2, 2, 1>(circuit_k, transaction),
         (2, 2, 2) => proof::verify_authorized_multi_transfer::<2, 2, 2>(circuit_k, transaction),
         (4, 1, 1) if transaction.backend_id == proof::EXPERIMENTAL_TRANSFER_BACKEND => {
             proof::verify_authorized_transfer::<4>(circuit_k, transaction)
         }
         (4, 1, 1) => proof::verify_authorized_multi_transfer::<4, 1, 1>(circuit_k, transaction),
+        (4, 1, 2) => proof::verify_authorized_multi_transfer::<4, 1, 2>(circuit_k, transaction),
+        (4, 2, 1) => proof::verify_authorized_multi_transfer::<4, 2, 1>(circuit_k, transaction),
         (4, 2, 2) => proof::verify_authorized_multi_transfer::<4, 2, 2>(circuit_k, transaction),
         (32, 1, 1) => proof::verify_authorized_multi_transfer::<32, 1, 1>(circuit_k, transaction),
+        (32, 1, 2) => proof::verify_authorized_multi_transfer::<32, 1, 2>(circuit_k, transaction),
+        (32, 2, 1) => proof::verify_authorized_multi_transfer::<32, 2, 1>(circuit_k, transaction),
         (32, 2, 2) => proof::verify_authorized_multi_transfer::<32, 2, 2>(circuit_k, transaction),
         _ => return -3,
     };
@@ -920,6 +926,89 @@ pub extern "C" fn onyx_wallet_finalize_bridge(
         unsafe {
             *bridge_out = ptr;
             *bridge_len_out = len;
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_transfer(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    amount: u64,
+    fee: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || recipient.is_null()
+            || transaction_out.is_null()
+            || transaction_len_out.is_null()
+            || memo_len > types::MAX_MEMO_BYTES
+            || (memo.is_null() && memo_len != 0)
+            || !(10..=20).contains(&circuit_k)
+        {
+            return -1;
+        }
+        unsafe {
+            *transaction_out = std::ptr::null_mut();
+            *transaction_len_out = 0;
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let recipient = unsafe { slice::from_raw_parts(recipient, 91) };
+        let address = keys::RecipientAddress {
+            network_id: recipient[0..16].try_into().unwrap(),
+            diversifier: recipient[16..27].try_into().unwrap(),
+            transmission_key: recipient[27..59].try_into().unwrap(),
+            spend_authority_key: recipient[59..91].try_into().unwrap(),
+        };
+        let keys = match keys::MasterSeed::new(seed).derive(address.network_id) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let transaction = match wallet.build_transfer(
+            &keys,
+            &address,
+            amount,
+            fee,
+            expiry_height,
+            if memo_len == 0 {
+                vec![]
+            } else {
+                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+            },
+            circuit_k,
+        ) {
+            Ok(transaction) => transaction,
+            Err(wallet::WalletBuildError::InsufficientFunds) => return -7,
+            Err(_) => return -2,
+        };
+        let encoded = match transaction.encode() {
+            Ok(encoded) if encoded.len() <= MAX_AUTHORIZED_TRANSACTION_BYTES => encoded,
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *transaction_out = ptr;
+            *transaction_len_out = len;
         }
         1
     })

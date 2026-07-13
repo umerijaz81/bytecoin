@@ -27,6 +27,8 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
     {api::walletd::GetViewKeyPair::method(), json_rpc::make_member_method(&WalletNode::on_get_view_key)},
     {api::walletd::GetBalance::method(), json_rpc::make_member_method(&WalletNode::on_get_balance)},
     {api::walletd::GetOnyxStatus::method(), json_rpc::make_member_method(&WalletNode::on_get_onyx_status)},
+    {api::walletd::CreateOnyxTransaction::method(),
+        json_rpc::make_member_method(&WalletNode::on_create_onyx_transaction)},
     {api::walletd::GetUnspents::method(), json_rpc::make_member_method(&WalletNode::on_get_unspent)},
     {api::walletd::GetTransfers::method(), json_rpc::make_member_method(&WalletNode::on_get_transfers)},
     {api::walletd::CreateTransaction::method(), json_rpc::make_member_method(&WalletNode::on_create_transaction)},
@@ -374,6 +376,37 @@ bool WalletNode::on_get_onyx_status(http::Client *, http::RequestBody &&, json_r
 	response.note_count = get_wallet_state().get_onyx_note_count();
 	std::copy(get_wallet_state().get_onyx_root().begin(), get_wallet_state().get_onyx_root().end(),
 	    response.commitment_root.data);
+	return true;
+}
+
+bool WalletNode::on_create_onyx_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::walletd::CreateOnyxTransaction::Request &&request,
+    api::walletd::CreateOnyxTransaction::Response &response) {
+	check_wallet_open();
+	if (get_wallet_state().db_empty())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	std::array<uint8_t, 91> recipient{};
+	if (!common::from_hex(request.address, recipient.data(), recipient.size()))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
+	Height expiry = request.expiry_height;
+	if (expiry == 0) {
+		if (get_wallet_state().get_tip_height() > std::numeric_limits<Height>::max() - 20)
+			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
+		expiry = get_wallet_state().get_tip_height() + 20;
+	}
+	if (expiry < get_wallet_state().get_tip_height() ||
+	    expiry - get_wallet_state().get_tip_height() > parameters::ONYX_MAX_EXPIRY_DISTANCE)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	BinaryArray envelope;
+	if (!get_wallet_state().create_onyx_transfer(recipient, request.amount, request.fee, expiry,
+	        common::as_binary_array(request.memo), &envelope))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx transaction");
+	Transaction transaction;
+	transaction.version = m_currency.onyx_transaction_version;
+	transaction.onyx_type = parameters::ONYX_TYPE_TRANSFER;
+	transaction.onyx_envelope = std::move(envelope);
+	response.binary_transaction = seria::to_binary(transaction);
+	response.transaction_hash = get_transaction_hash(transaction);
 	return true;
 }
 

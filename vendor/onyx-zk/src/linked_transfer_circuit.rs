@@ -125,7 +125,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             0,
             1,
         )?;
-        synthesize_value_commitment(
+        let input_value_commitment = synthesize_value_commitment(
             &config.authorization,
             layouter.namespace(|| "input value commitment"),
             &values.input_cells[0],
@@ -135,7 +135,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             2,
             3,
         )?;
-        synthesize_value_commitment(
+        let output_value_commitment = synthesize_value_commitment(
             &config.authorization,
             layouter.namespace(|| "output value commitment"),
             &values.output_cells[0],
@@ -152,6 +152,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             Some(&values.input_cells[0]),
             Some(&network),
             Some((&authority.x, &authority.y)),
+            Some(&input_value_commitment.randomness),
             true,
         )?;
         let output_commitment = synthesize_note_commitment(
@@ -161,6 +162,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             Some(&values.output_cells[0]),
             Some(&network),
             None,
+            Some(&output_value_commitment.randomness),
             true,
         )?;
         layouter.constrain_instance(output_commitment.cell(), config.notes.instance, 0)?;
@@ -215,9 +217,11 @@ mod tests {
         let authority_coordinates = authority_key.coordinates().unwrap();
         let randomized_coordinates = randomized_key.coordinates().unwrap();
         let mut input_note = note(10, 30);
+        input_note[13] = Fp::from(51);
         input_note[10] = *authority_coordinates.x();
         input_note[11] = *authority_coordinates.y();
-        let output_note = note(100, 25);
+        let mut output_note = note(100, 25);
+        output_note[13] = Fp::from(52);
         let input_commitment = commitment(input_note);
         let output_commitment = commitment(output_note);
         let siblings = [Fp::from(31), Fp::from(32), Fp::from(33), Fp::from(34)];

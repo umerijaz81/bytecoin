@@ -165,6 +165,20 @@ void WalletState::reload_onyx_wallet_state() {
 #endif
 }
 
+bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
+    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const {
+#ifdef onyx_USE_ZK
+	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || envelope == nullptr)
+		return false;
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+	return zk::Halo2ProofSystem::wallet_create_transfer(m_onyx_wallet_snapshot, seed, recipient, amount, fee,
+	    expiry_height, memo, parameters::ONYX_CIRCUIT_K, envelope);
+#else
+	return false;
+#endif
+}
+
 void WalletState::db_commit() {
 	if (m_wallet.is_amethyst()) {
 		m_db.put("$address_count", seria::to_binary(m_wallet.get_actual_records_count()), false);

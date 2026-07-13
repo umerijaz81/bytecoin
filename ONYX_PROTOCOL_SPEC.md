@@ -71,6 +71,9 @@ Value commitments use `cv = [value]V + [rcv]R`, where
 `V = hash_to_curve("bytecoin.onyx.v6.value-commitment", "v")` and `R` is the frozen Orchard
 RedPallas binding generator. Their canonical compressed encodings are public; values and trapdoors
 remain private. Identity and non-canonical commitment encodings fail before proof verification.
+For native notes, `rcv` is the note plaintext randomness field. The note commitment binds it and
+authenticated encryption delivers it to the recipient, so every received note includes the
+value-commitment opening required for a later spend.
 
 The binding signing key is `bsk = sum(rcv_inputs) - sum(rcv_outputs)`. Verifiers derive
 `bvk = sum(cv_inputs) - sum(cv_outputs) - [fee]V`; circuit-enforced balance cancels the value terms,

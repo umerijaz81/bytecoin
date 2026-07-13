@@ -87,6 +87,8 @@ public:
 	uint64_t get_onyx_balance() const { return m_onyx_balance; }
 	size_t get_onyx_note_count() const { return m_onyx_note_count; }
 	const std::array<uint8_t, 32> &get_onyx_root() const { return m_onyx_root; }
+	bool create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
+	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const;
 
 	void wallet_addresses_updated();
 	// generating through state prevents undo of blocks within 2*block_future_time_limit from now

@@ -97,18 +97,7 @@ impl Circuit<Fp> for BridgeCircuit {
                 )
             },
         )?;
-        let commitment = synthesize_note_commitment(
-            &config.note,
-            layouter.namespace(|| "bridged note"),
-            &self.note,
-            Some(&values.output_cells[0]),
-            Some(&network),
-            None,
-            true,
-        )?;
-        layouter.constrain_instance(commitment.cell(), config.note.instance, 0)?;
-
-        synthesize_value_commitment(
+        let value_commitment = synthesize_value_commitment(
             &config.value_commitment,
             layouter.namespace(|| "bridged value commitment"),
             &values.output_cells[0],
@@ -118,6 +107,17 @@ impl Circuit<Fp> for BridgeCircuit {
             0,
             1,
         )?;
+        let commitment = synthesize_note_commitment(
+            &config.note,
+            layouter.namespace(|| "bridged note"),
+            &self.note,
+            Some(&values.output_cells[0]),
+            Some(&network),
+            None,
+            Some(&value_commitment.randomness),
+            true,
+        )?;
+        layouter.constrain_instance(commitment.cell(), config.note.instance, 0)?;
         Ok(())
     }
 }
@@ -149,6 +149,7 @@ mod tests {
         note[4] = native_asset_fields()[0];
         note[5] = native_asset_fields()[1];
         note[NOTE_VALUE_INPUT_INDEX] = Fp::from(note_value);
+        note[13] = Fp::from(17);
         let note_commitment =
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
                 .hash(note);

@@ -649,6 +649,7 @@ mod tests {
         input_note[5] = crate::types::native_asset_fields()[1];
         input_note[10] = *authority_coordinates.x();
         input_note[11] = *authority_coordinates.y();
+        input_note[13] = Fp::from(101);
         let commitment =
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
                 .hash(input_note);
@@ -657,6 +658,7 @@ mod tests {
         output_note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
         output_note[4] = crate::types::native_asset_fields()[0];
         output_note[5] = crate::types::native_asset_fields()[1];
+        output_note[13] = Fp::from(102);
         let output_commitment =
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
                 .hash(output_note);
@@ -931,13 +933,14 @@ mod tests {
             std::array::from_fn(|i| Fp::from(10 + i as u64)),
             std::array::from_fn(|i| Fp::from(40 + i as u64)),
         ];
-        for (note, value) in input_notes.iter_mut().zip([30u64, 20]) {
+        for (index, (note, value)) in input_notes.iter_mut().zip([30u64, 20]).enumerate() {
             note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
             note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
             note[4] = crate::types::native_asset_fields()[0];
             note[5] = crate::types::native_asset_fields()[1];
             note[10] = *authority_coordinates.x();
             note[11] = *authority_coordinates.y();
+            note[13] = Fp::from(110 + index as u64);
         }
         let commitment = |note: [Fp; NOTE_COMMITMENT_INPUTS]| {
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
@@ -967,6 +970,8 @@ mod tests {
         ];
         output_notes[0][crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(25);
         output_notes[1][crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(20);
+        output_notes[0][13] = Fp::from(120);
+        output_notes[1][13] = Fp::from(121);
         for note in &mut output_notes {
             note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
             note[4] = crate::types::native_asset_fields()[0];

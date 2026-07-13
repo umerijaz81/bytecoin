@@ -92,6 +92,9 @@ public:
 	    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash);
 	static bool wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
 	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge);
+	static bool wallet_create_transfer(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 91> &recipient, uint64_t amount, uint64_t fee, uint64_t expiry_height,
+	    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *transaction);
 };
 
 }  // namespace zk
