@@ -110,6 +110,11 @@ int onyx_wallet_scan_viewing(
     const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out,
     uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
+/* Mark owned nullifiers from a pending transfer without appending its unconfirmed outputs. */
+int onyx_wallet_reserve_spends(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
+    const uint8_t expected_network[16], const uint8_t *encoded, size_t encoded_len,
+    uint8_t **snapshot_out, size_t *snapshot_len_out);
 int onyx_wallet_summary(const uint8_t *snapshot, size_t snapshot_len,
                         uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
 

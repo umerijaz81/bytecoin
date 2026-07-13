@@ -51,6 +51,73 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | 13. | `create_transaction` | Builds a transaction by specifying transfers you want to make and returns it for inspection. |
 | 14. |`send_transaction`    | Sends previously created transaction to the network.                                         |
 
+### Onyx shielded wallet
+
+| Method | Description |
+|--------|-------------|
+| `get_onyx_status` | Returns the wallet's canonical Onyx address, confirmed shielded balance, recovered-note count, and commitment-tree root. |
+| `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
+
+Onyx transactions use the existing `send_transaction` method for durable payment-queue storage and
+network relay. Pending Onyx nullifiers are reserved while they remain in that queue; unconfirmed
+change is not considered spendable and is not appended to the confirmed commitment tree.
+
+#### `get_onyx_status`
+
+This method takes an empty parameter object. The response fields are:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `balance` | `uint64` | Confirmed, unspent native-asset balance. |
+| `note_count` | `uint64` | Number of notes recovered by this wallet, including spent notes. |
+| `address` | `string` | Canonical 91-byte Onyx address encoded as 182 lowercase hexadecimal characters. |
+| `commitment_root` | `string` | Canonical 32-byte commitment-tree root. |
+
+```json
+{"jsonrpc":"2.0","id":"status","method":"get_onyx_status","params":{}}
+```
+
+#### `create_onyx_transaction`
+
+| Field | Type | Mandatory | Default | Description |
+|-------|------|-----------|---------|-------------|
+| `address` | `string` | Yes | - | Recipient's canonical 91-byte hex Onyx address. |
+| `amount` | `uint64` | Yes | - | Nonzero native-asset amount. |
+| `fee` | `uint64` | Yes | - | Fee committed inside the shielded proof. |
+| `expiry_height` | `uint64` | No | `0` | Zero selects current wallet tip plus 20; otherwise it must be inside the consensus expiry window. |
+| `memo` | `string` | No | empty | Encrypted recipient memo. |
+
+The response contains `binary_transaction` and `transaction_hash`. Inspect or persist these fields,
+then pass `binary_transaction` unchanged to `send_transaction`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "create-onyx",
+  "method": "create_onyx_transaction",
+  "params": {
+    "address": "<182-character-onyx-address-hex>",
+    "amount": 1000000,
+    "fee": 1000,
+    "expiry_height": 0,
+    "memo": "invoice 42"
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "send-onyx",
+  "method": "send_transaction",
+  "params": {"binary_transaction": "<binary_transaction-from-create-response>"}
+}
+```
+
+Construction fails for malformed or foreign-network addresses, expired requests, insufficient
+confirmed funds, view-only wallets, or wallets that have not synchronized an Onyx state. Proof
+generation can take materially longer than legacy transaction construction.
+
 -----------------------------------------------------------------------------------------------------------------------
 
 ### 1. `create_addresses`

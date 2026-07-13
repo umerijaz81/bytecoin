@@ -770,6 +770,76 @@ pub extern "C" fn onyx_wallet_scan_viewing(
 }
 
 #[no_mangle]
+pub extern "C" fn onyx_wallet_reserve_spends(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    expected_network: *const u8,
+    encoded: *const u8,
+    encoded_len: usize,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || expected_network.is_null()
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+        }
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .expect("fixed seed length");
+        let network: [u8; 16] = unsafe { slice::from_raw_parts(expected_network, 16) }
+            .try_into()
+            .expect("fixed network length");
+        let keys = match keys::MasterSeed::new(seed)
+            .derive(network)
+            .and_then(|keys| keys.full_viewing_key())
+        {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let mut wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(transaction) => transaction,
+            Err(_) => return -2,
+        };
+        if wallet.reserve_transfer_spends(&keys, &transaction).is_err() {
+            return -2;
+        }
+        let encoded = match wallet.encode_snapshot() {
+            Ok(encoded) if encoded.len() <= MAX_STATE_SNAPSHOT_BYTES => encoded,
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+        }
+        1
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_wallet_summary(
     snapshot: *const u8,
     snapshot_len: usize,

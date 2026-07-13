@@ -572,6 +572,17 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             .encryption_binding()
             .map_err(|_| WalletError::Transaction)?;
         self.scan_outputs(keys, &transaction.preimage.outputs, binding)?;
+        self.reserve_transfer_spends(keys, transaction)
+    }
+
+    pub fn reserve_transfer_spends(
+        &mut self,
+        keys: &FullViewingKey,
+        transaction: &AuthorizedTransaction,
+    ) -> Result<(), WalletError> {
+        if transaction.preimage.network_id != self.network_id {
+            return Err(WalletError::WrongNetwork);
+        }
         for note in &mut self.notes {
             if note.spent {
                 continue;
@@ -992,6 +1003,28 @@ mod tests {
         let payment = AuthorizedTransaction::decode(&payment_encoded).unwrap();
         assert_eq!(payment.preimage.outputs.len(), 2);
         crate::proof::verify_authorized_multi_transfer::<32, 1, 2>(16, &payment).unwrap();
+        let mut reserved_ptr = std::ptr::null_mut();
+        let mut reserved_len = 0usize;
+        assert_eq!(
+            crate::onyx_wallet_reserve_spends(
+                wallet_snapshot.as_ptr(),
+                wallet_snapshot.len(),
+                [2u8; 32].as_ptr(),
+                network.as_ptr(),
+                payment_encoded.as_ptr(),
+                payment_encoded.len(),
+                &mut reserved_ptr,
+                &mut reserved_len,
+            ),
+            1
+        );
+        let reserved_snapshot =
+            unsafe { std::slice::from_raw_parts(reserved_ptr, reserved_len) }.to_vec();
+        crate::onyx_free(reserved_ptr, reserved_len);
+        let reserved = WalletState::<32>::decode_snapshot(&reserved_snapshot).unwrap();
+        assert_eq!(reserved.unspent_balance().unwrap(), 0);
+        assert_eq!(reserved.leaf_count(), transfer_wallet.leaf_count());
+        assert_eq!(reserved.root(), transfer_wallet.root());
         let mut recipient_wallet = WalletState::<8>::new(network);
         recipient_wallet
             .scan_transfer(&sender_view, &payment)

@@ -172,7 +172,28 @@ bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient,
 		return false;
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
-	return zk::Halo2ProofSystem::wallet_create_transfer(m_onyx_wallet_snapshot, seed, recipient, amount, fee,
+	std::array<uint8_t, 16> network{};
+	std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+	BinaryArray proving_snapshot = m_onyx_wallet_snapshot;
+	for (const auto &entry : payment_queue) {
+		if (entry.in_blockchain())
+			continue;
+		Transaction pending;
+		try {
+			seria::from_binary(pending, entry.binary_transaction);
+		} catch (const std::exception &) {
+			return false;
+		}
+		if (pending.version != m_currency.onyx_transaction_version ||
+		    pending.onyx_type != parameters::ONYX_TYPE_TRANSFER)
+			continue;
+		BinaryArray reserved;
+		if (!zk::Halo2ProofSystem::wallet_reserve_spends(
+		        proving_snapshot, seed, network, pending.onyx_envelope, &reserved))
+			return false;
+		proving_snapshot = std::move(reserved);
+	}
+	return zk::Halo2ProofSystem::wallet_create_transfer(proving_snapshot, seed, recipient, amount, fee,
 	    expiry_height, memo, parameters::ONYX_CIRCUIT_K, envelope);
 #else
 	return false;
