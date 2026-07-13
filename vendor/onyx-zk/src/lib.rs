@@ -26,6 +26,8 @@ use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 
 pub mod authorization;
+pub mod bridge;
+pub mod bridge_circuit;
 pub mod bundle_circuit;
 pub mod keys;
 pub mod linked_transfer_circuit;
@@ -313,6 +315,192 @@ pub extern "C" fn onyx_verify_apply_transfer(
             *snapshot_out = ptr;
             *snapshot_len_out = len;
             *fee_out = fee;
+        }
+        1
+    })
+}
+
+/// Verify and apply a one-way legacy bridge envelope. The C++ caller must additionally validate
+/// the returned ownership signature against the disclosed legacy output public key, then atomically
+/// record the returned key image in legacy spent state together with this snapshot.
+#[no_mangle]
+pub extern "C" fn onyx_verify_apply_bridge(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    anchor_window_blocks: u64,
+    encoded: *const u8,
+    encoded_len: usize,
+    circuit_k: u32,
+    expected_network: *const u8,
+    block_height: u64,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+    legacy_amount_out: *mut u64,
+    legacy_stack_index_out: *mut u64,
+    legacy_key_image_out: *mut u8,
+    ownership_sighash_out: *mut u8,
+    ownership_signature_out: *mut u8,
+    fee_out: *mut u64,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || expected_network.is_null()
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+            || legacy_amount_out.is_null()
+            || legacy_stack_index_out.is_null()
+            || legacy_key_image_out.is_null()
+            || ownership_sighash_out.is_null()
+            || ownership_signature_out.is_null()
+            || fee_out.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || (snapshot.is_null() && snapshot_len != 0)
+        {
+            return -1;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+            *legacy_amount_out = 0;
+            *legacy_stack_index_out = 0;
+            *fee_out = 0;
+        }
+        let bridge = match bridge::AuthorizedBridge::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(bridge) => bridge,
+            Err(_) => return -2,
+        };
+        let network = unsafe { slice::from_raw_parts(expected_network, 16) };
+        if bridge.preimage.network_id.as_slice() != network
+            || block_height > bridge.preimage.expiry_height
+            || bridge.preimage.expiry_height - block_height > MAX_EXPIRY_DISTANCE_BLOCKS
+        {
+            return -5;
+        }
+        if proof::verify_bridge_proof(circuit_k, &bridge).is_err() {
+            return 0;
+        }
+        let snapshot_bytes = if snapshot_len == 0 {
+            &[][..]
+        } else {
+            unsafe { slice::from_raw_parts(snapshot, snapshot_len) }
+        };
+        let mut state = if snapshot_bytes.is_empty() {
+            if anchor_window_blocks == 0 {
+                return -5;
+            }
+            state::ShieldedState::<32>::new(anchor_window_blocks)
+        } else {
+            match state::ShieldedState::<32>::decode_snapshot(snapshot_bytes) {
+                Ok(state) => state,
+                Err(_) => return -5,
+            }
+        };
+        let transition = transaction::TransactionPreimage {
+            network_id: bridge.preimage.network_id,
+            anchor: state.root(),
+            expiry_height: bridge.preimage.expiry_height,
+            fee: 0,
+            spends: vec![],
+            outputs: vec![bridge.preimage.output.clone()],
+            programs: vec![],
+        };
+        if state.apply_transaction(&transition, block_height).is_err() {
+            return -5;
+        }
+        let next = state.encode_snapshot();
+        if next.len() > MAX_STATE_SNAPSHOT_BYTES {
+            return -6;
+        }
+        let ownership_sighash = match bridge.ownership_sighash() {
+            Ok(hash) => hash,
+            Err(_) => return -2,
+        };
+        let (ptr, len) = into_raw(next);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+            *legacy_amount_out = bridge.preimage.legacy_amount;
+            *legacy_stack_index_out = bridge.preimage.legacy_stack_index;
+            *fee_out = bridge.preimage.fee;
+            std::ptr::copy_nonoverlapping(
+                bridge.preimage.legacy_key_image.as_ptr(),
+                legacy_key_image_out,
+                32,
+            );
+            std::ptr::copy_nonoverlapping(ownership_sighash.as_ptr(), ownership_sighash_out, 32);
+            std::ptr::copy_nonoverlapping(
+                bridge.ownership_signature.as_ptr(),
+                ownership_signature_out,
+                64,
+            );
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_verify_bridge(
+    encoded: *const u8,
+    encoded_len: usize,
+    circuit_k: u32,
+    legacy_amount_out: *mut u64,
+    legacy_stack_index_out: *mut u64,
+    legacy_key_image_out: *mut u8,
+    ownership_sighash_out: *mut u8,
+    ownership_signature_out: *mut u8,
+    fee_out: *mut u64,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || legacy_amount_out.is_null()
+            || legacy_stack_index_out.is_null()
+            || legacy_key_image_out.is_null()
+            || ownership_sighash_out.is_null()
+            || ownership_signature_out.is_null()
+            || fee_out.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+        {
+            return -1;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
+        }
+        let bridge = match bridge::AuthorizedBridge::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(bridge) => bridge,
+            Err(_) => return -2,
+        };
+        if proof::verify_bridge_proof(circuit_k, &bridge).is_err() {
+            return 0;
+        }
+        let sighash = match bridge.ownership_sighash() {
+            Ok(hash) => hash,
+            Err(_) => return -2,
+        };
+        unsafe {
+            *legacy_amount_out = bridge.preimage.legacy_amount;
+            *legacy_stack_index_out = bridge.preimage.legacy_stack_index;
+            *fee_out = bridge.preimage.fee;
+            std::ptr::copy_nonoverlapping(
+                bridge.preimage.legacy_key_image.as_ptr(),
+                legacy_key_image_out,
+                32,
+            );
+            std::ptr::copy_nonoverlapping(sighash.as_ptr(), ownership_sighash_out, 32);
+            std::ptr::copy_nonoverlapping(
+                bridge.ownership_signature.as_ptr(),
+                ownership_signature_out,
+                64,
+            );
         }
         1
     })

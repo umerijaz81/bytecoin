@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "BlockChainState.hpp"
+#include <cstring>
 #include <unordered_set>
 #include "Config.hpp"
 #include "CryptoNoteConfig.hpp"
@@ -167,11 +168,21 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 		if (tx.onyx_envelope.empty() || tx.onyx_envelope.size() > parameters::ONYX_MAX_ENVELOPE_SIZE)
 			throw ConsensusError("Onyx envelope size out of bounds");
 #ifdef onyx_USE_ZK
-		zk::Halo2ProofSystem::VerifiedTransferDelta verified;
-		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
-		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &verified))
-			throw ConsensusError("Invalid Onyx authorized transfer");
-		return verified.fee;
+		if (tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+			zk::Halo2ProofSystem::VerifiedTransferDelta verified;
+			if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &verified))
+				throw ConsensusError("Invalid Onyx authorized transfer");
+			return verified.fee;
+		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+			zk::Halo2ProofSystem::VerifiedBridgeDelta verified;
+			if (!zk::Halo2ProofSystem::verify_bridge(
+			        tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &verified))
+				throw ConsensusError("Invalid Onyx bridge proof");
+			return verified.fee;
+		}
+		throw ConsensusError("Unknown Onyx envelope type");
 #else
 		throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
 #endif
@@ -771,7 +782,7 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	const Amount my_fee_per_byte = my_fee / my_size;
 #ifdef onyx_USE_ZK
 	zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
-	if (tx.version == m_currency.onyx_transaction_version) {
+	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
 		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta))
 			throw ConsensusError("Invalid Onyx authorized transfer");
@@ -920,7 +931,7 @@ void BlockChainState::remove_from_pool(Hash tid) {
 		}
 	}
 #ifdef onyx_USE_ZK
-	if (tx.version == m_currency.onyx_transaction_version) {
+	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 		zk::Halo2ProofSystem::VerifiedTransferDelta delta;
 		invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
 		              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &delta),
@@ -928,6 +939,15 @@ void BlockChainState::remove_from_pool(Hash tid) {
 		for (const auto &nullifier : delta.nullifiers)
 			if (m_memory_state_onyx_nf_tx.erase(nullifier) != 1)
 				all_erased = false;
+	}
+	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+		invariant(zk::Halo2ProofSystem::verify_bridge(tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &bridge),
+		    "stored Onyx bridge failed verification");
+		KeyImage key_image{};
+		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
+		if (m_memory_state_ki_tx.erase(key_image) != 1)
+			all_erased = false;
 	}
 #endif
 	const size_t my_size         = tit->second.binary_tx.size();
@@ -1029,13 +1049,51 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 		BinaryArray snapshot;
 		tx_delta.read_onyx_snapshot(&snapshot);
 		BinaryArray next_snapshot;
-		uint64_t fee = 0;
 		std::array<uint8_t, 16> network{};
 		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
-		if (!zk::Halo2ProofSystem::verify_apply_transfer(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
-		        transaction.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K,
-		        network, delta_state->get_block_height(), &next_snapshot, &fee))
-			throw ConsensusError("Onyx state transition rejected");
+		if (transaction.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+			uint64_t fee = 0;
+			if (!zk::Halo2ProofSystem::verify_apply_transfer(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
+			        transaction.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K,
+			        network, delta_state->get_block_height(), &next_snapshot, &fee))
+				throw ConsensusError("Onyx state transition rejected");
+		} else if (transaction.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+			zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+			if (!zk::Halo2ProofSystem::verify_apply_bridge(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
+			        transaction.onyx_envelope, parameters::ONYX_CIRCUIT_K, network,
+			        delta_state->get_block_height(), &next_snapshot, &bridge))
+				throw ConsensusError("Onyx bridge state transition rejected");
+			KeyImage key_image{};
+			Hash sighash{};
+			crypto::Signature signature{};
+			static_assert(sizeof(key_image.data) == 32 && sizeof(sighash.data) == 32 && sizeof(signature) == 64,
+			    "bridge ownership ABI sizes changed");
+			std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
+			std::memcpy(sighash.data, bridge.ownership_sighash.data(), 32);
+			std::memcpy(&signature, bridge.ownership_signature.data(), 64);
+			Height spent_height = 0;
+			if (tx_delta.read_keyimage(key_image, &spent_height))
+				throw ConsensusErrorOutputSpent("Legacy bridge output already spent", key_image, spent_height);
+			if (!key_in_main_subgroup(key_image))
+				throw ConsensusError("Legacy bridge key image not in main subgroup");
+			OutputIndexData output;
+			if (bridge.legacy_stack_index > std::numeric_limits<size_t>::max())
+				throw ConsensusError("Legacy bridge stack index overflow");
+			if (!tx_delta.read_amount_output(
+			        bridge.legacy_amount, static_cast<size_t>(bridge.legacy_stack_index), &output))
+				throw ConsensusError("Legacy bridge output does not exist");
+			if (!m_currency.is_transaction_unlocked(major_block_version, output.unlock_block_or_timestamp,
+			        delta_state->get_block_height(), delta_state->get_block_timestamp(),
+			        delta_state->get_block_median_timestamp()))
+				throw ConsensusError("Legacy bridge output is locked");
+			const std::vector<PublicKey> output_keys{output.public_key};
+			const RingSignature ownership_signature{signature};
+			if (!crypto::check_ring_signature(sighash, key_image, output_keys, ownership_signature))
+				throw ConsensusError("Invalid legacy bridge ownership signature");
+			tx_delta.store_keyimage(key_image, delta_state->get_block_height());
+		} else {
+			throw ConsensusError("Unknown Onyx envelope type");
+		}
 		tx_delta.set_onyx_snapshot(next_snapshot);
 		tx_delta.apply(delta_state);
 		return;
@@ -1076,6 +1134,19 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 }
 
 void BlockChainState::undo_transaction(IBlockChainState *delta_state, Height, const Transaction &tx) {
+	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+#ifdef onyx_USE_ZK
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+		invariant(zk::Halo2ProofSystem::verify_bridge(tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &bridge),
+		    "accepted Onyx bridge failed verification during undo");
+		KeyImage key_image{};
+		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
+		delta_state->delete_keyimage(key_image);
+		return;
+#else
+		invariant(false, "cannot undo Onyx bridge without ZK backend");
+#endif
+	}
 	for (size_t out_index = tx.outputs.size(); out_index-- > 0;) {
 		const auto &output = tx.outputs[out_index];
 		if (const auto *out = boost::get<OutputKey>(&output)) {
@@ -1135,18 +1206,20 @@ void BlockChainState::redo_block(const Hash &bhash, const Block &block, const ap
 		const auto tid = block.header.transaction_hashes.at(tit - block.transactions.begin());
 		if (tit->version == m_currency.onyx_transaction_version) {
 #ifdef onyx_USE_ZK
-			zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
-			invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tit->onyx_envelope,
-			              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta),
-			    "accepted Onyx block transaction failed verification");
-			std::set<Hash> conflicting_pool_transactions;
-			for (const auto &nullifier : onyx_delta.nullifiers) {
-				auto conflict = m_memory_state_onyx_nf_tx.find(nullifier);
-				if (conflict != m_memory_state_onyx_nf_tx.end())
-					conflicting_pool_transactions.insert(conflict->second);
+			if (tit->onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+				zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
+				invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tit->onyx_envelope,
+				              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta),
+				    "accepted Onyx block transaction failed verification");
+				std::set<Hash> conflicting_pool_transactions;
+				for (const auto &nullifier : onyx_delta.nullifiers) {
+					auto conflict = m_memory_state_onyx_nf_tx.find(nullifier);
+					if (conflict != m_memory_state_onyx_nf_tx.end())
+						conflicting_pool_transactions.insert(conflict->second);
+				}
+				for (const auto &conflict : conflicting_pool_transactions)
+					remove_from_pool(conflict);
 			}
-			for (const auto &conflict : conflicting_pool_transactions)
-				remove_from_pool(conflict);
 #endif
 			remove_from_pool(tid);
 		}

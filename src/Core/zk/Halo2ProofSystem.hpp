@@ -29,6 +29,14 @@ public:
 		std::vector<std::array<uint8_t, 32>> nullifiers;
 		std::vector<std::array<uint8_t, 32>> commitments;
 	};
+	struct VerifiedBridgeDelta {
+		uint64_t legacy_amount = 0;
+		uint64_t legacy_stack_index = 0;
+		uint64_t fee = 0;
+		std::array<uint8_t, 32> legacy_key_image{};
+		std::array<uint8_t, 32> ownership_sighash{};
+		std::array<uint8_t, 64> ownership_signature{};
+	};
 	const char *backend_id() const override;
 
 	// O0: maps to the toy-circuit verifier. args.public_inputs must be the 32-byte public field
@@ -57,6 +65,10 @@ public:
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
 	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
 	    BinaryArray *next_snapshot, uint64_t *fee);
+	static bool verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
+	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
+	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
+	static bool verify_bridge(const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta);
 };
 
 }  // namespace zk

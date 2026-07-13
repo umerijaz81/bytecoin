@@ -68,6 +68,25 @@ int onyx_verify_apply_transfer(
     const uint8_t expected_network[16], uint64_t block_height,
     uint8_t **snapshot_out, size_t *snapshot_len_out, uint64_t *fee_out);
 
+/* Verify and apply a one-way legacy bridge. The caller must verify ownership_signature_out against
+ * ownership_sighash_out and the disclosed legacy output key, and mark legacy_key_image_out spent in
+ * the same database transaction as the returned snapshot. */
+int onyx_verify_apply_bridge(
+    const uint8_t *snapshot, size_t snapshot_len, uint64_t anchor_window_blocks,
+    const uint8_t *encoded, size_t encoded_len, uint32_t circuit_k,
+    const uint8_t expected_network[16], uint64_t block_height,
+    uint8_t **snapshot_out, size_t *snapshot_len_out,
+    uint64_t *legacy_amount_out, uint64_t *legacy_stack_index_out,
+    uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
+    uint8_t ownership_signature_out[64], uint64_t *fee_out);
+
+/* Verify a bridge proof and extract the public legacy ownership statement without applying state. */
+int onyx_verify_bridge(
+    const uint8_t *encoded, size_t encoded_len, uint32_t circuit_k,
+    uint64_t *legacy_amount_out, uint64_t *legacy_stack_index_out,
+    uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
+    uint8_t ownership_signature_out[64], uint64_t *fee_out);
+
 /* Release a buffer previously returned by this library. */
 void onyx_free(uint8_t *ptr, size_t len);
 

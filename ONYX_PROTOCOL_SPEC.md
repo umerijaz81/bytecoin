@@ -151,7 +151,14 @@ native transfer, fungible asset, NFT, vesting, multisignature custody, and atomi
   simultaneous upgrade entries skip directly from Jade block V5 to Onyx block V7.
 - Mempool policy evaluates the next block version.
 - The bridge consumes a legacy output once and creates equal native Onyx value minus explicit fee.
-- Bridge nullifiers bind the legacy outpoint to prevent replay.
+- A bridge publicly identifies one legacy output by `(amount, amount-stack-index)`, carries its
+  key image, and includes a one-member CryptoNote ring signature over the complete bridge proof
+  statement. Consensus resolves the exact legacy public key, verifies the signature/key-image
+  relation, and records that key image in the ordinary legacy spent set atomically with appending
+  the bridged note. Thus bridge-vs-legacy and bridge-vs-bridge replay use the same spent-state rule.
+- The bridge Halo2 circuit proves `legacy_amount = hidden_native_note_value + explicit_fee`, binds
+  the network, constructs the sole output note commitment, and binds the same value to its public
+  value commitment. It cannot create transparent outputs or deshield value.
 - Deshielding, if enabled, is a separate audited circuit and explicit public output.
 - Reorganizations across activation clear and deterministically rebuild the mempool.
 - Mainnet activation constants remain unreachable placeholders until audit sign-off.

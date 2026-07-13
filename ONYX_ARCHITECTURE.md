@@ -150,6 +150,10 @@ future STARK/PQ backend slots in.
 - **Dual state during transition:** legacy CryptoNote/Jade UTXOs remain spendable; a **bridge** shields
   legacy coins into the Onyx note tree (deshield back if a two-way bridge is chosen). New issuance and
   programs are Onyx-native. Legacy transfer is eventually deprecated by governance.
+- The implemented one-way bridge deliberately discloses the migrated legacy amount and amount-stack
+  index. A one-member CryptoNote ownership proof consumes its key image while Halo2 proves that the
+  encrypted native Onyx note contains exactly that amount less the explicit miner fee. Both state
+  changes share the block delta and undo snapshot; there is no deshield path in this phase.
 - The Jade work (consensus ring-size enforcement, confidential amounts, Dandelion++, RandomX) is **not
   wasted**: it both hardens the chain users live on until Onyx is ready, and several pieces
   (confidential-amount commitments, the batch-verify path, the version seam, Dandelion++, RandomX)

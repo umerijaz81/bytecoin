@@ -135,11 +135,7 @@ impl TransactionPreimage {
         }
         write_varint(self.outputs.len() as u64, &mut out);
         for output in &self.outputs {
-            out.extend_from_slice(&output.commitment.bytes());
-            out.extend_from_slice(&output.value_commitment);
-            out.extend_from_slice(&output.ephemeral_key);
-            write_bytes(&output.ciphertext, &mut out);
-            write_bytes(&output.outgoing_ciphertext, &mut out);
+            write_public_output(output, &mut out);
         }
         write_varint(self.programs.len() as u64, &mut out);
         for program in &self.programs {
@@ -181,18 +177,7 @@ impl TransactionPreimage {
         )?;
         let mut outputs = Vec::with_capacity(output_count);
         for _ in 0..output_count {
-            let commitment = reader.field()?;
-            let value_commitment = reader.array()?;
-            let ephemeral_key = reader.array()?;
-            let ciphertext = read_bytes(&mut reader, MAX_CIPHERTEXT_BYTES)?;
-            let outgoing_ciphertext = read_bytes(&mut reader, MAX_OUT_CIPHERTEXT_BYTES)?;
-            outputs.push(PublicOutput {
-                commitment,
-                value_commitment,
-                ephemeral_key,
-                ciphertext,
-                outgoing_ciphertext,
-            });
+            outputs.push(read_public_output(&mut reader)?);
         }
 
         let program_count = bounded_count(
@@ -230,10 +215,44 @@ impl TransactionPreimage {
     }
 }
 
-fn valid_nonidentity_point(bytes: &[u8; 32]) -> bool {
+pub(crate) fn valid_nonidentity_point(bytes: &[u8; 32]) -> bool {
     Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
         .map(|point| bool::from(point.to_affine().coordinates().is_some()))
         .unwrap_or(false)
+}
+
+pub(crate) fn validate_public_output(output: &PublicOutput) -> Result<(), TransactionError> {
+    if !valid_nonidentity_point(&output.value_commitment) {
+        return Err(TransactionError::InvalidValueCommitment);
+    }
+    if output.ciphertext.len() > MAX_CIPHERTEXT_BYTES
+        || output.outgoing_ciphertext.len() > MAX_OUT_CIPHERTEXT_BYTES
+    {
+        return Err(TransactionError::CiphertextTooLarge);
+    }
+    Ok(())
+}
+
+pub(crate) fn write_public_output(output: &PublicOutput, out: &mut Vec<u8>) {
+    out.extend_from_slice(&output.commitment.bytes());
+    out.extend_from_slice(&output.value_commitment);
+    out.extend_from_slice(&output.ephemeral_key);
+    write_bytes(&output.ciphertext, out);
+    write_bytes(&output.outgoing_ciphertext, out);
+}
+
+pub(crate) fn read_public_output(
+    reader: &mut Reader<'_>,
+) -> Result<PublicOutput, TransactionError> {
+    let output = PublicOutput {
+        commitment: reader.field()?,
+        value_commitment: reader.array()?,
+        ephemeral_key: reader.array()?,
+        ciphertext: read_bytes(reader, MAX_CIPHERTEXT_BYTES)?,
+        outgoing_ciphertext: read_bytes(reader, MAX_OUT_CIPHERTEXT_BYTES)?,
+    };
+    validate_public_output(&output)?;
+    Ok(output)
 }
 
 impl AuthorizedTransaction {
@@ -341,12 +360,15 @@ fn bounded_count(
     }
 }
 
-fn write_bytes(bytes: &[u8], out: &mut Vec<u8>) {
+pub(crate) fn write_bytes(bytes: &[u8], out: &mut Vec<u8>) {
     write_varint(bytes.len() as u64, out);
     out.extend_from_slice(bytes);
 }
 
-fn read_bytes(reader: &mut Reader<'_>, limit: usize) -> Result<Vec<u8>, TransactionError> {
+pub(crate) fn read_bytes(
+    reader: &mut Reader<'_>,
+    limit: usize,
+) -> Result<Vec<u8>, TransactionError> {
     read_bounded_bytes(reader, limit, TransactionError::CiphertextTooLarge)
 }
 

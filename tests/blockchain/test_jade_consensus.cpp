@@ -110,8 +110,14 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		const common::BinaryArray encoded = seria::to_binary(tx);
 		Transaction decoded;
 		seria::from_binary(decoded, encoded);
-		invariant(decoded.version == tx.version && decoded.onyx_envelope == tx.onyx_envelope,
+		invariant(decoded.version == tx.version && decoded.onyx_type == parameters::ONYX_TYPE_TRANSFER &&
+		              decoded.onyx_envelope == tx.onyx_envelope,
 		    "Onyx opaque envelope did not round-trip");
+		tx.onyx_type = parameters::ONYX_TYPE_BRIDGE;
+		const common::BinaryArray bridge_encoded = seria::to_binary(tx);
+		seria::from_binary(decoded, bridge_encoded);
+		invariant(decoded.onyx_type == parameters::ONYX_TYPE_BRIDGE && decoded.onyx_envelope == tx.onyx_envelope,
+		    "Onyx bridge envelope did not round-trip");
 		invariant(currency.get_block_major_version_for_height(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
 		        currency.jade_block_version,
 		    "pre-Onyx block version changed");
@@ -126,6 +132,7 @@ void test_jade_consensus(common::CommandLine &cmd) {
 			oversized_rejected = true;
 		}
 		invariant(oversized_rejected, "oversized Onyx envelope was serialized");
+		tx.onyx_type = parameters::ONYX_TYPE_TRANSFER;
 		tx.onyx_envelope = common::BinaryArray{0x06, 0x01};
 		const bool inactive_rejected = semantic_rejects(currency, currency.onyx_block_version, tx, &what);
 		invariant(inactive_rejected, "inactive Onyx state transition was accepted");

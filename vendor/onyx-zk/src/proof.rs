@@ -13,6 +13,8 @@ use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 use pasta_curves::{arithmetic::CurveAffine, pallas};
 
 use crate::authorization::{verify_authorized_transaction, AuthorizationError};
+use crate::bridge::{AuthorizedBridge, BridgeError};
+use crate::bridge_circuit::BridgeCircuit;
 use crate::linked_transfer_circuit::LinkedTransferCircuit;
 use crate::membership_circuit::MembershipCircuit;
 use crate::multi_transfer_circuit::{LinkedSpend, MultiTransferCircuit};
@@ -22,6 +24,7 @@ use crate::state::CanonicalField;
 use crate::transaction::{AuthorizedTransaction, TransactionError, MAX_PROOF_BYTES};
 
 pub const EXPERIMENTAL_TRANSFER_BACKEND: &str = "halo2-ipa-pasta-onyx-o2-experimental";
+pub const BRIDGE_BACKEND: &str = "halo2-ipa-pasta-onyx-bridge-v1";
 
 pub fn multi_transfer_backend_id(spends: usize, outputs: usize) -> String {
     format!("halo2-ipa-pasta-onyx-o2-s{spends}-o{outputs}")
@@ -36,6 +39,7 @@ pub enum ProofError {
     VerificationFailed,
     Authorization(AuthorizationError),
     Transaction(TransactionError),
+    Bridge(BridgeError),
 }
 
 impl From<AuthorizationError> for ProofError {
@@ -48,6 +52,126 @@ impl From<TransactionError> for ProofError {
     fn from(value: TransactionError) -> Self {
         Self::Transaction(value)
     }
+}
+
+impl From<BridgeError> for ProofError {
+    fn from(value: BridgeError) -> Self {
+        Self::Bridge(value)
+    }
+}
+
+#[derive(Clone)]
+pub struct BridgeWitness {
+    pub output_note: [Fp; NOTE_COMMITMENT_INPUTS],
+    pub output_value_randomness: Fp,
+    pub output_value_commitment: pallas::Affine,
+}
+
+fn bridge_public_inputs(bridge: &AuthorizedBridge) -> Result<[Vec<Fp>; 3], ProofError> {
+    let preimage = &bridge.preimage;
+    if preimage.fee >= preimage.legacy_amount {
+        return Err(ProofError::InvalidPublicInput);
+    }
+    let note_commitment = preimage.output.commitment.field();
+    let value_commitment =
+        Option::<pallas::Point>::from(pallas::Point::from_bytes(&preimage.output.value_commitment))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+    let coordinates = randomized_key_coordinates(value_commitment)?;
+    Ok([
+        vec![Fp::from(preimage.fee), Fp::from(preimage.legacy_amount)],
+        vec![
+            note_commitment,
+            crate::types::network_field(&preimage.network_id),
+        ],
+        coordinates.to_vec(),
+    ])
+}
+
+pub fn create_bridge_proof(
+    k: u32,
+    preimage: &crate::bridge::BridgePreimage,
+    witness: &BridgeWitness,
+) -> Result<Vec<u8>, ProofError> {
+    let note_value = preimage
+        .legacy_amount
+        .checked_sub(preimage.fee)
+        .filter(|value| *value != 0)
+        .ok_or(ProofError::InvalidPublicInput)?;
+    let circuit = BridgeCircuit::new(
+        preimage.legacy_amount,
+        note_value,
+        witness.output_note,
+        witness.output_value_randomness,
+        witness.output_value_commitment,
+    )
+    .map_err(|_| ProofError::InvalidShape)?;
+    let bridge = AuthorizedBridge {
+        preimage: preimage.clone(),
+        backend_id: BRIDGE_BACKEND.to_owned(),
+        proof: vec![1],
+        ownership_signature: [0; 64],
+    };
+    let public = bridge_public_inputs(&bridge)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
+    create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
+        &params,
+        &pk,
+        &[circuit],
+        &[&[&public[0], &public[1], &public[2]]],
+        rand::rngs::OsRng,
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::ProvingFailed)?;
+    let proof = transcript.finalize();
+    if proof.len() > MAX_PROOF_BYTES {
+        return Err(ProofError::ProofTooLarge);
+    }
+    Ok(proof)
+}
+
+pub fn verify_bridge_proof(k: u32, bridge: &AuthorizedBridge) -> Result<(), ProofError> {
+    if bridge.backend_id != BRIDGE_BACKEND {
+        return Err(ProofError::InvalidShape);
+    }
+    let note_value = bridge
+        .preimage
+        .legacy_amount
+        .checked_sub(bridge.preimage.fee)
+        .filter(|value| *value != 0)
+        .ok_or(ProofError::InvalidPublicInput)?;
+    let value_commitment = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+        &bridge.preimage.output.value_commitment,
+    ))
+    .ok_or(ProofError::InvalidPublicInput)?
+    .to_affine();
+    let mut note = [Fp::zero(); NOTE_COMMITMENT_INPUTS];
+    note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(note_value);
+    let circuit = BridgeCircuit::new(
+        bridge.preimage.legacy_amount,
+        note_value,
+        note,
+        Fp::zero(),
+        value_commitment,
+    )
+    .map_err(|_| ProofError::InvalidShape)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
+    let public = bridge_public_inputs(bridge)?;
+    let strategy = SingleVerifier::new(&params);
+    let mut transcript =
+        Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&bridge.proof[..]);
+    verify_proof(
+        &params,
+        &vk,
+        strategy,
+        &[&[&public[0], &public[1], &public[2]]],
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::VerificationFailed)
 }
 
 #[derive(Clone)]

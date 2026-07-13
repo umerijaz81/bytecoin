@@ -18,7 +18,7 @@ pub struct ValueConfig {
     item: Column<Advice>,
     accumulator: Column<Advice>,
     auxiliary: Column<Advice>,
-    instance: Column<Instance>,
+    pub(crate) instance: Column<Instance>,
     range_selector: Selector,
     sum_selector: Selector,
     balance_selector: Selector,

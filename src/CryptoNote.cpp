@@ -289,6 +289,9 @@ void ser_members(OutputKey &v, ISeria &s, uint8_t transaction_version) {
 void ser_members(TransactionPrefix &v, ISeria &s, bool is_root) {
 	seria_kv("version", v.version, s);
 	if (!is_root && v.version == parameters::TRANSACTION_VERSION_ONYX) {
+		seria_kv_binary("onyx_type", &v.onyx_type, 1, s);
+		if (v.onyx_type != parameters::ONYX_TYPE_TRANSFER && v.onyx_type != parameters::ONYX_TYPE_BRIDGE)
+			throw std::runtime_error("Unknown Onyx envelope type " + common::to_string(v.onyx_type));
 		s.object_key("onyx_envelope");
 		size_t size = v.onyx_envelope.size();
 		s.begin_array(size);

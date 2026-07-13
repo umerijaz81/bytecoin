@@ -178,12 +178,22 @@ size_t cn::get_tx_key_outputs_count(const TransactionPrefix &tx) {
 bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 #ifdef onyx_USE_ZK
 	if (tx.version == parameters::TRANSACTION_VERSION_ONYX) {
-		zk::Halo2ProofSystem::VerifiedTransferDelta delta;
-		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(
-		        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &delta))
-			return false;
-		*fee = delta.fee;
-		return true;
+		if (tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+			zk::Halo2ProofSystem::VerifiedTransferDelta delta;
+			if (!zk::Halo2ProofSystem::verify_and_extract_transfer(
+			        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &delta))
+				return false;
+			*fee = delta.fee;
+			return true;
+		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+			zk::Halo2ProofSystem::VerifiedBridgeDelta delta;
+			if (!zk::Halo2ProofSystem::verify_bridge(tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &delta))
+				return false;
+			*fee = delta.fee;
+			return true;
+		}
+		return false;
 	}
 #endif
 	uint64_t amount_in  = get_tx_sum_inputs(tx);
