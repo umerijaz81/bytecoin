@@ -1,0 +1,67 @@
+{
+  "profile": "bytecoin-onyx-wallet-rpc-v1",
+  "methods": {
+    "get_onyx_status": {
+      "request_fields": ["address_index"],
+      "response_fields": ["address", "balance", "note_count", "commitment_root"]
+    },
+    "get_onyx_asset_balance": {
+      "request_fields": ["program_id", "asset_id"],
+      "response_fields": ["balance", "unspent_note_count"]
+    },
+    "get_onyx_program_status": {
+      "request_fields": ["program_id"],
+      "response_fields": [
+        "issuer",
+        "max_supply",
+        "issued_supply",
+        "remaining_supply",
+        "next_sequence",
+        "query_height",
+        "activation_height",
+        "deactivation_height",
+        "active",
+        "metadata"
+      ]
+    },
+    "create_onyx_transaction": {
+      "request_fields": ["address", "amount", "fee", "expiry_height", "memo"],
+      "response_fields": ["binary_transaction", "transaction_hash"]
+    },
+    "create_onyx_token_transaction": {
+      "request_fields": ["address", "program_id", "amount", "fee", "expiry_height", "memo"],
+      "response_fields": ["binary_transaction", "transaction_hash"]
+    },
+    "create_onyx_program_deployment": {
+      "request_fields": [
+        "max_supply",
+        "metadata",
+        "activation_height",
+        "deactivation_height",
+        "fee",
+        "expiry_height"
+      ],
+      "response_fields": ["binary_transaction", "transaction_hash", "program_id"]
+    },
+    "create_onyx_token_issuance": {
+      "request_fields": ["address", "program_id", "amount", "expiry_height", "memo"],
+      "response_fields": ["binary_transaction", "transaction_hash", "sequence"]
+    },
+    "create_onyx_bridge": {
+      "request_fields": [
+        "address",
+        "legacy_amount",
+        "fee",
+        "legacy_stack_index",
+        "legacy_key_image",
+        "expiry_height",
+        "memo"
+      ],
+      "response_fields": ["unsigned_bridge", "ownership_sighash"]
+    },
+    "finalize_onyx_bridge": {
+      "request_fields": ["unsigned_bridge", "ownership_signature"],
+      "response_fields": ["binary_transaction", "transaction_hash"]
+    }
+  }
+}

@@ -11,6 +11,8 @@ namespace zk {
 
 const char *Halo2ProofSystem::backend_id() const { return onyx_backend_id(); }
 
+uint32_t Halo2ProofSystem::abi_version() { return onyx_abi_version(); }
+
 bool Halo2ProofSystem::verify(const VerifyingKey &vk, const ProofVerifyArgs &args) const {
 	// O0: the only verifier available is the toy circuit, whose public statement is a single
 	// 32-byte field element. Malformed shapes return false (the interface reserves exceptions for

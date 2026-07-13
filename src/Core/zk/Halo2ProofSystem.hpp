@@ -78,6 +78,7 @@ public:
 		std::array<uint8_t, 32> commitment_root{};
 	};
 	const char *backend_id() const override;
+	static uint32_t abi_version();
 
 	// O0: maps to the toy-circuit verifier. args.public_inputs must be the 32-byte public field
 	// element; vk.data may be empty (the toy vk is regenerated from the circuit structure).

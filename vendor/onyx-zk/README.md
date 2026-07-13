@@ -41,6 +41,7 @@ descriptors. Callers release the returned manifest with `onyx_free`.
 
 Actual deployment still goes through `onyx_wallet_create_program_deployment`, which funds and signs
 the reserved deployment call. A descriptor preview grants no authority and cannot register a program.
+The versioned consumer contract and wallet RPC fixture are in `../../sdk/onyx/v1/`.
 
 ## FFI ownership and errors
 

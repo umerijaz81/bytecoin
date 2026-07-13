@@ -1,11 +1,9 @@
 //! Onyx (V6) zero-knowledge backend — C ABI over a vendored Halo2/PLONKish (Pasta) stack.
 //!
-//! This crate is **wrappers only** — it contains no bespoke cryptography. It exposes the Orchard
-//! Poseidon and Sinsemilla primitives and a toy prove/verify pipeline so the Rust<->C++ boundary,
-//! the CMake/cargo integration, and the proving stack can be validated end-to-end before any
-//! protocol logic (notes, nullifiers, value transfer — Onyx phase O1) is built on top.
-//!
-//! See ONYX_ARCHITECTURE.md and ONYX_O0_PLAN.md.
+//! The crate exposes a bounded panic-contained C ABI over the vendored Halo2/IPA/Pasta stack. Typed
+//! consensus entry points cover canonical private transfers, bridge operations, program deployment,
+//! token issuance, atomic state transitions, wallet scanning/proving, and SDK descriptors. The toy
+//! circuit remains an FFI smoke test only and is forbidden on consensus paths.
 
 use std::convert::TryInto;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -58,9 +56,15 @@ const MAX_AUTHORIZED_TRANSACTION_BYTES: usize = 384 * 1024;
 const MAX_STATE_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 const MAX_EXPIRY_DISTANCE_BLOCKS: u64 = 100;
 const ERR_PANIC: i32 = -127;
+const ABI_VERSION: u32 = 1;
 
 fn ffi_i32(f: impl FnOnce() -> i32) -> i32 {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(ERR_PANIC)
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_abi_version() -> u32 {
+    ABI_VERSION
 }
 
 fn verify_mixed_transfer_dispatch(
@@ -2852,6 +2856,7 @@ mod tests {
 
     #[test]
     fn poseidon_is_deterministic_and_nonzero() {
+        assert_eq!(onyx_abi_version(), ABI_VERSION);
         let input = [7u8; 64];
         let mut out1 = [0u8; 32];
         let mut out2 = [0u8; 32];

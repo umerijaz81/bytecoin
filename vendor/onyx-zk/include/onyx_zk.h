@@ -1,8 +1,8 @@
 /* Onyx (V6) zero-knowledge backend — C ABI.
  *
- * Stable, audit-sized boundary between the C++ node and the vendored Halo2/PLONKish (Pasta) proving
- * stack. Hand-authored (not cbindgen-generated) because the surface is intentionally tiny. Backs
- * cn::zk::Halo2ProofSystem (src/Core/zk). See ONYX_ARCHITECTURE.md / ONYX_O0_PLAN.md.
+ * Versioned, bounded boundary between the C++ node/wallet/SDK and the vendored Halo2/PLONKish
+ * (Pasta) backend. Hand-authored so ownership, limits, and compatibility stay explicit. Backs
+ * cn::zk::Halo2ProofSystem (src/Core/zk). See ONYX_PROTOCOL_SPEC.md.
  *
  * Return convention for predicate calls: 1 = valid, 0 = invalid, < 0 = malformed input / error.
  * Buffers returned via out-params are owned by the callee and MUST be released with onyx_free.
@@ -13,12 +13,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define ONYX_ZK_ABI_VERSION 1u
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Backend identity, e.g. "halo2-ipa-pasta vX.Y". Static string; do not free. */
 const char *onyx_backend_id(void);
+/* Numeric compatibility contract for this header and exported symbol set. */
+uint32_t onyx_abi_version(void);
 
 /* Orchard Poseidon (P128Pow5T3, arity 2) over the Pallas base field.
  * in: two 32-byte canonical little-endian field elements (64 bytes total).
