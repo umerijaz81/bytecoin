@@ -19,8 +19,13 @@ use crate::linked_transfer_circuit::LinkedTransferCircuit;
 use crate::membership_circuit::MembershipCircuit;
 use crate::multi_transfer_circuit::{LinkedSpend, MultiTransferCircuit};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
+use crate::program::ProgramRegistry;
 use crate::spend_auth_circuit::SpendAuthCircuit;
 use crate::state::CanonicalField;
+use crate::token_program::{
+    descriptor_from_vk, empty_program_circuit, transfer_function_id, transfer_public_data_hash,
+    transfer_schema_hash, TOKEN_PROGRAM_BACKEND,
+};
 use crate::transaction::{AuthorizedTransaction, TransactionError, MAX_PROOF_BYTES};
 
 pub const EXPERIMENTAL_TRANSFER_BACKEND: &str = "halo2-ipa-pasta-onyx-o2-experimental";
@@ -261,6 +266,25 @@ impl<const DEPTH: usize> MultiTransferWitness<DEPTH> {
         )
         .map_err(|_| ProofError::InvalidShape)
     }
+
+    fn program_circuit<const SPENDS: usize, const OUTPUTS: usize>(
+        &self,
+    ) -> Result<MultiTransferCircuit<DEPTH, SPENDS, OUTPUTS>, ProofError> {
+        let spends = self
+            .spends
+            .iter()
+            .map(MultiSpendWitness::linked)
+            .collect::<Result<Vec<_>, _>>()?;
+        MultiTransferCircuit::new_program(
+            &self.input_values,
+            &self.output_values,
+            spends,
+            self.output_notes.clone(),
+            self.output_value_randomness.clone(),
+            self.output_value_commitments.clone(),
+        )
+        .map_err(|_| ProofError::InvalidShape)
+    }
 }
 
 fn randomized_key_coordinates(key: pallas::Affine) -> Result<[Fp; 2], ProofError> {
@@ -338,6 +362,189 @@ pub fn create_multi_transfer_proof<
         return Err(ProofError::ProofTooLarge);
     }
     Ok(proof)
+}
+
+pub fn create_token_transfer_proof<
+    const DEPTH: usize,
+    const SPENDS: usize,
+    const OUTPUTS: usize,
+>(
+    k: u32,
+    witness: &MultiTransferWitness<DEPTH>,
+    anchor: CanonicalField,
+    nullifiers: &[[u8; 32]],
+    program_id: [u8; 32],
+    function_id: u32,
+) -> Result<Vec<u8>, ProofError> {
+    if nullifiers.len() != SPENDS || transfer_function_id(SPENDS, OUTPUTS) != Some(function_id) {
+        return Err(ProofError::InvalidShape);
+    }
+    let circuit = witness.program_circuit::<SPENDS, OUTPUTS>()?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let public = [Fp::zero()];
+    let mut membership = Vec::with_capacity(SPENDS + 1);
+    membership.push(anchor.field());
+    for nullifier in nullifiers {
+        membership.push(
+            CanonicalField::from_bytes(*nullifier)
+                .ok_or(ProofError::InvalidPublicInput)?
+                .field(),
+        );
+    }
+    let mut notes = witness
+        .output_notes
+        .iter()
+        .map(|note| {
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
+                .hash(*note)
+        })
+        .collect::<Vec<_>>();
+    notes.push(witness.spends[0].input_note[1]);
+    notes.extend(crate::types::pack_32(&program_id));
+    let mut authorization = witness
+        .spends
+        .iter()
+        .map(|spend| randomized_key_coordinates(spend.randomized_key))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for spend in &witness.spends {
+        authorization.extend(randomized_key_coordinates(spend.value_commitment)?);
+    }
+    for commitment in &witness.output_value_commitments {
+        authorization.extend(randomized_key_coordinates(*commitment)?);
+    }
+    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
+    create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
+        &params,
+        &pk,
+        &[circuit],
+        &[&[&public, &membership, &notes, &authorization]],
+        rand::rngs::OsRng,
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::ProvingFailed)?;
+    let proof = transcript.finalize();
+    if proof.len() > MAX_PROOF_BYTES {
+        return Err(ProofError::ProofTooLarge);
+    }
+    Ok(proof)
+}
+
+pub fn verify_authorized_token_transfer<
+    const DEPTH: usize,
+    const SPENDS: usize,
+    const OUTPUTS: usize,
+>(
+    k: u32,
+    transaction: &AuthorizedTransaction,
+    registry: Option<&ProgramRegistry>,
+    block_height: u64,
+) -> Result<(), ProofError> {
+    let expected_function =
+        transfer_function_id(SPENDS, OUTPUTS).ok_or(ProofError::InvalidShape)?;
+    if transaction.backend_id != TOKEN_PROGRAM_BACKEND
+        || transaction.preimage.spends.len() != SPENDS
+        || transaction.preimage.outputs.len() != OUTPUTS
+        || transaction.preimage.fee != 0
+        || transaction.preimage.programs.len() != 1
+        || transaction.proof.len() > MAX_PROOF_BYTES
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let call = &transaction.preimage.programs[0];
+    if call.function_id != expected_function || call.public_data_hash != transfer_public_data_hash()
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let registered_function = if let Some(registry) = registry {
+        registry
+            .validate_calls(std::slice::from_ref(call), block_height, 10_000_000)
+            .map_err(|_| ProofError::InvalidShape)?;
+        let (entry, function) = registry
+            .active_function(&call.program_id, call.function_id, block_height)
+            .map_err(|_| ProofError::InvalidShape)?;
+        if entry.backend != TOKEN_PROGRAM_BACKEND
+            || function.public_input_schema_hash
+                != transfer_schema_hash(DEPTH, SPENDS, OUTPUTS)
+                    .map_err(|_| ProofError::InvalidShape)?
+        {
+            return Err(ProofError::InvalidShape);
+        }
+        Some(function)
+    } else {
+        None
+    };
+    transaction.preimage.encode()?;
+    verify_authorized_transaction(transaction)?;
+
+    let circuit =
+        empty_program_circuit::<DEPTH, SPENDS, OUTPUTS>().map_err(|_| ProofError::InvalidShape)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
+    if let Some(function) = registered_function {
+        if function.verifying_key != descriptor_from_vk::<DEPTH, SPENDS, OUTPUTS>(k, &vk) {
+            return Err(ProofError::InvalidShape);
+        }
+    }
+    let public = [Fp::zero()];
+    let mut membership = Vec::with_capacity(SPENDS + 1);
+    membership.push(transaction.preimage.anchor.field());
+    for spend in &transaction.preimage.spends {
+        membership.push(
+            CanonicalField::from_bytes(spend.nullifier.0)
+                .ok_or(ProofError::InvalidPublicInput)?
+                .field(),
+        );
+    }
+    let mut notes = transaction
+        .preimage
+        .outputs
+        .iter()
+        .map(|output| output.commitment.field())
+        .collect::<Vec<_>>();
+    notes.push(crate::types::network_field(
+        &transaction.preimage.network_id,
+    ));
+    notes.extend(crate::types::pack_32(&call.program_id));
+    let mut authorization = Vec::with_capacity((SPENDS * 2 + SPENDS + OUTPUTS) * 2);
+    for spend in &transaction.preimage.spends {
+        let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(&spend.randomized_key))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+        authorization.extend(randomized_key_coordinates(point)?);
+    }
+    for bytes in transaction
+        .preimage
+        .spends
+        .iter()
+        .map(|spend| &spend.value_commitment)
+        .chain(
+            transaction
+                .preimage
+                .outputs
+                .iter()
+                .map(|output| &output.value_commitment),
+        )
+    {
+        let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+        authorization.extend(randomized_key_coordinates(point)?);
+    }
+    let mut transcript =
+        Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
+    verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
+        &params,
+        &vk,
+        SingleVerifier::new(&params),
+        &[&[&public, &membership, &notes, &authorization]],
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::VerificationFailed)
 }
 
 pub fn verify_multi_transfer_proof<
@@ -618,6 +825,7 @@ pub fn verify_authorized_transfer<const DEPTH: usize>(
 mod tests {
     use ff::PrimeField;
     use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PrimitiveHash, P128Pow5T3};
+    use halo2_proofs::dev::MockProver;
 
     use crate::authorization::{prepare_same_owner_spends, sign_prepared_spends};
     use crate::keys::MasterSeed;
@@ -949,6 +1157,320 @@ mod tests {
         let mut changed = transaction;
         changed.preimage.fee = 4;
         assert!(verify_authorized_transfer::<DEPTH>(K, &changed).is_err());
+    }
+
+    #[test]
+    fn registered_private_token_transfer_proves_verifies_and_applies() {
+        const DEPTH: usize = 2;
+        const K: u32 = 14;
+        const VALUE: u64 = 30;
+        let keys = MasterSeed::new([19; 32])
+            .derive([3; NETWORK_ID_BYTES])
+            .unwrap();
+        let address = keys.address(0).unwrap();
+        let authority_key =
+            Option::<pallas::Point>::from(pallas::Point::from_bytes(&address.spend_authority_key))
+                .unwrap()
+                .to_affine();
+        let authority_coordinates = authority_key.coordinates().unwrap();
+
+        let program = crate::token_program::standard_token_program::<DEPTH>(
+            K,
+            b"private-test-token/USD",
+            1,
+            Some(100),
+        )
+        .unwrap();
+        let program_id = program.id().unwrap();
+        let mut other_program = program.clone();
+        other_program.manifest.extend_from_slice(b"/other");
+        let other_program_id = other_program.id().unwrap();
+        let program_fields = crate::types::pack_32(&program_id);
+        let function_id = crate::token_program::transfer_function_id(1, 1).unwrap();
+
+        let mut input_note = std::array::from_fn(|index| Fp::from(index as u64 + 140));
+        input_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(VALUE);
+        input_note[1] = crate::types::network_field(&[3; NETWORK_ID_BYTES]);
+        input_note[2] = program_fields[0];
+        input_note[3] = program_fields[1];
+        input_note[4] = program_fields[0];
+        input_note[5] = program_fields[1];
+        input_note[10] = *authority_coordinates.x();
+        input_note[11] = *authority_coordinates.y();
+        input_note[13] = Fp::from(201);
+        let commitment =
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
+                .hash(input_note);
+
+        let mut output_note = std::array::from_fn(|index| Fp::from(index as u64 + 180));
+        output_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(VALUE);
+        output_note[1] = crate::types::network_field(&[3; NETWORK_ID_BYTES]);
+        output_note[2] = program_fields[0];
+        output_note[3] = program_fields[1];
+        output_note[4] = program_fields[0];
+        output_note[5] = program_fields[1];
+        output_note[13] = Fp::from(202);
+        let output_commitment =
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
+                .hash(output_note);
+
+        let mut empty = hash2(Fp::from(1), Fp::zero());
+        let mut siblings = Vec::with_capacity(DEPTH);
+        for _ in 0..DEPTH {
+            siblings.push(empty);
+            empty = hash2(Fp::from(2), hash2(empty, empty));
+        }
+        let position = 0u64;
+        let mut root = hash2(Fp::from(1), commitment);
+        for sibling in &siblings {
+            root = hash2(Fp::from(2), hash2(root, *sibling));
+        }
+        let nullifier_key = Fp::from(221);
+        let rho = Fp::from(222);
+        let nullifier = hash2(
+            Fp::from(3),
+            hash2(hash2(nullifier_key, rho), Fp::from(position)),
+        )
+        .to_repr();
+        let anchor = CanonicalField::from_field(root);
+        let mut preimage = TransactionPreimage {
+            network_id: [3; NETWORK_ID_BYTES],
+            anchor,
+            expiry_height: 50,
+            fee: 0,
+            spends: vec![PublicSpend {
+                nullifier: Nullifier(nullifier),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    VALUE,
+                    Fp::from(201),
+                ),
+                randomized_key: [0; 32],
+            }],
+            outputs: vec![PublicOutput {
+                commitment: CanonicalField::from_field(output_commitment),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    VALUE,
+                    Fp::from(202),
+                ),
+                ephemeral_key: [42; 32],
+                ciphertext: vec![43; 48],
+                outgoing_ciphertext: vec![44; 32],
+            }],
+            programs: vec![crate::transaction::ProgramCall {
+                program_id,
+                function_id,
+                public_data_hash: crate::token_program::transfer_public_data_hash(),
+            }],
+        };
+        let prepared = prepare_same_owner_spends(&keys, &mut preimage).unwrap();
+        let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+            &preimage.spends[0].randomized_key,
+        ))
+        .unwrap()
+        .to_affine();
+        let witness = MultiTransferWitness::<DEPTH> {
+            input_values: vec![VALUE],
+            output_values: vec![VALUE],
+            spends: vec![MultiSpendWitness {
+                commitment,
+                input_note,
+                authority_key,
+                authorization_randomizer: prepared.randomizers()[0],
+                randomized_key,
+                siblings,
+                position,
+                nullifier_key,
+                rho,
+                value_randomness: Fp::from(201),
+                value_commitment: value_commitment(VALUE, Fp::from(201)),
+            }],
+            output_notes: vec![output_note],
+            output_value_randomness: vec![Fp::from(202)],
+            output_value_commitments: vec![value_commitment(VALUE, Fp::from(202))],
+        };
+        let mut wrong_asset_witness = witness.clone();
+        wrong_asset_witness.output_notes[0][4] += Fp::one();
+        let wrong_asset_commitment =
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
+                .hash(wrong_asset_witness.output_notes[0]);
+        let mut wrong_asset_authorization =
+            randomized_key_coordinates(randomized_key).unwrap().to_vec();
+        wrong_asset_authorization
+            .extend(randomized_key_coordinates(value_commitment(VALUE, Fp::from(201))).unwrap());
+        wrong_asset_authorization
+            .extend(randomized_key_coordinates(value_commitment(VALUE, Fp::from(202))).unwrap());
+        assert!(MockProver::run(
+            K,
+            &wrong_asset_witness.program_circuit::<1, 1>().unwrap(),
+            vec![
+                vec![Fp::zero()],
+                vec![
+                    anchor.field(),
+                    CanonicalField::from_bytes(nullifier).unwrap().field()
+                ],
+                vec![
+                    wrong_asset_commitment,
+                    crate::types::network_field(&[3; NETWORK_ID_BYTES]),
+                    program_fields[0],
+                    program_fields[1],
+                ],
+                wrong_asset_authorization,
+            ],
+        )
+        .unwrap()
+        .verify()
+        .is_err());
+        let proof = create_token_transfer_proof::<DEPTH, 1, 1>(
+            K,
+            &witness,
+            anchor,
+            &[nullifier],
+            program_id,
+            function_id,
+        )
+        .unwrap();
+        let spend_signatures = sign_prepared_spends(
+            &prepared,
+            &preimage,
+            crate::token_program::TOKEN_PROGRAM_BACKEND,
+            &proof,
+        )
+        .unwrap();
+        let binding_signature = crate::authorization::sign_binding_authorization(
+            &preimage,
+            crate::token_program::TOKEN_PROGRAM_BACKEND,
+            &proof,
+            &[Fp::from(201)],
+            &[Fp::from(202)],
+        )
+        .unwrap();
+        let transaction = AuthorizedTransaction {
+            preimage: preimage.clone(),
+            backend_id: crate::token_program::TOKEN_PROGRAM_BACKEND.to_owned(),
+            proof,
+            spend_signatures,
+            binding_signature,
+        };
+
+        let encoded = transaction.encode().unwrap();
+        assert_eq!(
+            crate::onyx_verify_authorized_transfer(
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+            ),
+            1
+        );
+        let mut state = crate::state::ShieldedState::<DEPTH>::new(10);
+        state.register_program(program).unwrap();
+        state.register_program(other_program).unwrap();
+        assert!(matches!(
+            verify_authorized_token_transfer::<DEPTH, 1, 1>(
+                K,
+                &transaction,
+                Some(state.program_registry()),
+                0,
+            ),
+            Err(ProofError::InvalidShape)
+        ));
+        assert!(verify_authorized_token_transfer::<DEPTH, 1, 1>(
+            K,
+            &transaction,
+            Some(state.program_registry()),
+            2,
+        )
+        .is_ok());
+
+        let mut wrong_program = transaction.clone();
+        wrong_program.preimage.programs[0].program_id = other_program_id;
+        wrong_program.spend_signatures = sign_prepared_spends(
+            &prepared,
+            &wrong_program.preimage,
+            crate::token_program::TOKEN_PROGRAM_BACKEND,
+            &wrong_program.proof,
+        )
+        .unwrap();
+        wrong_program.binding_signature = crate::authorization::sign_binding_authorization(
+            &wrong_program.preimage,
+            crate::token_program::TOKEN_PROGRAM_BACKEND,
+            &wrong_program.proof,
+            &[Fp::from(201)],
+            &[Fp::from(202)],
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_authorized_token_transfer::<DEPTH, 1, 1>(
+                K,
+                &wrong_program,
+                Some(state.program_registry()),
+                2,
+            ),
+            Err(ProofError::VerificationFailed)
+        ));
+
+        let mut wrong_fee = transaction.clone();
+        wrong_fee.preimage.fee = 1;
+        assert!(matches!(
+            verify_authorized_token_transfer::<DEPTH, 1, 1>(
+                K,
+                &wrong_fee,
+                Some(state.program_registry()),
+                2,
+            ),
+            Err(ProofError::InvalidShape)
+        ));
+
+        let funding = TransactionPreimage {
+            network_id: [3; NETWORK_ID_BYTES],
+            anchor: state.root(),
+            expiry_height: 50,
+            fee: 0,
+            spends: vec![],
+            outputs: vec![PublicOutput {
+                commitment: CanonicalField::from_field(commitment),
+                value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
+                    VALUE,
+                    Fp::from(201),
+                ),
+                ephemeral_key: [52; 32],
+                ciphertext: vec![53; 48],
+                outgoing_ciphertext: vec![54; 32],
+            }],
+            programs: vec![],
+        };
+        state.apply_bridge(&funding, VALUE, 0, 1).unwrap();
+        assert_eq!(state.root(), anchor);
+        let previous_snapshot = state.encode_snapshot();
+        let mut snapshot_ptr = std::ptr::null_mut();
+        let mut snapshot_len = 0usize;
+        let mut applied_fee = 99u64;
+        assert_eq!(
+            crate::onyx_verify_apply_transfer(
+                previous_snapshot.as_ptr(),
+                previous_snapshot.len(),
+                10,
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                [3u8; NETWORK_ID_BYTES].as_ptr(),
+                2,
+                &mut snapshot_ptr,
+                &mut snapshot_len,
+                &mut applied_fee,
+            ),
+            1
+        );
+        assert_eq!(applied_fee, 0);
+        let snapshot = unsafe { std::slice::from_raw_parts(snapshot_ptr, snapshot_len) }.to_vec();
+        crate::onyx_free(snapshot_ptr, snapshot_len);
+        let applied = crate::state::ShieldedState::<DEPTH>::decode_snapshot(&snapshot).unwrap();
+        assert!(applied.is_spent(&Nullifier(nullifier)));
+        assert_eq!(applied.leaf_count(), 2);
+        assert_eq!(applied.program_count(), 2);
+        assert_eq!(applied.total_fees(), 0);
+        assert_eq!(applied.circulating_supply(), VALUE);
     }
 
     #[test]

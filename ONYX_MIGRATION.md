@@ -27,7 +27,7 @@ creates exactly one encrypted native-asset Onyx note. There is no implicit deshi
 
 Call the node's `get_onyx_supply_audit` JSON-RPC method at a recorded block height. Its response
 contains `total_bridged`, `total_fees`, `circulating_supply`, `commitment_count`, `program_count`,
-`commitment_root`, and `block_height`. Every valid snapshot satisfies:
+`current_block_program_cost`, `commitment_root`, and `block_height`. Every valid snapshot satisfies:
 
 ```text
 circulating_supply = total_bridged - total_fees

@@ -38,6 +38,7 @@ pub mod program;
 pub mod proof;
 pub mod spend_auth_circuit;
 pub mod state;
+pub mod token_program;
 pub mod transaction;
 pub mod transfer_circuit;
 pub mod types;
@@ -62,6 +63,8 @@ fn verify_transfer_dispatch(
     transaction: &transaction::AuthorizedTransaction,
     merkle_depth: u32,
     circuit_k: u32,
+    registry: Option<&program::ProgramRegistry>,
+    block_height: u64,
 ) -> i32 {
     if !(10..=20).contains(&circuit_k) {
         return -3;
@@ -71,23 +74,109 @@ fn verify_transfer_dispatch(
         transaction.preimage.spends.len(),
         transaction.preimage.outputs.len(),
     );
-    let result = match shape {
-        (2, 1, 1) => proof::verify_authorized_multi_transfer::<2, 1, 1>(circuit_k, transaction),
-        (2, 1, 2) => proof::verify_authorized_multi_transfer::<2, 1, 2>(circuit_k, transaction),
-        (2, 2, 1) => proof::verify_authorized_multi_transfer::<2, 2, 1>(circuit_k, transaction),
-        (2, 2, 2) => proof::verify_authorized_multi_transfer::<2, 2, 2>(circuit_k, transaction),
-        (4, 1, 1) if transaction.backend_id == proof::EXPERIMENTAL_TRANSFER_BACKEND => {
-            proof::verify_authorized_transfer::<4>(circuit_k, transaction)
+    let result = if transaction.backend_id == token_program::TOKEN_PROGRAM_BACKEND {
+        match shape {
+            (2, 1, 1) => proof::verify_authorized_token_transfer::<2, 1, 1>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (2, 1, 2) => proof::verify_authorized_token_transfer::<2, 1, 2>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (2, 2, 1) => proof::verify_authorized_token_transfer::<2, 2, 1>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (2, 2, 2) => proof::verify_authorized_token_transfer::<2, 2, 2>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (4, 1, 1) => proof::verify_authorized_token_transfer::<4, 1, 1>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (4, 1, 2) => proof::verify_authorized_token_transfer::<4, 1, 2>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (4, 2, 1) => proof::verify_authorized_token_transfer::<4, 2, 1>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (4, 2, 2) => proof::verify_authorized_token_transfer::<4, 2, 2>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (32, 1, 1) => proof::verify_authorized_token_transfer::<32, 1, 1>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (32, 1, 2) => proof::verify_authorized_token_transfer::<32, 1, 2>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (32, 2, 1) => proof::verify_authorized_token_transfer::<32, 2, 1>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            (32, 2, 2) => proof::verify_authorized_token_transfer::<32, 2, 2>(
+                circuit_k,
+                transaction,
+                registry,
+                block_height,
+            ),
+            _ => return -3,
         }
-        (4, 1, 1) => proof::verify_authorized_multi_transfer::<4, 1, 1>(circuit_k, transaction),
-        (4, 1, 2) => proof::verify_authorized_multi_transfer::<4, 1, 2>(circuit_k, transaction),
-        (4, 2, 1) => proof::verify_authorized_multi_transfer::<4, 2, 1>(circuit_k, transaction),
-        (4, 2, 2) => proof::verify_authorized_multi_transfer::<4, 2, 2>(circuit_k, transaction),
-        (32, 1, 1) => proof::verify_authorized_multi_transfer::<32, 1, 1>(circuit_k, transaction),
-        (32, 1, 2) => proof::verify_authorized_multi_transfer::<32, 1, 2>(circuit_k, transaction),
-        (32, 2, 1) => proof::verify_authorized_multi_transfer::<32, 2, 1>(circuit_k, transaction),
-        (32, 2, 2) => proof::verify_authorized_multi_transfer::<32, 2, 2>(circuit_k, transaction),
-        _ => return -3,
+    } else {
+        match shape {
+            (2, 1, 1) => proof::verify_authorized_multi_transfer::<2, 1, 1>(circuit_k, transaction),
+            (2, 1, 2) => proof::verify_authorized_multi_transfer::<2, 1, 2>(circuit_k, transaction),
+            (2, 2, 1) => proof::verify_authorized_multi_transfer::<2, 2, 1>(circuit_k, transaction),
+            (2, 2, 2) => proof::verify_authorized_multi_transfer::<2, 2, 2>(circuit_k, transaction),
+            (4, 1, 1) if transaction.backend_id == proof::EXPERIMENTAL_TRANSFER_BACKEND => {
+                proof::verify_authorized_transfer::<4>(circuit_k, transaction)
+            }
+            (4, 1, 1) => proof::verify_authorized_multi_transfer::<4, 1, 1>(circuit_k, transaction),
+            (4, 1, 2) => proof::verify_authorized_multi_transfer::<4, 1, 2>(circuit_k, transaction),
+            (4, 2, 1) => proof::verify_authorized_multi_transfer::<4, 2, 1>(circuit_k, transaction),
+            (4, 2, 2) => proof::verify_authorized_multi_transfer::<4, 2, 2>(circuit_k, transaction),
+            (32, 1, 1) => {
+                proof::verify_authorized_multi_transfer::<32, 1, 1>(circuit_k, transaction)
+            }
+            (32, 1, 2) => {
+                proof::verify_authorized_multi_transfer::<32, 1, 2>(circuit_k, transaction)
+            }
+            (32, 2, 1) => {
+                proof::verify_authorized_multi_transfer::<32, 2, 1>(circuit_k, transaction)
+            }
+            (32, 2, 2) => {
+                proof::verify_authorized_multi_transfer::<32, 2, 2>(circuit_k, transaction)
+            }
+            _ => return -3,
+        }
     };
     if result.is_ok() {
         1
@@ -120,7 +209,7 @@ pub extern "C" fn onyx_verify_authorized_transfer(
             Ok(transaction) => transaction,
             Err(_) => return -2,
         };
-        verify_transfer_dispatch(&transaction, merkle_depth, circuit_k)
+        verify_transfer_dispatch(&transaction, merkle_depth, circuit_k, None, 0)
     })
 }
 
@@ -169,7 +258,7 @@ pub extern "C" fn onyx_verify_and_extract_transfer(
         {
             return -4;
         }
-        let verified = verify_transfer_dispatch(&transaction, merkle_depth, circuit_k);
+        let verified = verify_transfer_dispatch(&transaction, merkle_depth, circuit_k, None, 0);
         if verified != 1 {
             return verified;
         }
@@ -212,18 +301,29 @@ fn apply_transfer_to_snapshot<const DEPTH: usize>(
     anchor_window_blocks: u64,
     transaction: &transaction::AuthorizedTransaction,
     block_height: u64,
-) -> Result<Vec<u8>, ()> {
+    circuit_k: u32,
+) -> Result<Vec<u8>, i32> {
     let mut state = if snapshot.is_empty() {
         if anchor_window_blocks == 0 {
-            return Err(());
+            return Err(-5);
         }
         state::ShieldedState::<DEPTH>::new(anchor_window_blocks)
     } else {
-        state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?
+        state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| -5)?
     };
+    let verified = verify_transfer_dispatch(
+        transaction,
+        DEPTH as u32,
+        circuit_k,
+        Some(state.program_registry()),
+        block_height,
+    );
+    if verified != 1 {
+        return Err(verified);
+    }
     state
         .apply_transfer(&transaction.preimage, block_height)
-        .map_err(|_| ())?;
+        .map_err(|_| -5)?;
     Ok(state.encode_snapshot())
 }
 
@@ -280,10 +380,6 @@ pub extern "C" fn onyx_verify_apply_transfer(
         {
             return -5;
         }
-        let verified = verify_transfer_dispatch(&transaction, merkle_depth, circuit_k);
-        if verified != 1 {
-            return verified;
-        }
         let snapshot_bytes = if snapshot_len == 0 {
             &[][..]
         } else {
@@ -295,24 +391,27 @@ pub extern "C" fn onyx_verify_apply_transfer(
                 anchor_window_blocks,
                 &transaction,
                 block_height,
+                circuit_k,
             ),
             4 => apply_transfer_to_snapshot::<4>(
                 snapshot_bytes,
                 anchor_window_blocks,
                 &transaction,
                 block_height,
+                circuit_k,
             ),
             32 => apply_transfer_to_snapshot::<32>(
                 snapshot_bytes,
                 anchor_window_blocks,
                 &transaction,
                 block_height,
+                circuit_k,
             ),
             _ => return -3,
         };
         let next = match next {
             Ok(next) => next,
-            Err(_) => return -5,
+            Err(code) => return code,
         };
         if next.len() > MAX_STATE_SNAPSHOT_BYTES {
             return -6;
@@ -470,6 +569,7 @@ pub extern "C" fn onyx_state_supply_audit(
     circulating_supply_out: *mut u64,
     leaf_count_out: *mut u64,
     program_count_out: *mut u64,
+    current_block_program_cost_out: *mut u64,
     root_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
@@ -481,6 +581,7 @@ pub extern "C" fn onyx_state_supply_audit(
             || circulating_supply_out.is_null()
             || leaf_count_out.is_null()
             || program_count_out.is_null()
+            || current_block_program_cost_out.is_null()
             || root_out.is_null()
         {
             return -1;
@@ -497,6 +598,7 @@ pub extern "C" fn onyx_state_supply_audit(
             *circulating_supply_out = state.circulating_supply();
             *leaf_count_out = state.leaf_count();
             *program_count_out = state.program_count() as u64;
+            *current_block_program_cost_out = state.current_block_program_cost();
             std::ptr::copy_nonoverlapping(state.root().bytes().as_ptr(), root_out, 32);
         }
         1

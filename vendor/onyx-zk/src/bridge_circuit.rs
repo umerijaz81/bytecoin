@@ -114,6 +114,8 @@ impl Circuit<Fp> for BridgeCircuit {
             Some(&values.output_cells[0]),
             Some(&network),
             None,
+            None,
+            None,
             Some(&value_commitment.randomness),
             true,
         )?;
@@ -267,6 +269,7 @@ mod tests {
         let mut circulating_supply = 0u64;
         let mut commitment_count = 0u64;
         let mut program_count = 0u64;
+        let mut current_block_program_cost = 0u64;
         let mut audit_root = [0u8; 32];
         assert_eq!(
             crate::onyx_state_supply_audit(
@@ -277,6 +280,7 @@ mod tests {
                 &mut circulating_supply,
                 &mut commitment_count,
                 &mut program_count,
+                &mut current_block_program_cost,
                 audit_root.as_mut_ptr(),
             ),
             1
@@ -291,6 +295,7 @@ mod tests {
             (30, 5, 25, 1)
         );
         assert_eq!(program_count, 0);
+        assert_eq!(current_block_program_cost, 0);
         assert_eq!(
             audit_root,
             crate::state::ShieldedState::<32>::decode_snapshot(&snapshot)

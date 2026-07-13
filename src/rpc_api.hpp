@@ -685,6 +685,7 @@ struct GetOnyxSupplyAudit {
 		Amount circulating_supply = 0;
 		uint64_t commitment_count = 0;
 		uint64_t program_count = 0;
+		uint64_t current_block_program_cost = 0;
 		Hash commitment_root{};
 		Height block_height = 0;
 	};

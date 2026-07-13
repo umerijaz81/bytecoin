@@ -153,10 +153,22 @@ equivalent bridge-specific digest over their stable legacy statement and sole ou
 
 ## 7. Programs
 
-`ProgramId = H(domain_program || manifest || verifying_key_hash)`. Registry entries include version,
-backend, verifying-key hash/bytes, public-input schema hash, maximum cost, activation height, and
-optional deactivation height. Unknown or inactive programs fail closed. Initial audited programs are
-native transfer, fungible asset, NFT, vesting, multisignature custody, and atomic swap.
+`ProgramId = SHA-256(domain_program || canonical_program_entry)`. The canonical entry binds the
+manifest, backend, activation window, ordered function ids, each function's verifying-key descriptor,
+public-input schema hash, and maximum cost. Unknown or inactive programs fail closed.
+
+The first standard program is the private fungible-token transfer family. It supports fixed
+`(1..=2 spends, 1..=2 outputs)` shapes under backend
+`halo2-ipa-pasta-onyx-token-v1`. A shape-specific function id selects a deterministic VK descriptor
+that commits to the vendored Halo2 pinned key, circuit size, Merkle depth, and shape. Both program and
+asset limbs in every involved note equal the public called program id; input and output token value is
+conserved; native fee is zero; and the sole public-data hash is the canonical empty transfer payload.
+The authorization transcript binds that ordered call and proof. Stateless verification checks the
+compiled standard circuit, while state application additionally requires the exact descriptor,
+schema, activation window, and cost from the registry before mutating consensus state.
+
+Planned audited programs after fungible-token deployment are NFT, vesting, multisignature custody,
+and atomic swap.
 
 ## 8. Fork and migration
 
@@ -194,10 +206,12 @@ Nodes expose these values, the commitment count/root, and block height through
 snapshot upgrades directly; a nonempty version-1 snapshot has no trustworthy historical counters
 and must be rebuilt by deterministic chain replay.
 
-Version-3 snapshots append the canonical program/verifying-key registry. Version-2 accounting
-snapshots migrate with an empty registry. Native transfer and bridge circuits constrain note program
-ids to the zero/native program and reject nonempty program-call lists until a registered,
-function-specific proof verifier is available.
+Version-3 snapshots append the canonical program/verifying-key registry. Version-4 snapshots append
+the cumulative program verification cost for the current block. Version-2 accounting snapshots
+migrate with an empty registry; version-3 snapshots migrate with zero current-block program cost.
+Native transfer and bridge circuits constrain note program ids to the zero/native program. Program
+calls are accepted only by a function-specific verifier and, during snapshot-aware application, an
+exact active registry entry.
 
 ## 10. Phase gates
 

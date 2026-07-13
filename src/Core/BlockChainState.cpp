@@ -775,8 +775,9 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	const size_t my_size = binary_tx.size();
 	// Validate against the block miners can build next before using the fee for pool ordering. Onyx
 	// fees live in the opaque authorized envelope and cannot be recovered by legacy get_tx_fee().
+	const Height next_block_height = get_tip_height() + 1;
 	const uint8_t next_block_major_version =
-	    m_currency.get_block_major_version_for_height(get_tip_height() + 1);
+	    m_currency.get_block_major_version_for_height(next_block_height);
 	const Amount my_fee = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
 	    m_config.paranoid_checks || check_sigs, true);
 	const Amount my_fee_per_byte = my_fee / my_size;
@@ -786,6 +787,17 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
 		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta))
 			throw ConsensusError("Invalid Onyx authorized transfer");
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		BinaryArray dry_run_snapshot;
+		std::array<uint8_t, 16> network{};
+		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+		uint64_t dry_run_fee = 0;
+		if (!zk::Halo2ProofSystem::verify_apply_transfer(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
+		        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, network,
+		        next_block_height, &dry_run_snapshot, &dry_run_fee) ||
+		    dry_run_fee != onyx_delta.fee)
+			throw ConsensusError("Onyx transfer rejected against current state");
 		for (const auto &nullifier : onyx_delta.nullifiers)
 			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
 				return false;

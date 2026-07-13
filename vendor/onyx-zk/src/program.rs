@@ -176,6 +176,31 @@ impl ProgramRegistry {
         self.entries.get(program_id)
     }
 
+    pub fn active_function(
+        &self,
+        program_id: &[u8; 32],
+        function_id: u32,
+        height: u64,
+    ) -> Result<(&ProgramEntry, &ProgramFunction), ProgramError> {
+        let entry = self
+            .entries
+            .get(program_id)
+            .ok_or(ProgramError::UnknownProgram)?;
+        if height < entry.activation_height
+            || entry
+                .deactivation_height
+                .is_some_and(|deactivation| height >= deactivation)
+        {
+            return Err(ProgramError::InactiveProgram);
+        }
+        let function = entry
+            .functions
+            .iter()
+            .find(|function| function.function_id == function_id)
+            .ok_or(ProgramError::UnknownFunction)?;
+        Ok((entry, function))
+    }
+
     pub fn register(&mut self, entry: ProgramEntry) -> Result<ProgramDelta, ProgramError> {
         let program_id = entry.id()?;
         if self.entries.contains_key(&program_id) {
@@ -211,22 +236,7 @@ impl ProgramRegistry {
             {
                 return Err(ProgramError::DuplicateCall);
             }
-            let entry = self
-                .entries
-                .get(&call.program_id)
-                .ok_or(ProgramError::UnknownProgram)?;
-            if height < entry.activation_height
-                || entry
-                    .deactivation_height
-                    .is_some_and(|deactivation| height >= deactivation)
-            {
-                return Err(ProgramError::InactiveProgram);
-            }
-            let function = entry
-                .functions
-                .iter()
-                .find(|function| function.function_id == call.function_id)
-                .ok_or(ProgramError::UnknownFunction)?;
+            let (_, function) = self.active_function(&call.program_id, call.function_id, height)?;
             total = total
                 .checked_add(function.max_cost)
                 .ok_or(ProgramError::CostOverflow)?;

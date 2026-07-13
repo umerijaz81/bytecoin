@@ -16,6 +16,12 @@ use crate::transaction::{MAX_OUTPUTS, MAX_SPENDS};
 use crate::transfer_circuit::{synthesize_native_values, NativeValueCircuit, ValueConfig};
 use pasta_curves::pallas;
 
+#[derive(Clone, Copy)]
+enum NoteDomain {
+    Native,
+    Program,
+}
+
 #[derive(Clone)]
 pub struct LinkedSpend<const DEPTH: usize> {
     membership: MembershipCircuit<DEPTH>,
@@ -68,6 +74,7 @@ pub struct MultiTransferCircuit<const DEPTH: usize, const SPENDS: usize, const O
     outputs: Vec<[Option<Fp>; NOTE_COMMITMENT_INPUTS]>,
     output_value_randomness: Vec<Option<Fp>>,
     output_value_commitments: Vec<Option<pallas::Affine>>,
+    note_domain: NoteDomain,
 }
 
 impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
@@ -80,6 +87,45 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
         outputs: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
         output_value_randomness: Vec<Fp>,
         output_value_commitments: Vec<pallas::Affine>,
+    ) -> Result<Self, &'static str> {
+        Self::with_domain(
+            input_values,
+            output_values,
+            spends,
+            outputs,
+            output_value_randomness,
+            output_value_commitments,
+            NoteDomain::Native,
+        )
+    }
+
+    pub fn new_program(
+        input_values: &[u64],
+        output_values: &[u64],
+        spends: Vec<LinkedSpend<DEPTH>>,
+        outputs: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
+        output_value_randomness: Vec<Fp>,
+        output_value_commitments: Vec<pallas::Affine>,
+    ) -> Result<Self, &'static str> {
+        Self::with_domain(
+            input_values,
+            output_values,
+            spends,
+            outputs,
+            output_value_randomness,
+            output_value_commitments,
+            NoteDomain::Program,
+        )
+    }
+
+    fn with_domain(
+        input_values: &[u64],
+        output_values: &[u64],
+        spends: Vec<LinkedSpend<DEPTH>>,
+        outputs: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
+        output_value_randomness: Vec<Fp>,
+        output_value_commitments: Vec<pallas::Affine>,
+        note_domain: NoteDomain,
     ) -> Result<Self, &'static str> {
         if SPENDS == 0
             || OUTPUTS == 0
@@ -100,6 +146,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>
             outputs: outputs.into_iter().map(|note| note.map(Some)).collect(),
             output_value_randomness: output_value_randomness.into_iter().map(Some).collect(),
             output_value_commitments: output_value_commitments.into_iter().map(Some).collect(),
+            note_domain,
         })
     }
 }
@@ -121,6 +168,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
             outputs: vec![[None; NOTE_COMMITMENT_INPUTS]; OUTPUTS],
             output_value_randomness: vec![None; OUTPUTS],
             output_value_commitments: vec![None; OUTPUTS],
+            note_domain: self.note_domain,
         }
     }
 
@@ -155,6 +203,29 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 )
             },
         )?;
+        let program = match self.note_domain {
+            NoteDomain::Native => None,
+            NoteDomain::Program => Some(layouter.assign_region(
+                || "transaction program and asset",
+                |mut region| {
+                    let low = region.assign_advice_from_instance(
+                        || "program low limb",
+                        config.notes.instance,
+                        OUTPUTS + 1,
+                        config.notes.state[0],
+                        0,
+                    )?;
+                    let high = region.assign_advice_from_instance(
+                        || "program high limb",
+                        config.notes.instance,
+                        OUTPUTS + 2,
+                        config.notes.state[0],
+                        1,
+                    )?;
+                    Ok([low, high])
+                },
+            )?),
+        };
 
         for (index, spend) in self.spends.iter().enumerate() {
             let authority = synthesize_spend_authority(
@@ -181,9 +252,11 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 &spend.note,
                 Some(&values.input_cells[index]),
                 Some(&network),
+                program.as_ref().map(|cells| (&cells[0], &cells[1])),
+                program.as_ref().map(|cells| (&cells[0], &cells[1])),
                 Some((&authority.x, &authority.y)),
                 Some(&value_commitment.randomness),
-                true,
+                program.is_none(),
             )?;
             synthesize_membership(
                 &spend.membership,
@@ -212,9 +285,11 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 note,
                 Some(&values.output_cells[index]),
                 Some(&network),
+                program.as_ref().map(|cells| (&cells[0], &cells[1])),
+                program.as_ref().map(|cells| (&cells[0], &cells[1])),
                 None,
                 Some(&value_commitment.randomness),
-                true,
+                program.is_none(),
             )?;
             layouter.constrain_instance(commitment.cell(), config.notes.instance, index)?;
         }

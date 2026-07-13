@@ -15,10 +15,12 @@ use crate::transaction::TransactionPreimage;
 use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
-const SNAPSHOT_VERSION: u8 = 3;
+const SNAPSHOT_VERSION: u8 = 4;
+const PROGRAM_REGISTRY_SNAPSHOT_VERSION: u8 = 3;
 const ACCOUNTING_SNAPSHOT_VERSION: u8 = 2;
 const LEGACY_SNAPSHOT_VERSION: u8 = 1;
 const MAX_TRANSACTION_PROGRAM_COST: u64 = 10_000_000;
+const MAX_BLOCK_PROGRAM_COST: u64 = 20_000_000;
 const MAX_SNAPSHOT_NULLIFIERS: usize = 1_000_000;
 const MAX_SNAPSHOT_ANCHORS: usize = 1_000_000;
 
@@ -57,6 +59,7 @@ pub enum StateError {
     SupplyOverflow,
     SupplyUnderflow,
     InvalidProgram,
+    ProgramCostLimit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,6 +76,7 @@ pub enum SnapshotError {
     InvalidAnchorHistory,
     InvalidSupply,
     InvalidRegistry,
+    InvalidProgramCost,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -230,6 +234,7 @@ pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     total_fees: u64,
     circulating_supply: u64,
     programs: ProgramRegistry,
+    current_block_program_cost: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -246,6 +251,7 @@ pub struct ShieldedStateDelta<const DEPTH: usize> {
     previous_total_bridged: u64,
     previous_total_fees: u64,
     previous_circulating_supply: u64,
+    previous_block_program_cost: u64,
 }
 
 impl<const DEPTH: usize> ShieldedState<DEPTH> {
@@ -265,6 +271,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             total_fees: 0,
             circulating_supply: 0,
             programs: ProgramRegistry::default(),
+            current_block_program_cost: 0,
         }
     }
 
@@ -290,6 +297,14 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
 
     pub fn program_count(&self) -> usize {
         self.programs.len()
+    }
+
+    pub fn program_registry(&self) -> &ProgramRegistry {
+        &self.programs
+    }
+
+    pub fn current_block_program_cost(&self) -> u64 {
+        self.current_block_program_cost
     }
 
     pub fn register_program(&mut self, entry: ProgramEntry) -> Result<ProgramDelta, StateError> {
@@ -367,7 +382,8 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         transaction
             .encode()
             .map_err(|_| StateError::InvalidTransaction)?;
-        self.programs
+        let transaction_program_cost = self
+            .programs
             .validate_calls(
                 &transaction.programs,
                 block_height,
@@ -380,6 +396,16 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         if block_height < self.current_height {
             return Err(StateError::HeightRegression);
         }
+        let next_block_program_cost = if block_height == self.current_height {
+            self.current_block_program_cost
+                .checked_add(transaction_program_cost)
+                .ok_or(StateError::ProgramCostLimit)?
+        } else {
+            transaction_program_cost
+        };
+        if next_block_program_cost > MAX_BLOCK_PROGRAM_COST {
+            return Err(StateError::ProgramCostLimit);
+        }
 
         let previous_tree = self.tree.clone();
         let previous_anchors = self.anchors.clone();
@@ -387,6 +413,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let previous_total_bridged = self.total_bridged;
         let previous_total_fees = self.total_fees;
         let previous_circulating_supply = self.circulating_supply;
+        let previous_block_program_cost = self.current_block_program_cost;
         let nullifier_values: Vec<_> = transaction
             .spends
             .iter()
@@ -404,6 +431,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
 
         let root = self.tree.root();
         self.current_height = block_height;
+        self.current_block_program_cost = next_block_program_cost;
         if self.anchors.last().map(|entry| entry.root) != Some(root) {
             self.anchors.push(Anchor {
                 root,
@@ -420,6 +448,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             previous_total_bridged,
             previous_total_fees,
             previous_circulating_supply,
+            previous_block_program_cost,
         })
     }
 
@@ -431,6 +460,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.total_bridged = delta.previous_total_bridged;
         self.total_fees = delta.previous_total_fees;
         self.circulating_supply = delta.previous_circulating_supply;
+        self.current_block_program_cost = delta.previous_block_program_cost;
     }
 
     pub fn encode_snapshot(&self) -> Vec<u8> {
@@ -478,6 +508,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let programs = self.programs.encode();
         write_varint(programs.len() as u64, &mut out);
         out.extend_from_slice(&programs);
+        write_varint(self.current_block_program_cost, &mut out);
         out
     }
 
@@ -489,6 +520,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let version = reader.byte()?;
         if version != SNAPSHOT_VERSION
             && version != ACCOUNTING_SNAPSHOT_VERSION
+            && version != PROGRAM_REGISTRY_SNAPSHOT_VERSION
             && version != LEGACY_SNAPSHOT_VERSION
         {
             return Err(SnapshotError::WrongVersion);
@@ -586,7 +618,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         if version == LEGACY_SNAPSHOT_VERSION && (leaf_count != 0 || !values.is_empty()) {
             return Err(SnapshotError::InvalidSupply);
         }
-        let programs = if version == SNAPSHOT_VERSION {
+        let programs = if version >= PROGRAM_REGISTRY_SNAPSHOT_VERSION {
             let length = bounded_snapshot_count(
                 reader.varint()?,
                 crate::program::MAX_REGISTRY_BYTES,
@@ -596,6 +628,15 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
                 .map_err(|_| SnapshotError::InvalidRegistry)?
         } else {
             ProgramRegistry::default()
+        };
+        let current_block_program_cost = if version == SNAPSHOT_VERSION {
+            let cost = reader.varint()?;
+            if cost > MAX_BLOCK_PROGRAM_COST {
+                return Err(SnapshotError::InvalidProgramCost);
+            }
+            cost
+        } else {
+            0
         };
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData.into());
@@ -610,6 +651,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             total_fees,
             circulating_supply,
             programs,
+            current_block_program_cost,
         })
     }
 }
@@ -910,7 +952,7 @@ mod tests {
         let mut legacy = ShieldedState::<4>::new(3).encode_snapshot();
         legacy[0] = LEGACY_SNAPSHOT_VERSION;
         legacy.drain(6..9);
-        legacy.truncate(legacy.len() - 3);
+        legacy.truncate(legacy.len() - 4);
         let migrated = ShieldedState::<4>::decode_snapshot(&legacy).unwrap();
         assert_eq!(
             (
@@ -923,7 +965,7 @@ mod tests {
 
         let mut accounting_v2 = state.encode_snapshot();
         accounting_v2[0] = ACCOUNTING_SNAPSHOT_VERSION;
-        accounting_v2.truncate(accounting_v2.len() - 3);
+        accounting_v2.truncate(accounting_v2.len() - 4);
         let migrated_v2 = ShieldedState::<4>::decode_snapshot(&accounting_v2).unwrap();
         assert_eq!(
             (
@@ -960,7 +1002,7 @@ mod tests {
                 function_id: 7,
                 verifying_key: vec![1, 2, 3],
                 public_input_schema_hash: [4; 32],
-                max_cost: 50,
+                max_cost: 9_000_000,
             }],
         };
         let program_id = entry.id().unwrap();
@@ -974,6 +1016,12 @@ mod tests {
                 .program_count(),
             1
         );
+        let mut registry_v3 = snapshot.clone();
+        registry_v3[0] = PROGRAM_REGISTRY_SNAPSHOT_VERSION;
+        registry_v3.truncate(registry_v3.len() - 1);
+        let migrated_v3 = ShieldedState::<4>::decode_snapshot(&registry_v3).unwrap();
+        assert_eq!(migrated_v3.program_count(), 1);
+        assert_eq!(migrated_v3.current_block_program_cost(), 0);
 
         let mut unknown = transaction(state.root(), 1, 40);
         unknown.programs.push(ProgramCall {
@@ -994,7 +1042,32 @@ mod tests {
             public_data_hash: [5; 32],
         });
         let tx_delta = state.apply_transaction(&registered, 10).unwrap();
+        assert_eq!(state.current_block_program_cost(), 9_000_000);
+        let mut second = transaction(state.root(), 2, 41);
+        second.programs.push(ProgramCall {
+            program_id,
+            function_id: 7,
+            public_data_hash: [6; 32],
+        });
+        let second_delta = state.apply_transaction(&second, 10).unwrap();
+        assert_eq!(state.current_block_program_cost(), 18_000_000);
+        let mut third = transaction(state.root(), 3, 42);
+        third.programs.push(ProgramCall {
+            program_id,
+            function_id: 7,
+            public_data_hash: [7; 32],
+        });
+        assert_eq!(
+            state.apply_transaction(&third, 10).err(),
+            Some(StateError::ProgramCostLimit)
+        );
+        let third_delta = state.apply_transaction(&third, 11).unwrap();
+        assert_eq!(state.current_block_program_cost(), 9_000_000);
+        state.rollback(third_delta);
+        assert_eq!(state.current_block_program_cost(), 18_000_000);
+        state.rollback(second_delta);
         state.rollback(tx_delta);
+        assert_eq!(state.current_block_program_cost(), 0);
         state.rollback_program(registry_delta);
         assert_eq!(state.program_count(), 0);
     }

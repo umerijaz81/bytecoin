@@ -155,7 +155,7 @@ impl NotePlaintext {
     }
 }
 
-fn pack_32(bytes: &[u8; 32]) -> [Fp; 2] {
+pub(crate) fn pack_32(bytes: &[u8; 32]) -> [Fp; 2] {
     [pack_short(&bytes[..31]), pack_short(&bytes[31..])]
 }
 
