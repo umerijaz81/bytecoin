@@ -237,13 +237,19 @@ void WalletSync::send_get_blocks() {
 		req_header.r.set_firstline("GET", url, 1, 1);
 	} else {
 		api::cnd::SyncBlocks::Request msg;
-		msg.first_block_timestamp =
-		    (m_wallet_state.get_wallet().get_oldest_timestamp() / m_config.wallet_sync_timestamp_granularity) *
-		    m_config.wallet_sync_timestamp_granularity;
-		if (!next_sparse_chain.empty() && !m_wallet_state.db_empty()) {
-			msg.sparse_chain = next_sparse_chain;
-		} else
-			msg.sparse_chain = m_wallet_state.get_sparse_chain();
+		if (m_config.wallet_sync_privacy) {
+			// Privacy: do not reveal wallet age or our view of the chain to a possibly untrusted
+			// node. The node will start us from genesis; first sync is slower in exchange.
+			msg.first_block_timestamp = 0;
+		} else {
+			msg.first_block_timestamp =
+			    (m_wallet_state.get_wallet().get_oldest_timestamp() / m_config.wallet_sync_timestamp_granularity) *
+			    m_config.wallet_sync_timestamp_granularity;
+			if (!next_sparse_chain.empty() && !m_wallet_state.db_empty()) {
+				msg.sparse_chain = next_sparse_chain;
+			} else
+				msg.sparse_chain = m_wallet_state.get_sparse_chain();
+		}
 		msg.need_redundant_data = false;
 		req_header.r.set_firstline("POST", api::cnd::binary_url(), 1, 1);
 		req_header.set_body(json_rpc::create_binary_request_body(api::cnd::SyncBlocks::bin_method(), msg));

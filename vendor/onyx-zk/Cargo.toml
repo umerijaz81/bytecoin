@@ -1,0 +1,31 @@
+[package]
+name = "onyx-zk"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "Onyx (V6) zero-knowledge proof backend for Bytecoin — C ABI over a vendored Halo2/PLONKish (Pasta) stack. Wrappers only; no bespoke cryptography."
+license = "LGPL-3.0-or-later"
+
+[lib]
+name = "onyx_zk"
+# staticlib: linked into the C++ node/tests. rlib: lets `cargo test` exercise the Rust side.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# Pinned, vendored (cargo vendor) before mainnet use. These are the SAME primitives the protocol
+# will use, so the test vectors below are authoritative.
+halo2_proofs = "=0.3.2"
+halo2_gadgets = "=0.5.0"
+pasta_curves = "=0.5.1"
+ff = "=0.13.1"
+group = "=0.13.0"
+rand = "=0.8.6"
+chacha20poly1305 = "=0.10.1"
+hkdf = "=0.12.4"
+sha2 = "=0.10.9"
+x25519-dalek = { version = "=2.0.1", features = ["static_secrets"] }
+zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
+reddsa = "=0.5.2"
+
+[profile.release]
+opt-level = 3

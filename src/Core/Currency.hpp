@@ -67,6 +67,10 @@ public:
 	uint8_t get_block_major_version_for_height(Height) const;
 	uint8_t amethyst_block_version;
 	uint8_t amethyst_transaction_version;
+	uint8_t jade_block_version;
+	uint8_t jade_transaction_version;
+	uint8_t onyx_block_version;
+	uint8_t onyx_transaction_version;
 
 	// upgrade voting threshold must not be reached before or at last sw checkpoint!
 	uint8_t upgrade_vote_minor;

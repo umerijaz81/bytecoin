@@ -1,0 +1,103 @@
+// Copyright (c) 2012-2018, The CryptoNote developers, The Bytecoin developers.
+// Licensed under the GNU Lesser General Public License. See LICENSE for details.
+//
+// Onyx (V6) — C++ adapter over the vendored Halo2/PLONKish (Pasta) backend (vendor/onyx-zk).
+// Compiled only when the build is configured with -DONYX_ZK=ON. See ONYX_ARCHITECTURE.md / O0 plan.
+
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <vector>
+#include "IProofSystem.hpp"
+
+namespace cn {
+namespace zk {
+
+// IProofSystem backed by the vendored Halo2 C ABI (include/onyx_zk.h).
+//
+// O0 scope: backend identity, the Orchard Poseidon/Sinsemilla primitives, and the toy prove/verify
+// pipeline used to validate the FFI end-to-end. The protocol's real program-verifying-key dispatch
+// lands in O4; until then verify() targets the toy circuit.
+class Halo2ProofSystem : public IProofSystem {
+public:
+	struct VerifiedTransferDelta {
+		std::array<uint8_t, 16> network{};
+		std::array<uint8_t, 32> anchor{};
+		uint64_t expiry_height = 0;
+		uint64_t fee = 0;
+		std::vector<std::array<uint8_t, 32>> nullifiers;
+		std::vector<std::array<uint8_t, 32>> commitments;
+	};
+	struct VerifiedBridgeDelta {
+		uint64_t legacy_amount = 0;
+		uint64_t legacy_stack_index = 0;
+		uint64_t fee = 0;
+		std::array<uint8_t, 32> legacy_key_image{};
+		std::array<uint8_t, 32> ownership_sighash{};
+		std::array<uint8_t, 64> ownership_signature{};
+	};
+	struct WalletScanResult {
+		uint64_t balance = 0;
+		size_t note_count = 0;
+		std::array<uint8_t, 32> root{};
+	};
+	const char *backend_id() const override;
+
+	// O0: maps to the toy-circuit verifier. args.public_inputs must be the 32-byte public field
+	// element; vk.data may be empty (the toy vk is regenerated from the circuit structure).
+	bool verify(const VerifyingKey &vk, const ProofVerifyArgs &args) const override;
+
+	// --- O0 pipeline-validation helpers (superseded by protocol circuits in O1/O4) ---
+
+	// Orchard Poseidon (P128Pow5T3, arity 2): `in` is two 32-byte LE field elements (64 bytes).
+	static bool poseidon_hash2(const uint8_t in[64], uint8_t out[32]);
+
+	// Sinsemilla hash over the fixed test domain; input bytes expanded LSB-first to bits.
+	static bool sinsemilla_hash(const BinaryArray &in, uint8_t out[32]);
+
+	// Toy circuit prover (knowledge of a, b with a*b = public). Fills proof/vk/public_out.
+	static bool toy_prove(
+	    uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out);
+
+	// Canonical Onyx authorized-envelope verification. Consensus callers use frozen depth/K
+	// constants; malformed, unsupported, and invalid envelopes all fail closed.
+	static bool verify_authorized_transfer(
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k);
+	static bool verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
+	    uint32_t circuit_k, VerifiedTransferDelta *delta);
+	static bool verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+	    BinaryArray *next_snapshot, uint64_t *fee);
+	static bool verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
+	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
+	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
+	static bool verify_bridge(const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta);
+	static bool wallet_address(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, uint32_t address_index, std::array<uint8_t, 91> *address);
+	static bool full_viewing_key(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key);
+	static bool wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
+	    BinaryArray *next_snapshot, WalletScanResult *result);
+	static bool wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
+	    uint8_t envelope_type, const BinaryArray &encoded, BinaryArray *next_snapshot,
+	    WalletScanResult *result);
+	static bool wallet_reserve_spends(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, const BinaryArray &encoded, BinaryArray *next_snapshot);
+	static bool wallet_summary(const BinaryArray &snapshot, WalletScanResult *result);
+	static bool wallet_create_bridge(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
+	    uint64_t legacy_amount, uint64_t legacy_stack_index,
+	    const std::array<uint8_t, 32> &legacy_key_image, const BinaryArray &memo, uint32_t circuit_k,
+	    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash);
+	static bool wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
+	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge);
+	static bool wallet_create_transfer(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 91> &recipient, uint64_t amount, uint64_t fee, uint64_t expiry_height,
+	    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *transaction);
+};
+
+}  // namespace zk
+}  // namespace cn

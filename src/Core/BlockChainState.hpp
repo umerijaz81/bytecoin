@@ -12,6 +12,13 @@
 namespace cn {
 
 class Config;
+class Currency;
+
+// Semantic (stateless) transaction validation. Returns coinbase reward or non-coinbase fee;
+// throws ConsensusError on any violation (incl. the Jade minimum-ring-size rule). Exposed for the
+// consensus test harness so the real rule can be exercised directly.
+Amount validate_tx_semantic(const Currency &currency, uint8_t block_major_version, bool coinbase,
+    const Transaction &tx, bool check_keys, bool key_image_subgroup_check);
 
 class IBlockChainState {
 public:
@@ -33,6 +40,8 @@ public:
 	virtual void pop_amount_output(Amount, BlockOrTimestamp, const PublicKey &)                              = 0;
 	virtual size_t next_stack_index_for_amount(Amount) const                                                 = 0;
 	virtual bool read_amount_output(Amount, size_t stack_index, OutputIndexData *) const                     = 0;
+	virtual bool read_onyx_snapshot(BinaryArray *) const                                                    = 0;
+	virtual void set_onyx_snapshot(const BinaryArray &)                                                     = 0;
 };
 
 class BlockChainState : public BlockChain, private IBlockChainState {
@@ -95,6 +104,8 @@ private:
 		std::map<KeyImage, Height> m_keyimages;  // sorted to speed up bulk saving to DB
 		std::map<Amount, std::vector<std::tuple<uint64_t, PublicKey, bool>>> m_global_amounts;
 		std::vector<OutputIndexData> m_ordered_global_amounts;
+		BinaryArray m_onyx_snapshot;
+		bool m_onyx_snapshot_changed = false;
 		Height m_block_height;  // Every delta state corresponds to some height
 		Timestamp m_block_timestamp;
 		Timestamp m_block_median_timestamp;
@@ -112,6 +123,7 @@ private:
 		void apply(IBlockChainState *parent_state) const;  // Apply modifications to (non-const) parent
 		void clear(Height new_block_height);               // We use it for memory_state
 		const std::map<KeyImage, Height> &get_keyimages() const { return m_keyimages; }
+		bool onyx_snapshot_changed() const { return m_onyx_snapshot_changed; }
 
 		void store_keyimage(const KeyImage &, Height) override;
 		void delete_keyimage(const KeyImage &) override;
@@ -121,6 +133,8 @@ private:
 		void pop_amount_output(Amount, BlockOrTimestamp, const PublicKey &) override;
 		size_t next_stack_index_for_amount(Amount) const override;
 		bool read_amount_output(Amount, size_t stack_index, OutputIndexData *) const override;
+		bool read_onyx_snapshot(BinaryArray *) const override;
+		void set_onyx_snapshot(const BinaryArray &) override;
 	};
 
 	void store_keyimage(const KeyImage &, Height) override;
@@ -131,6 +145,8 @@ private:
 	void pop_amount_output(Amount, BlockOrTimestamp, const PublicKey &) override;
 	size_t next_stack_index_for_amount(Amount) const override;
 	bool read_amount_output(Amount, size_t stack_index, OutputIndexData *) const override;
+	bool read_onyx_snapshot(BinaryArray *) const override;
+	void set_onyx_snapshot(const BinaryArray &) override;
 	bool read_hidden_amount_map(Amount, size_t stack_index, size_t *hidden_index) const;
 	bool read_hidden_amount_output(size_t hidden_index, OutputIndexData *) const;
 	void spend_output(OutputIndexData &&, size_t hidden_index, size_t trigger_input_index, size_t level, bool spent);
@@ -153,6 +169,7 @@ private:
 	size_t m_tx_pool_version = 1;  // Incremented every time pool changes, TODO cycle
 	PoolTransMap m_memory_state_tx;
 	std::map<KeyImage, Hash> m_memory_state_ki_tx;
+	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_nf_tx;
 	std::set<std::pair<Amount, Hash>> m_memory_state_fee_tx;
 	size_t m_memory_state_total_size = 0;
 

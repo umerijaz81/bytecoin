@@ -376,6 +376,63 @@ struct GetBalance {
 	};
 };
 
+struct GetOnyxStatus {
+	static std::string method() { return "get_onyx_status"; }
+	struct Request {
+		uint32_t address_index = 0;
+	};
+	struct Response {
+		std::string address;  // canonical 91-byte Onyx address, hex encoded
+		Amount balance = 0;
+		size_t note_count = 0;
+		Hash commitment_root{};
+	};
+};
+
+struct CreateOnyxTransaction {
+	static std::string method() { return "create_onyx_transaction"; }
+	struct Request {
+		std::string address;  // canonical 91-byte hex Onyx address
+		Amount amount = 0;
+		Amount fee = 0;
+		Height expiry_height = 0;  // zero selects current tip + 20
+		std::string memo;
+	};
+	struct Response {
+		BinaryArray binary_transaction;
+		Hash transaction_hash{};
+	};
+};
+
+struct CreateOnyxBridge {
+	static std::string method() { return "create_onyx_bridge"; }
+	struct Request {
+		std::string address;
+		Amount legacy_amount = 0;
+		Amount fee = 0;
+		uint64_t legacy_stack_index = 0;
+		std::string legacy_key_image;
+		Height expiry_height = 0;
+		std::string memo;
+	};
+	struct Response {
+		BinaryArray unsigned_bridge;
+		Hash ownership_sighash{};
+	};
+};
+
+struct FinalizeOnyxBridge {
+	static std::string method() { return "finalize_onyx_bridge"; }
+	struct Request {
+		BinaryArray unsigned_bridge;
+		std::string ownership_signature;
+	};
+	struct Response {
+		BinaryArray binary_transaction;
+		Hash transaction_hash{};
+	};
+};
+
 struct GetUnspents {
 	static std::string method() { return "get_unspents"; }
 	// This method execution time is proportional to number of unspent coins
@@ -965,6 +1022,14 @@ void ser_members(cn::api::walletd::GetViewKeyPair::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateAddresses::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateAddresses::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetBalance::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxStatus::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxStatus::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxTransaction::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxTransaction::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxBridge::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxBridge::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::FinalizeOnyxBridge::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::FinalizeOnyxBridge::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetTransfers::Request &v, ISeria &s);

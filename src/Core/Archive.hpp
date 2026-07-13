@@ -10,13 +10,14 @@ namespace cn {
 
 class Archive {
 	const bool m_read_only;
+	const bool m_omit_source_addresses;
 	std::unique_ptr<platform::DB> m_db;
 	uint64_t m_next_record_id = 0;
 	std::string m_unique_id;
 
 	//	platform::Timer commit_timer;
 public:
-	explicit Archive(bool read_only, const std::string &path);
+	explicit Archive(bool read_only, const std::string &path, bool omit_source_addresses = false);
 	std::string get_unique_id() const { return m_unique_id; }
 	void add(
 	    const std::string &type, const common::BinaryArray &data, const Hash &hash, const std::string &source_address);

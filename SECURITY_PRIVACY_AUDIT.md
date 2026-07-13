@@ -141,6 +141,75 @@ A well-connected observer correlates first-seen propagation to the **originating
 | M-2 | Medium | Wallet leaks creation timestamp + sparse chain |
 | L-1 | Low | CSPRNG seeded once, never reseeded |
 | L-2 | Low | Verbose peer-IP logging |
+| Q-1 | Critical (industry-wide) | Not quantum-resistant — CRQC breaks supply integrity and privacy |
+
+Supply integrity (counterfeiting) is **sound under classical assumptions** — no inflation vector
+was found. See the dedicated section above.
+
+---
+
+## Supply integrity — can you counterfeit coins?
+
+**Short answer: No, not under classical computing.** I looked specifically for inflation /
+mint-from-nothing vectors. All standard CryptoNote counterfeiting paths are closed:
+
+| Counterfeit vector | Status | Evidence |
+|--------------------|--------|----------|
+| Coinbase over-reward (miner mints extra) | **Blocked** | Block reward must *exactly* equal the deterministically computed emission: `if (miner_reward != info->reward) throw "Block reward mismatch"` (`BlockChainState.cpp:357`). Emission = `(money_supply - already_generated_coins) >> EMISSION_SPEED_FACTOR` (`Currency.cpp:265`), and the coinbase builder asserts `summary_amounts == block_reward` (`Currency.cpp:326`). |
+| Output-sum integer overflow (the classic 2014 CryptoNote inflation CVE) | **Blocked** | Every amount accumulation goes through `add_amount`, which refuses on `uint64` overflow (`CryptoNoteTools.hpp:40-45`); used at `BlockChainState.cpp:142,165`. |
+| Spending more than you put in (input/output imbalance) | **Blocked** | `if (summary_output_amount > summary_input_amount && !coinbase) throw` (`BlockChainState.cpp:177`). |
+| Amount substitution (claim a big `input.amount` while referencing tiny real outputs) | **Blocked** | Outputs are stored and looked up keyed by `(amount, stack_index)`: `read_hidden_amount_map(input.amount, ...)` (`BlockChainState.cpp:1273,1290`). An input claiming amount A can only reference real outputs recorded under amount A. |
+| Double-spend (reuse an output) | **Blocked** | Key images are unique chain-wide (`BlockChainState.cpp:56,167,734,901`). |
+| Spending outputs you don't own (forging a ring signature) | **Blocked (classically)** | Ring signatures are batch-verified in `redo_block` via `m_ring_checker` (`BlockChainState.cpp:999-1008`) for all blocks above the latest hard checkpoint. Forging one requires solving the elliptic-curve discrete log — see quantum section. |
+
+Blocks *below* the most recent hard checkpoint skip signature/output verification
+(`check_sigs = !is_in_hard_checkpoint_zone`, `BlockChainState.cpp:998`). This is standard
+fast-sync practice and not an inflation vector, since those blocks are pinned by checkpoint
+hashes.
+
+**Conclusion:** The monetary integrity of the chain is sound. No mint-from-nothing or
+counterfeiting vector was found under classical cryptographic assumptions.
+
+---
+
+## Quantum resistance — Q-1 (CRITICAL, but industry-wide)
+
+**Bytecoin is NOT quantum-resistant. A cryptographically-relevant quantum computer (CRQC)
+breaks not just privacy but the money itself.**
+
+Every security property rests on the elliptic-curve discrete-log problem (ECDLP) over
+**ed25519 / Curve25519** (`src/crypto/bernstein/fe_25_5.c`, `fe_51.c` — field arithmetic mod
+2²⁵⁵−19; all keys, signatures, key images, and stealth addresses use `ge_*`/`fe_*` group ops).
+There is **zero** post-quantum cryptography in the tree — a search for Dilithium/Kyber/SPHINCS+/
+XMSS/Lamport/Winternitz/lattice/Falcon returns nothing (the only `quantum` hits are BIP39
+mnemonic words).
+
+Shor's algorithm solves ECDLP in polynomial time, which means under a CRQC an attacker can:
+
+1. **Counterfeit/steal at will (catastrophic).** Recover the secret spend key from any public
+   key, then forge ring signatures with valid key images and spend *any* output. Because
+   amounts are transparent (C-1), the attacker can target the largest UTXOs first. This is
+   effectively unlimited counterfeiting.
+2. **Drain any known address.** Addresses embed the public spend key `S` and view key `V`
+   (`CryptoNote.hpp:141-153`); anyone holding an address can derive its keys and sweep it.
+3. **Retroactively destroy privacy.** Recovering view keys unmasks every stealth address and
+   de-anonymizes the entire historical chain.
+
+What survives a CRQC: the **hash functions and PoW** (Keccak, CryptoNight) are only quadratically
+weakened by Grover, so 256-bit outputs retain ~128-bit security — mining and block hashing are
+fine. The problem is exclusively the signature/key system.
+
+**Important context:** this is **not** a Bytecoin-specific flaw — Bitcoin, Monero, Ethereum, and
+essentially every deployed ECDSA/EdDSA/ring-signature chain share it. No production cryptocurrency
+is quantum-safe today. But the question was whether *this* chain is "unbreakable even with quantum
+computers," and the answer is an unambiguous **no**, with no in-code migration path (no PQ scheme,
+no hash-based fallback, no key-rotation mechanism).
+
+**Remediation (long-horizon):** would require a hard fork to a post-quantum signature scheme
+(e.g. hash-based or lattice-based), which is an unsolved problem for ring-signature privacy chains
+industry-wide.
+
+---
 
 ## Verdict
 

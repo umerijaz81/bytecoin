@@ -78,6 +78,10 @@ struct TransactionPrefix {
 	std::vector<TransactionInput> inputs;
 	std::vector<TransactionOutput> outputs;
 	BinaryArray extra;
+	uint8_t onyx_type = 0;
+	// Present only for transaction format V6. The Rust backend owns the canonical inner encoding;
+	// core treats it as a bounded opaque envelope to avoid decoder divergence.
+	BinaryArray onyx_envelope;
 };
 
 struct RingSignatures {

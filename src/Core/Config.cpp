@@ -73,6 +73,9 @@ Config::Config(common::CommandLine &cmd)
     , paranoid_checks(cmd.get_bool("--paranoid-checks"))
     , trusted_public_key(P2P_STAT_TRUSTED_PUBLIC_KEY)
     , payment_queue_confirmations(720) {
+	// Privacy hardening flags (Phase 1). Archive omits peer IPs by default; opt back in if needed.
+	archive_omit_source_addresses = !cmd.get_bool("--archive-keep-source-addresses");
+	wallet_sync_privacy           = cmd.get_bool("--wallet-sync-privacy");
 	if (net == "test") {
 		network_id.data[0] += 1;
 		p2p_bind_port += 1000;

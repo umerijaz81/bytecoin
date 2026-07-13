@@ -84,6 +84,16 @@ public:
 
 	size_t get_tx_pool_version() const { return m_tx_pool_version; }
 	std::vector<Hash> get_tx_pool_hashes() const;
+	uint64_t get_onyx_balance() const { return m_onyx_balance; }
+	size_t get_onyx_note_count() const { return m_onyx_note_count; }
+	const std::array<uint8_t, 32> &get_onyx_root() const { return m_onyx_root; }
+	bool create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
+	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const;
+	bool create_onyx_bridge(const std::array<uint8_t, 91> &recipient, Amount legacy_amount, Amount fee,
+	    uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image, Height expiry_height,
+	    const BinaryArray &memo, BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash) const;
+	bool finalize_onyx_bridge(const BinaryArray &unsigned_bridge,
+	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *envelope) const;
 
 	void wallet_addresses_updated();
 	// generating through state prevents undo of blocks within 2*block_future_time_limit from now
@@ -124,6 +134,11 @@ private:
 	Wallet &m_wallet;
 	DeltaState m_memory_state;
 	std::set<Hash> m_pool_hashes;
+	BinaryArray m_onyx_wallet_snapshot;
+	uint64_t m_onyx_balance = 0;
+	size_t m_onyx_note_count = 0;
+	std::array<uint8_t, 32> m_onyx_root{};
+	void reload_onyx_wallet_state();
 
 	void add_transaction_to_mempool(Hash tid, const PreparedWalletTransaction &pwtx, bool from_pq);
 	void remove_transaction_from_mempool(Hash tid, bool from_pq);

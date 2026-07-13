@@ -1,0 +1,34 @@
+name: Onyx ZK backend
+
+on:
+  push:
+    paths:
+      - ".cargo/**"
+      - ".github/workflows/onyx-zk.yml"
+      - "rust-toolchain.toml"
+      - "vendor/onyx-zk/**"
+  pull_request:
+    paths:
+      - ".cargo/**"
+      - ".github/workflows/onyx-zk.yml"
+      - "rust-toolchain.toml"
+      - "vendor/onyx-zk/**"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    name: locked offline tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify formatting
+        run: cargo fmt --manifest-path vendor/onyx-zk/Cargo.toml -- --check
+      - name: Test without network access
+        run: cargo test --locked --offline --manifest-path vendor/onyx-zk/Cargo.toml
+

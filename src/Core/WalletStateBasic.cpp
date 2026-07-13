@@ -323,6 +323,14 @@ void WalletStateBasic::put_with_undo(const std::string &key, const common::Binar
 	//		current_undo_map.erase(kit);
 }
 
+bool WalletStateBasic::read_extension_state(const std::string &key, BinaryArray *value) const {
+	return m_db.get(key, *value);
+}
+
+void WalletStateBasic::put_extension_state_with_undo(const std::string &key, const BinaryArray &value) {
+	put_with_undo(key, value, false);
+}
+
 void WalletStateBasic::del_with_undo(const std::string &key, bool mustexist) {
 	//	UndoMap::iterator kit =
 	record_undo(current_undo_map, key);

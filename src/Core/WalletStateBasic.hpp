@@ -92,6 +92,8 @@ protected:
 	}
 	virtual const std::map<KeyImage, std::vector<Hash>> &get_mempool_keyimages() const;
 	virtual void on_first_transaction_found(Timestamp ts) {}
+	bool read_extension_state(const std::string &key, BinaryArray *value) const;
+	void put_extension_state_with_undo(const std::string &key, const BinaryArray &value);
 	void unlock(Height now_height, Timestamp now);
 
 	bool read_from_unspent_index(const HeightGi &value, api::Output *) const;

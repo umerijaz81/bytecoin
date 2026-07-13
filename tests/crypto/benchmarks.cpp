@@ -1,9 +1,11 @@
 #include "benchmarks.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <functional>
 #include <iomanip>
 #include <map>
+#include <memory>
 #include <sstream>
 #include "Core/Wallet.hpp"
 #include "crypto/bernstein/crypto-ops.h"

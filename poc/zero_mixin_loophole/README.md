@@ -1,5 +1,15 @@
 # PoC: Zero-Mixin / Consensus-Unenforced Ring Size (Finding C-3)
 
+> **STATUS: FIXED (Jade / V5).** This loophole is now closed under the Jade hard fork.
+> `validate_tx_semantic` (`src/Core/BlockChainState.cpp`) rejects any input whose ring is smaller
+> than `minimum_anonymity + 1` once `block_major_version >= jade_block_version`, and the minimum is
+> raised to a ring of 16 (`MINIMUM_ANONYMITY_JADE = 15`). The static verifier below was written to
+> *prove the loophole existed*; against the patched source it now correctly **fails to find it**
+> (exits non-zero with "could not prove the loophole"). The positive proof of the fix is the
+> dynamic consensus test: `./bin/tests --jade` (from the `build/` dir), which asserts a ring-size-1
+> V5 transaction is rejected ("Ring size too small 1 minimum 16"), a ring of 16 is accepted, and
+> pre-fork Amethyst/V4 validation is unchanged. The text below documents the original finding.
+
 ## Claim
 
 Bytecoin's minimum ring size (`MINIMUM_ANONYMITY_AMETHYST = 3`) is enforced **only by the
