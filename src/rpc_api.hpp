@@ -376,6 +376,19 @@ struct GetBalance {
 	};
 };
 
+struct GetOnyxStatus {
+	static std::string method() { return "get_onyx_status"; }
+	struct Request {
+		uint32_t address_index = 0;
+	};
+	struct Response {
+		std::string address;  // canonical 91-byte Onyx address, hex encoded
+		Amount balance = 0;
+		size_t note_count = 0;
+		Hash commitment_root{};
+	};
+};
+
 struct GetUnspents {
 	static std::string method() { return "get_unspents"; }
 	// This method execution time is proportional to number of unspent coins
@@ -965,6 +978,8 @@ void ser_members(cn::api::walletd::GetViewKeyPair::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateAddresses::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateAddresses::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetBalance::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxStatus::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxStatus::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetTransfers::Request &v, ISeria &s);

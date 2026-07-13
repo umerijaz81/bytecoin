@@ -42,6 +42,8 @@ public:
 	    api::walletd::GetUnspents::Request &&, api::walletd::GetUnspents::Response &);
 	bool on_get_balance(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::GetBalance::Request &&, api::walletd::GetBalance::Response &);
+	bool on_get_onyx_status(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::walletd::GetOnyxStatus::Request &&, api::walletd::GetOnyxStatus::Response &);
 	bool on_get_transfers(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::GetTransfers::Request &&, api::walletd::GetTransfers::Response &);
 	bool on_create_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,

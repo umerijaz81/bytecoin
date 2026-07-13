@@ -133,6 +133,11 @@ The master seed derives separate spend, nullifier, incoming-view, outgoing-view,
 with explicit network and key-type separation. Incoming keys discover received notes; outgoing keys
 recover sent-note metadata; full viewing keys combine both without spend authority.
 
+The canonical full-viewing-key encoding is versioned and contains the network id, incoming and
+outgoing viewing secrets, diversifier derivation key, nullifier key, and public spend-authority key.
+It never contains the spend scalar. Full and view-only scanners consume this same encoding, yielding
+identical addresses, note recovery, nullifier detection, commitment roots, and witnesses.
+
 Note encryption uses an audited AEAD with unique ephemeral keys. Associated data binds network id,
 transaction preimage, output index, commitment, and ephemeral key. Wallets never mark a note
 spendable before its commitment is confirmed in the canonical tree.

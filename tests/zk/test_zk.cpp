@@ -97,10 +97,16 @@ void test_zk() {
 		std::array<uint8_t, 91> address{};
 		invariant(Halo2ProofSystem::wallet_address(seed, network, 0, &address),
 		    "Onyx wallet address derivation failed");
+		std::array<uint8_t, 177> viewing_key{};
+		invariant(Halo2ProofSystem::full_viewing_key(seed, network, &viewing_key),
+		    "Onyx full viewing-key derivation failed");
 		Halo2ProofSystem::WalletScanResult scan;
 		invariant(!Halo2ProofSystem::wallet_scan(BinaryArray{}, seed, network, 0, malformed,
 		              &next_snapshot, &scan),
 		    "malformed wallet scan input must fail");
+		invariant(!Halo2ProofSystem::wallet_scan_viewing(BinaryArray{},
+		              BinaryArray(viewing_key.begin(), viewing_key.end()), 0, malformed, &next_snapshot, &scan),
+		    "malformed viewing-wallet scan input must fail");
 		std::cout << "  [zk] authorized-transfer boundary rejects malformed input" << std::endl;
 	}
 

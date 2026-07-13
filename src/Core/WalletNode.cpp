@@ -26,6 +26,7 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
     {api::walletd::CreateAddresses::method(), json_rpc::make_member_method(&WalletNode::on_create_addresses)},
     {api::walletd::GetViewKeyPair::method(), json_rpc::make_member_method(&WalletNode::on_get_view_key)},
     {api::walletd::GetBalance::method(), json_rpc::make_member_method(&WalletNode::on_get_balance)},
+    {api::walletd::GetOnyxStatus::method(), json_rpc::make_member_method(&WalletNode::on_get_onyx_status)},
     {api::walletd::GetUnspents::method(), json_rpc::make_member_method(&WalletNode::on_get_unspent)},
     {api::walletd::GetTransfers::method(), json_rpc::make_member_method(&WalletNode::on_get_transfers)},
     {api::walletd::CreateTransaction::method(), json_rpc::make_member_method(&WalletNode::on_create_transaction)},
@@ -357,6 +358,22 @@ bool WalletNode::on_get_balance(http::Client *, http::RequestBody &&, json_rpc::
 	Height height_or_depth = api::ErrorWrongHeight::fix_height_or_depth(
 	    request.height_or_depth, get_wallet_state().get_tip_height(), false, false, 128);
 	response = get_wallet_state().get_balance(request.address, height_or_depth);
+	return true;
+}
+
+bool WalletNode::on_get_onyx_status(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::walletd::GetOnyxStatus::Request &&request, api::walletd::GetOnyxStatus::Response &response) {
+	check_wallet_open();
+	std::array<uint8_t, 16> network{};
+	std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+	std::array<uint8_t, 91> address{};
+	if (!get_wallet_state().get_wallet().get_onyx_address(network, request.address_index, &address))
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Onyx address unavailable for this wallet/build");
+	response.address = common::to_hex(address.data(), address.size());
+	response.balance = get_wallet_state().get_onyx_balance();
+	response.note_count = get_wallet_state().get_onyx_note_count();
+	std::copy(get_wallet_state().get_onyx_root().begin(), get_wallet_state().get_onyx_root().end(),
+	    response.commitment_root.data);
 	return true;
 }
 

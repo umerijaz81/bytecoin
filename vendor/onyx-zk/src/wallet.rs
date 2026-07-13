@@ -1,10 +1,20 @@
 //! Deterministic Onyx wallet scanning and witness state.
 
-use crate::bridge::AuthorizedBridge;
-use crate::keys::{EncryptedNote, KeyBundle};
+use ff::FromUniformBytes;
+use group::{Curve, GroupEncoding};
+use halo2_proofs::pasta::Fp;
+use pasta_curves::pallas;
+use rand::RngCore;
+
+use crate::bridge::{AuthorizedBridge, BridgePreimage};
+use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
+use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
+use crate::proof::{create_bridge_proof, BridgeWitness, BRIDGE_BACKEND};
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
 use crate::transaction::{AuthorizedTransaction, PublicOutput};
+use crate::types::NATIVE_ASSET_ID;
 use crate::types::{write_varint, DecodeError, NotePlaintext, Reader};
+use crate::value_commitment_circuit::value_commitment_bytes;
 
 const WALLET_SNAPSHOT_VERSION: u8 = 1;
 const MAX_WALLET_LEAVES: usize = 1_000_000;
@@ -25,6 +35,110 @@ pub enum WalletError {
     Tree(WitnessError),
     Note(DecodeError),
     Snapshot,
+}
+
+#[derive(Debug)]
+pub enum WalletBuildError {
+    InvalidValue,
+    InvalidRecipient,
+    Crypto,
+}
+
+pub fn build_bridge(
+    sender: &KeyBundle,
+    recipient: &RecipientAddress,
+    expiry_height: u64,
+    fee: u64,
+    legacy_amount: u64,
+    legacy_stack_index: u64,
+    legacy_key_image: [u8; 32],
+    memo: Vec<u8>,
+    circuit_k: u32,
+) -> Result<AuthorizedBridge, WalletBuildError> {
+    let note_value = legacy_amount
+        .checked_sub(fee)
+        .filter(|value| *value != 0)
+        .ok_or(WalletBuildError::InvalidValue)?;
+    if recipient.network_id
+        != sender
+            .full_viewing_key()
+            .map_err(|_| WalletBuildError::Crypto)?
+            .network_id()
+    {
+        return Err(WalletBuildError::InvalidRecipient);
+    }
+    let mut rho_wide = [0u8; 64];
+    let mut randomness_wide = [0u8; 64];
+    let mut value_randomness_wide = [0u8; 64];
+    rand::rngs::OsRng.fill_bytes(&mut rho_wide);
+    rand::rngs::OsRng.fill_bytes(&mut randomness_wide);
+    rand::rngs::OsRng.fill_bytes(&mut value_randomness_wide);
+    let rho = CanonicalField::from_field(Fp::from_uniform_bytes(&rho_wide));
+    let randomness = CanonicalField::from_field(Fp::from_uniform_bytes(&randomness_wide));
+    let value_randomness = Fp::from_uniform_bytes(&value_randomness_wide);
+    let note = NotePlaintext {
+        network_id: recipient.network_id,
+        program_id: [0; 32],
+        asset_id: NATIVE_ASSET_ID,
+        value: note_value,
+        diversifier: recipient.diversifier,
+        transmission_key: recipient.transmission_key,
+        spend_authority_key: recipient.spend_authority_key,
+        rho,
+        randomness,
+        memo,
+    };
+    let commitment = note
+        .commitment()
+        .map_err(|_| WalletBuildError::InvalidRecipient)?;
+    let value_commitment_bytes = value_commitment_bytes(note_value, value_randomness);
+    let value_commitment =
+        Option::<pallas::Point>::from(pallas::Point::from_bytes(&value_commitment_bytes))
+            .ok_or(WalletBuildError::Crypto)?
+            .to_affine();
+    let mut preimage = BridgePreimage {
+        network_id: recipient.network_id,
+        expiry_height,
+        fee,
+        legacy_amount,
+        legacy_stack_index,
+        legacy_key_image,
+        output: PublicOutput {
+            commitment,
+            value_commitment: value_commitment_bytes,
+            ephemeral_key: [0; 32],
+            ciphertext: vec![],
+            outgoing_ciphertext: vec![],
+        },
+    };
+    let binding = preimage
+        .encryption_binding()
+        .map_err(|_| WalletBuildError::Crypto)?;
+    let encrypted = sender
+        .encrypt_note(&note, recipient, binding, 0)
+        .map_err(|_| WalletBuildError::Crypto)?;
+    preimage.output.ephemeral_key = encrypted.ephemeral_key;
+    preimage.output.ciphertext = encrypted.ciphertext;
+    preimage.output.outgoing_ciphertext = encrypted.outgoing_ciphertext;
+    let note_inputs: [Fp; NOTE_COMMITMENT_INPUTS] = note
+        .commitment_inputs()
+        .map_err(|_| WalletBuildError::Crypto)?;
+    let proof = create_bridge_proof(
+        circuit_k,
+        &preimage,
+        &BridgeWitness {
+            output_note: note_inputs,
+            output_value_randomness: value_randomness,
+            output_value_commitment: value_commitment,
+        },
+    )
+    .map_err(|_| WalletBuildError::Crypto)?;
+    Ok(AuthorizedBridge {
+        preimage,
+        backend_id: BRIDGE_BACKEND.to_owned(),
+        proof,
+        ownership_signature: [0; 64],
+    })
 }
 
 impl From<WitnessError> for WalletError {
@@ -161,7 +275,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
 
     pub fn scan_transfer(
         &mut self,
-        keys: &KeyBundle,
+        keys: &FullViewingKey,
         transaction: &AuthorizedTransaction,
     ) -> Result<(), WalletError> {
         if transaction.preimage.network_id != self.network_id {
@@ -193,7 +307,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
 
     pub fn scan_bridge(
         &mut self,
-        keys: &KeyBundle,
+        keys: &FullViewingKey,
         bridge: &AuthorizedBridge,
     ) -> Result<(), WalletError> {
         if bridge.preimage.network_id != self.network_id {
@@ -208,7 +322,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
 
     fn scan_outputs(
         &mut self,
-        keys: &KeyBundle,
+        keys: &FullViewingKey,
         outputs: &[PublicOutput],
         binding: [u8; 32],
     ) -> Result<(), WalletError> {
@@ -259,6 +373,8 @@ mod tests {
         let network = [9; NETWORK_ID_BYTES];
         let receiver = MasterSeed::new([2; 32]).derive(network).unwrap();
         let sender = MasterSeed::new([3; 32]).derive(network).unwrap();
+        let receiver_view = receiver.full_viewing_key().unwrap();
+        let sender_view = sender.full_viewing_key().unwrap();
         let address = receiver.address(0).unwrap();
         let note = NotePlaintext {
             network_id: network,
@@ -314,7 +430,7 @@ mod tests {
         };
 
         let mut wallet = WalletState::<8>::new(network);
-        wallet.scan_transfer(&receiver, &transaction).unwrap();
+        wallet.scan_transfer(&receiver_view, &transaction).unwrap();
         assert_eq!(wallet.leaf_count(), 1);
         assert_eq!(wallet.notes().len(), 1);
         assert_eq!(wallet.notes()[0].plaintext, note);
@@ -372,8 +488,91 @@ mod tests {
         assert!(!ffi_snapshot_ptr.is_null());
         crate::onyx_free(ffi_snapshot_ptr, ffi_snapshot_len);
 
+        let mut viewing_bytes = [0u8; crate::keys::FULL_VIEWING_KEY_BYTES];
+        assert_eq!(
+            crate::onyx_full_viewing_key(
+                [2u8; 32].as_ptr(),
+                network.as_ptr(),
+                viewing_bytes.as_mut_ptr(),
+            ),
+            0
+        );
+        ffi_snapshot_ptr = std::ptr::null_mut();
+        ffi_snapshot_len = 0;
+        ffi_balance = 0;
+        ffi_note_count = 0;
+        assert_eq!(
+            crate::onyx_wallet_scan_viewing(
+                std::ptr::null(),
+                0,
+                viewing_bytes.as_ptr(),
+                viewing_bytes.len(),
+                0,
+                encoded_transaction.as_ptr(),
+                encoded_transaction.len(),
+                &mut ffi_snapshot_ptr,
+                &mut ffi_snapshot_len,
+                &mut ffi_balance,
+                &mut ffi_note_count,
+                ffi_root.as_mut_ptr(),
+            ),
+            1
+        );
+        assert_eq!((ffi_balance, ffi_note_count), (25, 1));
+        crate::onyx_free(ffi_snapshot_ptr, ffi_snapshot_len);
+
+        let mut unsigned_bridge_ptr = std::ptr::null_mut();
+        let mut unsigned_bridge_len = 0usize;
+        let mut ownership_sighash = [0u8; 32];
+        assert_eq!(
+            crate::onyx_wallet_create_bridge(
+                [3u8; 32].as_ptr(),
+                address_bytes.as_ptr(),
+                100,
+                5,
+                30,
+                42,
+                [7u8; 32].as_ptr(),
+                b"bridge memo".as_ptr(),
+                b"bridge memo".len(),
+                13,
+                &mut unsigned_bridge_ptr,
+                &mut unsigned_bridge_len,
+                ownership_sighash.as_mut_ptr(),
+            ),
+            1
+        );
+        let unsigned_bridge =
+            unsafe { std::slice::from_raw_parts(unsigned_bridge_ptr, unsigned_bridge_len) }
+                .to_vec();
+        crate::onyx_free(unsigned_bridge_ptr, unsigned_bridge_len);
+        let bridge = AuthorizedBridge::decode(&unsigned_bridge).unwrap();
+        crate::proof::verify_bridge_proof(13, &bridge).unwrap();
+        assert_eq!(ownership_sighash, bridge.ownership_sighash().unwrap());
+        let mut finalized_ptr = std::ptr::null_mut();
+        let mut finalized_len = 0usize;
+        assert_eq!(
+            crate::onyx_wallet_finalize_bridge(
+                unsigned_bridge.as_ptr(),
+                unsigned_bridge.len(),
+                [9u8; 64].as_ptr(),
+                &mut finalized_ptr,
+                &mut finalized_len,
+            ),
+            1
+        );
+        let finalized =
+            unsafe { std::slice::from_raw_parts(finalized_ptr, finalized_len) }.to_vec();
+        crate::onyx_free(finalized_ptr, finalized_len);
+        assert_eq!(
+            AuthorizedBridge::decode(&finalized)
+                .unwrap()
+                .ownership_signature,
+            [9; 64]
+        );
+
         let mut foreign = WalletState::<8>::new(network);
-        foreign.scan_transfer(&sender, &transaction).unwrap();
+        foreign.scan_transfer(&sender_view, &transaction).unwrap();
         assert_eq!(foreign.leaf_count(), 1);
         assert!(foreign.notes().is_empty());
 
@@ -397,7 +596,7 @@ mod tests {
             spend_signatures: vec![[0; 64]],
             binding_signature: [0; 64],
         };
-        wallet.scan_transfer(&receiver, &spend).unwrap();
+        wallet.scan_transfer(&receiver_view, &spend).unwrap();
         assert!(wallet.notes()[0].spent);
         assert_ne!(nullifier, Nullifier([0; 32]));
         let rolled_back = WalletState::<8>::decode_snapshot(&snapshot).unwrap();

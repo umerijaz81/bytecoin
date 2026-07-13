@@ -94,6 +94,10 @@ public:
 
 	const Hash &get_view_seed() const { return m_view_seed; }
 	const Hash &get_onyx_seed() const { return m_seed; }
+	bool get_onyx_address(
+	    const std::array<uint8_t, 16> &network, uint32_t index, std::array<uint8_t, 91> *address) const;
+	bool get_onyx_full_viewing_key(
+	    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key) const;
 
 	virtual void backup(const std::string &dst_name, const std::string &pass) const = 0;
 

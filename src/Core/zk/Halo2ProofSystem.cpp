@@ -140,6 +140,12 @@ bool Halo2ProofSystem::wallet_address(const std::array<uint8_t, 32> &seed,
 	       onyx_wallet_address(seed.data(), network.data(), address_index, address->data()) == 0;
 }
 
+bool Halo2ProofSystem::full_viewing_key(const std::array<uint8_t, 32> &seed,
+    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key) {
+	return viewing_key != nullptr &&
+	       onyx_full_viewing_key(seed.data(), network.data(), viewing_key->data()) == 0;
+}
+
 bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
     const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
     BinaryArray *next_snapshot, WalletScanResult *result) {
@@ -167,6 +173,32 @@ bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
+    uint8_t envelope_type, const BinaryArray &encoded, BinaryArray *next_snapshot, WalletScanResult *result) {
+	if (viewing_key.size() != 177 || encoded.empty() || next_snapshot == nullptr || result == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len = 0;
+	WalletScanResult scanned;
+	const int rc = onyx_wallet_scan_viewing(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(),
+	    viewing_key.data(), viewing_key.size(), envelope_type, encoded.data(), encoded.size(), &next_ptr,
+	    &next_len, &scanned.balance, &scanned.note_count, scanned.root.data());
+	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	*result = scanned;
+	return true;
+}
+
 bool Halo2ProofSystem::wallet_summary(const BinaryArray &snapshot, WalletScanResult *result) {
 	if (snapshot.empty() || result == nullptr)
 		return false;
@@ -175,6 +207,56 @@ bool Halo2ProofSystem::wallet_summary(const BinaryArray &snapshot, WalletScanRes
 	        summary.root.data()) != 1)
 		return false;
 	*result = summary;
+	return true;
+}
+
+bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
+    const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
+    uint64_t legacy_amount, uint64_t legacy_stack_index,
+    const std::array<uint8_t, 32> &legacy_key_image, const BinaryArray &memo, uint32_t circuit_k,
+    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash) {
+	if (unsigned_bridge == nullptr || ownership_sighash == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	const int rc = onyx_wallet_create_bridge(seed.data(), recipient.data(), expiry_height, fee, legacy_amount,
+	    legacy_stack_index, legacy_key_image.data(), memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k,
+	    &ptr, &len, ownership_sighash->data());
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		unsigned_bridge->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
+	return true;
+}
+
+bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
+    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge) {
+	if (unsigned_bridge.empty() || finalized_bridge == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	const int rc = onyx_wallet_finalize_bridge(unsigned_bridge.data(), unsigned_bridge.size(),
+	    ownership_signature.data(), &ptr, &len);
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		finalized_bridge->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
 	return true;
 }
 

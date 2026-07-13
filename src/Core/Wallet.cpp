@@ -5,6 +5,9 @@
 #include "TransactionBuilder.hpp"
 #include "WalletSerializationV1.hpp"
 #include "WalletState.hpp"
+#ifdef onyx_USE_ZK
+#include "zk/Halo2ProofSystem.hpp"
+#endif
 #include "common/BIPs.hpp"
 #include "common/Math.hpp"
 #include "common/MemoryStreams.hpp"
@@ -27,6 +30,32 @@ using namespace crypto;
 std::string Wallet::net_append(const std::string &net) { return net == "main" ? std::string{} : "_" + net + "net"; }
 
 Wallet::Wallet(const Currency &currency, logging::ILogger &log) : m_currency(currency), m_log(log, "Wallet") {}
+
+bool Wallet::get_onyx_address(
+    const std::array<uint8_t, 16> &network, uint32_t index, std::array<uint8_t, 91> *address) const {
+#ifdef onyx_USE_ZK
+	if (m_seed == Hash{} || address == nullptr)
+		return false;
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_seed.data, m_seed.data + seed.size(), seed.begin());
+	return zk::Halo2ProofSystem::wallet_address(seed, network, index, address);
+#else
+	return false;
+#endif
+}
+
+bool Wallet::get_onyx_full_viewing_key(
+    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key) const {
+#ifdef onyx_USE_ZK
+	if (m_seed == Hash{} || viewing_key == nullptr)
+		return false;
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_seed.data, m_seed.data + seed.size(), seed.begin());
+	return zk::Halo2ProofSystem::full_viewing_key(seed, network, viewing_key);
+#else
+	return false;
+#endif
+}
 
 AccountAddress Wallet::get_first_address() const { return record_to_address(0); }
 

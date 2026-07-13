@@ -335,6 +335,17 @@ void ser_members(api::walletd::GetBalance::Request &v, ISeria &s) {
 	seria_kv("height_or_depth", v.height_or_depth, s);
 }
 
+void ser_members(api::walletd::GetOnyxStatus::Request &v, ISeria &s) {
+	seria_kv("address_index", v.address_index, s);
+}
+
+void ser_members(api::walletd::GetOnyxStatus::Response &v, ISeria &s) {
+	seria_kv("address", v.address, s);
+	seria_kv("balance", v.balance, s);
+	seria_kv("note_count", v.note_count, s);
+	seria_kv("commitment_root", v.commitment_root, s);
+}
+
 void ser_members(api::walletd::GetUnspents::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("height_or_depth", v.height_or_depth, s);

@@ -76,10 +76,22 @@ public:
 	static bool verify_bridge(const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta);
 	static bool wallet_address(const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, uint32_t address_index, std::array<uint8_t, 91> *address);
+	static bool full_viewing_key(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key);
 	static bool wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
 	    BinaryArray *next_snapshot, WalletScanResult *result);
+	static bool wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
+	    uint8_t envelope_type, const BinaryArray &encoded, BinaryArray *next_snapshot,
+	    WalletScanResult *result);
 	static bool wallet_summary(const BinaryArray &snapshot, WalletScanResult *result);
+	static bool wallet_create_bridge(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
+	    uint64_t legacy_amount, uint64_t legacy_stack_index,
+	    const std::array<uint8_t, 32> &legacy_key_image, const BinaryArray &memo, uint32_t circuit_k,
+	    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash);
+	static bool wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
+	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge);
 };
 
 }  // namespace zk

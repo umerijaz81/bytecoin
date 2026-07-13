@@ -29,6 +29,7 @@ pub enum KeyError {
     Decode(DecodeError),
     CommitmentMismatch,
     NetworkMismatch,
+    InvalidViewingKey,
 }
 
 impl From<DecodeError> for KeyError {
@@ -74,6 +75,18 @@ pub struct KeyBundle {
     nullifier: CanonicalField,
 }
 
+pub struct FullViewingKey {
+    network_id: [u8; NETWORK_ID_BYTES],
+    incoming: Zeroizing<[u8; 32]>,
+    outgoing: Zeroizing<[u8; 32]>,
+    diversifier: Zeroizing<[u8; 32]>,
+    nullifier: CanonicalField,
+    spend_authority_key: [u8; 32],
+}
+
+const FULL_VIEWING_KEY_VERSION: u8 = 1;
+pub const FULL_VIEWING_KEY_BYTES: usize = 1 + NETWORK_ID_BYTES + 32 * 5;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecipientAddress {
     pub network_id: [u8; NETWORK_ID_BYTES],
@@ -97,23 +110,7 @@ impl KeyBundle {
     }
 
     pub fn address(&self, index: u32) -> Result<RecipientAddress, KeyError> {
-        let incoming = StaticSecret::from(*self.incoming);
-        let transmission_key = PublicKey::from(&incoming).to_bytes();
-        let spend_authority_key = self.spend_authority_key()?;
-        let hk = Hkdf::<Sha256>::new(Some(KEY_DOMAIN), self.diversifier.as_ref());
-        let mut diversifier = [0u8; DIVERSIFIER_BYTES];
-        let mut info = Vec::with_capacity(NETWORK_ID_BYTES + 16);
-        info.extend_from_slice(&self.network_id);
-        info.extend_from_slice(b"address");
-        info.extend_from_slice(&index.to_le_bytes());
-        hk.expand(&info, &mut diversifier)
-            .map_err(|_| KeyError::Derivation)?;
-        Ok(RecipientAddress {
-            network_id: self.network_id,
-            diversifier,
-            transmission_key,
-            spend_authority_key,
-        })
+        self.full_viewing_key()?.address(index)
     }
 
     pub fn nullifier_key(&self) -> CanonicalField {
@@ -122,6 +119,17 @@ impl KeyBundle {
 
     pub fn outgoing_viewing_key(&self) -> [u8; 32] {
         *self.outgoing
+    }
+
+    pub fn full_viewing_key(&self) -> Result<FullViewingKey, KeyError> {
+        Ok(FullViewingKey {
+            network_id: self.network_id,
+            incoming: Zeroizing::new(*self.incoming),
+            outgoing: Zeroizing::new(*self.outgoing),
+            diversifier: Zeroizing::new(*self.diversifier),
+            nullifier: self.nullifier,
+            spend_authority_key: self.spend_authority_key()?,
+        })
     }
 
     pub fn spend_key_fingerprint(&self) -> Result<[u8; 32], KeyError> {
@@ -158,6 +166,96 @@ impl KeyBundle {
         tx_binding: [u8; 32],
         output_index: u32,
     ) -> Result<NotePlaintext, KeyError> {
+        self.full_viewing_key()?.decrypt_received_note(
+            encrypted,
+            commitment,
+            tx_binding,
+            output_index,
+        )
+    }
+
+    pub fn decrypt_sent_note(
+        &self,
+        encrypted: &EncryptedNote,
+        commitment: CanonicalField,
+        tx_binding: [u8; 32],
+        output_index: u32,
+    ) -> Result<NotePlaintext, KeyError> {
+        self.full_viewing_key()?
+            .decrypt_sent_note(encrypted, commitment, tx_binding, output_index)
+    }
+}
+
+impl FullViewingKey {
+    pub fn encode(&self) -> [u8; FULL_VIEWING_KEY_BYTES] {
+        let mut out = [0u8; FULL_VIEWING_KEY_BYTES];
+        out[0] = FULL_VIEWING_KEY_VERSION;
+        out[1..17].copy_from_slice(&self.network_id);
+        out[17..49].copy_from_slice(self.incoming.as_ref());
+        out[49..81].copy_from_slice(self.outgoing.as_ref());
+        out[81..113].copy_from_slice(self.diversifier.as_ref());
+        out[113..145].copy_from_slice(&self.nullifier.bytes());
+        out[145..177].copy_from_slice(&self.spend_authority_key);
+        out
+    }
+
+    pub fn decode(encoded: &[u8]) -> Result<Self, KeyError> {
+        if encoded.len() != FULL_VIEWING_KEY_BYTES || encoded[0] != FULL_VIEWING_KEY_VERSION {
+            return Err(KeyError::InvalidViewingKey);
+        }
+        let network_id = encoded[1..17].try_into().unwrap();
+        let incoming = encoded[17..49].try_into().unwrap();
+        let outgoing = encoded[49..81].try_into().unwrap();
+        let diversifier = encoded[81..113].try_into().unwrap();
+        let nullifier = CanonicalField::from_bytes(encoded[113..145].try_into().unwrap())
+            .ok_or(KeyError::InvalidViewingKey)?;
+        let spend_authority_key: [u8; 32] = encoded[145..177].try_into().unwrap();
+        VerificationKey::<SpendAuth>::try_from(spend_authority_key)
+            .map_err(|_| KeyError::InvalidViewingKey)?;
+        Ok(Self {
+            network_id,
+            incoming: Zeroizing::new(incoming),
+            outgoing: Zeroizing::new(outgoing),
+            diversifier: Zeroizing::new(diversifier),
+            nullifier,
+            spend_authority_key,
+        })
+    }
+
+    pub fn network_id(&self) -> [u8; NETWORK_ID_BYTES] {
+        self.network_id
+    }
+
+    pub fn nullifier_key(&self) -> CanonicalField {
+        self.nullifier
+    }
+
+    pub fn address(&self, index: u32) -> Result<RecipientAddress, KeyError> {
+        let incoming = StaticSecret::from(*self.incoming);
+        let transmission_key = PublicKey::from(&incoming).to_bytes();
+        let hk = Hkdf::<Sha256>::new(Some(KEY_DOMAIN), self.diversifier.as_ref());
+        let mut diversifier = [0u8; DIVERSIFIER_BYTES];
+        let mut info = Vec::with_capacity(NETWORK_ID_BYTES + 16);
+        info.extend_from_slice(&self.network_id);
+        info.extend_from_slice(b"address");
+        info.extend_from_slice(&index.to_le_bytes());
+        hk.expand(&info, &mut diversifier)
+            .map_err(|_| KeyError::Derivation)?;
+        Ok(RecipientAddress {
+            network_id: self.network_id,
+            diversifier,
+            transmission_key,
+            spend_authority_key: self.spend_authority_key,
+        })
+    }
+
+    pub fn decrypt_received_note(
+        &self,
+        encrypted: &EncryptedNote,
+        commitment: CanonicalField,
+        tx_binding: [u8; 32],
+        output_index: u32,
+    ) -> Result<NotePlaintext, KeyError> {
         let secret = StaticSecret::from(*self.incoming);
         let shared = secret.diffie_hellman(&PublicKey::from(encrypted.ephemeral_key));
         if shared.as_bytes() == &[0u8; 32] {
@@ -183,7 +281,7 @@ impl KeyBundle {
             plaintext,
             self.network_id,
             PublicKey::from(&secret).to_bytes(),
-            self.spend_authority_key()?,
+            self.spend_authority_key,
             commitment,
         )
     }
@@ -427,6 +525,18 @@ mod tests {
         assert_ne!(a.address(0), other.address(0));
         assert_eq!(a.nullifier_key(), b.nullifier_key());
         assert_ne!(a.nullifier_key(), other.nullifier_key());
+        let viewing = a.full_viewing_key().unwrap();
+        let encoded = viewing.encode();
+        let restored = FullViewingKey::decode(&encoded).unwrap();
+        assert_eq!(restored.network_id(), [1; NETWORK_ID_BYTES]);
+        assert_eq!(restored.address(7), a.address(7));
+        assert_eq!(restored.nullifier_key(), a.nullifier_key());
+        let mut wrong_version = encoded;
+        wrong_version[0] += 1;
+        assert!(matches!(
+            FullViewingKey::decode(&wrong_version),
+            Err(KeyError::InvalidViewingKey)
+        ));
     }
 
     #[test]

@@ -550,6 +550,36 @@ pub extern "C" fn onyx_wallet_address(
 }
 
 #[no_mangle]
+pub extern "C" fn onyx_full_viewing_key(
+    seed: *const u8,
+    network: *const u8,
+    viewing_key_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if seed.is_null() || network.is_null() || viewing_key_out.is_null() {
+            return -1;
+        }
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .expect("fixed seed length");
+        let network: [u8; 16] = unsafe { slice::from_raw_parts(network, 16) }
+            .try_into()
+            .expect("fixed network length");
+        let viewing = match keys::MasterSeed::new(seed)
+            .derive(network)
+            .and_then(|keys| keys.full_viewing_key())
+        {
+            Ok(viewing) => viewing.encode(),
+            Err(_) => return -2,
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(viewing.as_ptr(), viewing_key_out, viewing.len());
+        }
+        0
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_wallet_scan(
     snapshot: *const u8,
     snapshot_len: usize,
@@ -592,10 +622,102 @@ pub extern "C" fn onyx_wallet_scan(
         let network: [u8; 16] = unsafe { slice::from_raw_parts(expected_network, 16) }
             .try_into()
             .expect("fixed network length");
-        let keys = match keys::MasterSeed::new(seed).derive(network) {
+        let keys = match keys::MasterSeed::new(seed)
+            .derive(network)
+            .and_then(|keys| keys.full_viewing_key())
+        {
             Ok(keys) => keys,
             Err(_) => return -2,
         };
+        let mut wallet = if snapshot_len == 0 {
+            wallet::WalletState::<32>::new(network)
+        } else {
+            match wallet::WalletState::<32>::decode_snapshot(unsafe {
+                slice::from_raw_parts(snapshot, snapshot_len)
+            }) {
+                Ok(wallet) => wallet,
+                Err(_) => return -2,
+            }
+        };
+        let encoded = unsafe { slice::from_raw_parts(encoded, encoded_len) };
+        let scanned = match envelope_type {
+            0 => transaction::AuthorizedTransaction::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|transaction| wallet.scan_transfer(&keys, &transaction).map_err(|_| ())),
+            1 => bridge::AuthorizedBridge::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|bridge| wallet.scan_bridge(&keys, &bridge).map_err(|_| ())),
+            _ => return -3,
+        };
+        if scanned.is_err() {
+            return -2;
+        }
+        let balance = match wallet.unspent_balance() {
+            Ok(balance) => balance,
+            Err(_) => return -2,
+        };
+        let root = wallet.root().bytes();
+        let encoded = match wallet.encode_snapshot() {
+            Ok(encoded) if encoded.len() <= MAX_STATE_SNAPSHOT_BYTES => encoded,
+            _ => return -6,
+        };
+        let note_count = wallet.notes().len();
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+            *balance_out = balance;
+            *note_count_out = note_count;
+            std::ptr::copy_nonoverlapping(root.as_ptr(), root_out, 32);
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_scan_viewing(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    viewing_key: *const u8,
+    viewing_key_len: usize,
+    envelope_type: u8,
+    encoded: *const u8,
+    encoded_len: usize,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+    balance_out: *mut u64,
+    note_count_out: *mut usize,
+    root_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if viewing_key.is_null()
+            || viewing_key_len != keys::FULL_VIEWING_KEY_BYTES
+            || encoded.is_null()
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+            || balance_out.is_null()
+            || note_count_out.is_null()
+            || root_out.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || (snapshot.is_null() && snapshot_len != 0)
+        {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+            *balance_out = 0;
+            *note_count_out = 0;
+        }
+        let keys = match keys::FullViewingKey::decode(unsafe {
+            slice::from_raw_parts(viewing_key, viewing_key_len)
+        }) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let network = keys.network_id();
         let mut wallet = if snapshot_len == 0 {
             wallet::WalletState::<32>::new(network)
         } else {
@@ -673,6 +795,131 @@ pub extern "C" fn onyx_wallet_summary(
             *balance_out = balance;
             *note_count_out = wallet.notes().len();
             std::ptr::copy_nonoverlapping(wallet.root().bytes().as_ptr(), root_out, 32);
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_bridge(
+    seed: *const u8,
+    recipient: *const u8,
+    expiry_height: u64,
+    fee: u64,
+    legacy_amount: u64,
+    legacy_stack_index: u64,
+    legacy_key_image: *const u8,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    bridge_out: *mut *mut u8,
+    bridge_len_out: *mut usize,
+    ownership_sighash_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if seed.is_null()
+            || recipient.is_null()
+            || legacy_key_image.is_null()
+            || bridge_out.is_null()
+            || bridge_len_out.is_null()
+            || ownership_sighash_out.is_null()
+            || memo_len > types::MAX_MEMO_BYTES
+            || (memo.is_null() && memo_len != 0)
+            || !(10..=20).contains(&circuit_k)
+        {
+            return -1;
+        }
+        unsafe {
+            *bridge_out = std::ptr::null_mut();
+            *bridge_len_out = 0;
+        }
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .expect("fixed seed length");
+        let recipient = unsafe { slice::from_raw_parts(recipient, 91) };
+        let address = keys::RecipientAddress {
+            network_id: recipient[0..16].try_into().unwrap(),
+            diversifier: recipient[16..27].try_into().unwrap(),
+            transmission_key: recipient[27..59].try_into().unwrap(),
+            spend_authority_key: recipient[59..91].try_into().unwrap(),
+        };
+        let sender = match keys::MasterSeed::new(seed).derive(address.network_id) {
+            Ok(sender) => sender,
+            Err(_) => return -2,
+        };
+        let bridge = match wallet::build_bridge(
+            &sender,
+            &address,
+            expiry_height,
+            fee,
+            legacy_amount,
+            legacy_stack_index,
+            unsafe { slice::from_raw_parts(legacy_key_image, 32) }
+                .try_into()
+                .unwrap(),
+            if memo_len == 0 {
+                vec![]
+            } else {
+                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+            },
+            circuit_k,
+        ) {
+            Ok(bridge) => bridge,
+            Err(_) => return -2,
+        };
+        let sighash = match bridge.ownership_sighash() {
+            Ok(sighash) => sighash,
+            Err(_) => return -2,
+        };
+        let encoded = match bridge.encode() {
+            Ok(encoded) if encoded.len() <= MAX_AUTHORIZED_TRANSACTION_BYTES => encoded,
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *bridge_out = ptr;
+            *bridge_len_out = len;
+            std::ptr::copy_nonoverlapping(sighash.as_ptr(), ownership_sighash_out, 32);
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_finalize_bridge(
+    unsigned_bridge: *const u8,
+    unsigned_bridge_len: usize,
+    ownership_signature: *const u8,
+    bridge_out: *mut *mut u8,
+    bridge_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if unsigned_bridge.is_null()
+            || ownership_signature.is_null()
+            || bridge_out.is_null()
+            || bridge_len_out.is_null()
+            || unsigned_bridge_len == 0
+            || unsigned_bridge_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+        {
+            return -1;
+        }
+        let mut bridge = match bridge::AuthorizedBridge::decode(unsafe {
+            slice::from_raw_parts(unsigned_bridge, unsigned_bridge_len)
+        }) {
+            Ok(bridge) => bridge,
+            Err(_) => return -2,
+        };
+        bridge.ownership_signature = unsafe { slice::from_raw_parts(ownership_signature, 64) }
+            .try_into()
+            .unwrap();
+        let encoded = match bridge.encode() {
+            Ok(encoded) => encoded,
+            Err(_) => return -2,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *bridge_out = ptr;
+            *bridge_len_out = len;
         }
         1
     })

@@ -91,6 +91,10 @@ int onyx_verify_bridge(
  * spend-authority[32]. */
 int onyx_wallet_address(const uint8_t seed[32], const uint8_t network[16], uint32_t address_index,
                         uint8_t address_out[91]);
+/* Canonical full viewing key (version + network + incoming/outgoing/diversifier/nullifier/public
+ * spend-authority material); contains no spend scalar. */
+int onyx_full_viewing_key(const uint8_t seed[32], const uint8_t network[16],
+                          uint8_t viewing_key_out[177]);
 
 /* Scan one confirmed transfer (type 0) or bridge (type 1), append every commitment, recover owned
  * notes, mark spends, and return a canonical wallet snapshot. */
@@ -100,8 +104,25 @@ int onyx_wallet_scan(
     const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out,
     uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
+int onyx_wallet_scan_viewing(
+    const uint8_t *snapshot, size_t snapshot_len,
+    const uint8_t *viewing_key, size_t viewing_key_len, uint8_t envelope_type,
+    const uint8_t *encoded, size_t encoded_len,
+    uint8_t **snapshot_out, size_t *snapshot_len_out,
+    uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
 int onyx_wallet_summary(const uint8_t *snapshot, size_t snapshot_len,
                         uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
+
+/* Build a proved/encrypted bridge with a zero ownership signature, returning the 32-byte message
+ * the legacy wallet must sign. Finalize by injecting the resulting 64-byte CryptoNote signature. */
+int onyx_wallet_create_bridge(
+    const uint8_t seed[32], const uint8_t recipient[91], uint64_t expiry_height,
+    uint64_t fee, uint64_t legacy_amount, uint64_t legacy_stack_index,
+    const uint8_t legacy_key_image[32], const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
+    uint8_t **bridge_out, size_t *bridge_len_out, uint8_t ownership_sighash_out[32]);
+int onyx_wallet_finalize_bridge(
+    const uint8_t *unsigned_bridge, size_t unsigned_bridge_len,
+    const uint8_t ownership_signature[64], uint8_t **bridge_out, size_t *bridge_len_out);
 
 /* Release a buffer previously returned by this library. */
 void onyx_free(uint8_t *ptr, size_t len);
