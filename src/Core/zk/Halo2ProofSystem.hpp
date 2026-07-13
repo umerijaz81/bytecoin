@@ -41,6 +41,15 @@ public:
 		VerifiedTransferDelta funding;
 		std::array<uint8_t, 32> program_id{};
 	};
+	struct VerifiedTokenIssuance {
+		std::array<uint8_t, 16> network{};
+		std::array<uint8_t, 32> anchor{};
+		uint64_t expiry_height = 0;
+		std::array<uint8_t, 32> program_id{};
+		uint64_t sequence = 0;
+		uint64_t issued_amount = 0;
+		std::vector<std::array<uint8_t, 32>> commitments;
+	};
 	struct WalletScanResult {
 		uint64_t balance = 0;
 		size_t note_count = 0;
@@ -89,6 +98,11 @@ public:
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
 	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
 	    BinaryArray *next_snapshot, uint64_t *fee, std::array<uint8_t, 32> *program_id);
+	static bool verify_token_issuance(const BinaryArray &encoded, uint32_t merkle_depth,
+	    uint32_t circuit_k, VerifiedTokenIssuance *issuance);
+	static bool verify_apply_token_issuance(const BinaryArray &snapshot, const BinaryArray &encoded,
+	    uint32_t merkle_depth, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
+	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedTokenIssuance *issuance);
 	static bool verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
 	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
@@ -114,6 +128,10 @@ public:
 	    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash);
 	static bool wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
 	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge);
+	static bool wallet_create_token_issuance(const BinaryArray &consensus_snapshot,
+	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
+	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t expiry_height,
+	    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *issuance, uint64_t *sequence);
 	static bool wallet_create_transfer(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 91> &recipient, uint64_t amount, uint64_t fee, uint64_t expiry_height,
 	    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *transaction);

@@ -157,6 +157,53 @@ bool Halo2ProofSystem::verify_apply_program_deployment(const BinaryArray &snapsh
 	return true;
 }
 
+bool Halo2ProofSystem::verify_token_issuance(const BinaryArray &encoded, uint32_t merkle_depth,
+    uint32_t circuit_k, VerifiedTokenIssuance *issuance) {
+	if (encoded.empty() || issuance == nullptr)
+		return false;
+	VerifiedTokenIssuance result;
+	std::array<uint8_t, 32 * 2> commitments{};
+	size_t commitment_count = 0;
+	const int rc = onyx_verify_and_extract_token_issuance(encoded.data(), encoded.size(), merkle_depth,
+	    circuit_k, result.network.data(), result.anchor.data(), &result.expiry_height, result.program_id.data(),
+	    &result.sequence, &result.issued_amount, commitments.data(), 2, &commitment_count);
+	if (rc != 1 || commitment_count > 2)
+		return false;
+	result.commitments.resize(commitment_count);
+	for (size_t i = 0; i != commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.commitments[i].begin());
+	*issuance = std::move(result);
+	return true;
+}
+
+bool Halo2ProofSystem::verify_apply_token_issuance(const BinaryArray &snapshot, const BinaryArray &encoded,
+    uint32_t merkle_depth, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
+    uint64_t block_height, BinaryArray *next_snapshot, VerifiedTokenIssuance *issuance) {
+	if (snapshot.empty() || encoded.empty() || next_snapshot == nullptr || issuance == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len   = 0;
+	VerifiedTokenIssuance result;
+	const int rc = onyx_verify_apply_token_issuance(snapshot.data(), snapshot.size(), encoded.data(),
+	    encoded.size(), merkle_depth, circuit_k, expected_network.data(), block_height, &next_ptr, &next_len,
+	    result.program_id.data(), &result.sequence, &result.issued_amount);
+	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	*issuance = result;
+	return true;
+}
+
 bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta) {
@@ -359,6 +406,34 @@ bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge
 		throw;
 	}
 	onyx_free(ptr, len);
+	return true;
+}
+
+bool Halo2ProofSystem::wallet_create_token_issuance(const BinaryArray &consensus_snapshot,
+    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
+    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t expiry_height,
+    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *issuance, uint64_t *sequence) {
+	if (consensus_snapshot.empty() || issuance == nullptr || sequence == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	uint64_t next_sequence = 0;
+	const int rc = onyx_wallet_create_token_issuance(consensus_snapshot.data(), consensus_snapshot.size(),
+	    seed.data(), recipient.data(), program_id.data(), issued_amount, expiry_height,
+	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k, &ptr, &len, &next_sequence);
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		issuance->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
+	*sequence = next_sequence;
 	return true;
 }
 

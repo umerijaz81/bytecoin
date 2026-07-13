@@ -104,6 +104,37 @@ pub fn verify_binding_authorization(
         .map_err(|_| AuthorizationError::InvalidBindingSignature)
 }
 
+pub fn verify_issuance_binding_authorization(
+    transaction: &TransactionPreimage,
+    issued_amount: u64,
+    backend_id: &str,
+    proof: &[u8],
+    signature: [u8; 64],
+) -> Result<(), AuthorizationError> {
+    let decode = |bytes: &[u8; 32]| {
+        Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
+            .ok_or(AuthorizationError::InvalidVerificationKey)
+    };
+    let mut binding_key =
+        crate::spend_auth_circuit::value_generator() * pallas::Scalar::from(issued_amount);
+    for spend in &transaction.spends {
+        binding_key += decode(&spend.value_commitment)?;
+    }
+    for output in &transaction.outputs {
+        binding_key -= decode(&output.value_commitment)?;
+    }
+    binding_key -=
+        crate::spend_auth_circuit::value_generator() * pallas::Scalar::from(transaction.fee);
+    let verification = VerificationKey::<Binding>::try_from(binding_key.to_bytes())
+        .map_err(|_| AuthorizationError::InvalidVerificationKey)?;
+    verification
+        .verify(
+            &binding_digest(transaction, backend_id, proof)?,
+            &Signature::from(signature),
+        )
+        .map_err(|_| AuthorizationError::InvalidBindingSignature)
+}
+
 pub struct PreparedSpendAuthorizations {
     randomized_keys: Vec<SigningKey<SpendAuth>>,
     randomizers: Vec<halo2_proofs::pasta::Fp>,

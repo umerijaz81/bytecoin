@@ -40,6 +40,9 @@ Consensus invariants:
 | Program id | `bytecoin.onyx.v6.program` |
 | Program deployment statement | `bytecoin.onyx.v6.program-deployment` |
 | Program deployment id | `bytecoin.onyx.v6.program-deployment-id` |
+| Token issuance public data | `bytecoin.onyx.v6.token-issuance-public-data` |
+| Token issuer authorization | `bytecoin.onyx.v6.token-issuer-authorization` |
+| Token issuance id | `bytecoin.onyx.v6.token-issuance-id` |
 
 The native asset identifier is
 `SHA-256("bytecoin.onyx.v6.native-asset") = 7d3423482b6e8a242fc0e5a2f6a54b36cf4f0342a953ea93ec7025cd7c955be3`.
@@ -183,6 +186,21 @@ the block's cumulative program cost, and inserts the immutable registry entry at
 Program IDs, insufficient fees, inactive windows, unknown circuit shapes, state replay, or aggregate
 cost overflow reject the entire transition.
 
+A mintable standard manifest begins with `ONXM`, version `1`, and canonically encodes the RedPallas
+issuer verification key, positive maximum supply, and bounded printable metadata. It adds one- and
+two-output issuance functions. An issuance envelope contains a zero-spend/zero-fee authorized
+transaction, public issued amount, monotonic per-program sequence, issuer signature, and one or two
+encrypted outputs. The circuit range-constrains private output values, binds their note and value
+commitments to the network and Program ID for both program and asset limbs, and proves their sum equals
+the public issued amount. The issuance binding equation adds the proved amount before subtracting
+outputs; the native and token transfer equations are unchanged.
+
+Consensus requires the active exact registry descriptor, matching manifest issuer, retained anchor,
+expiry, exact next sequence, and `previous issued + amount <= max supply`. Snapshot version 5 appends a
+sorted issuance ledger containing issued supply and next sequence for each program that has minted.
+Proof, issuer authorization, output appends, program-cost accounting, and ledger mutation are one
+atomic transition. Envelope type `3` is the only path that may increase a token program's supply.
+
 Planned audited programs after fungible-token deployment are NFT, vesting, multisignature custody,
 and atomic swap.
 
@@ -228,6 +246,10 @@ migrate with an empty registry; version-3 snapshots migrate with zero current-bl
 Native transfer and bridge circuits constrain note program ids to the zero/native program. Program
 calls are accepted only by a function-specific verifier and, during snapshot-aware application, an
 exact active registry entry.
+
+Version-5 snapshots append the capped token-issuance ledger. Earlier snapshots migrate with an empty
+ledger; nonempty entries must reference a registered mintable standard program, remain sorted and
+unique, have nonzero issued supply and next sequence, and not exceed the manifest cap.
 
 ## 10. Phase gates
 

@@ -39,6 +39,8 @@ pub mod program_deployment;
 pub mod proof;
 pub mod spend_auth_circuit;
 pub mod state;
+pub mod token_issuance;
+pub mod token_issuance_circuit;
 pub mod token_program;
 pub mod transaction;
 pub mod transfer_circuit;
@@ -244,6 +246,65 @@ fn verify_program_deployment_dispatch(
         _ => return Err(()),
     };
     result.map_err(|_| ())
+}
+
+fn verify_token_issuance_dispatch(
+    issuance: &token_issuance::AuthorizedTokenIssuance,
+    merkle_depth: u32,
+    circuit_k: u32,
+    registry: Option<&program::ProgramRegistry>,
+    block_height: u64,
+) -> Result<(), ()> {
+    if !(10..=20).contains(&circuit_k) {
+        return Err(());
+    }
+    let outputs = issuance.transaction.preimage.outputs.len();
+    match (merkle_depth, outputs, registry) {
+        (2, 1, Some(registry)) => token_issuance::verify_token_issuance::<2, 1>(
+            circuit_k,
+            issuance,
+            registry,
+            block_height,
+        ),
+        (2, 2, Some(registry)) => token_issuance::verify_token_issuance::<2, 2>(
+            circuit_k,
+            issuance,
+            registry,
+            block_height,
+        ),
+        (4, 1, Some(registry)) => token_issuance::verify_token_issuance::<4, 1>(
+            circuit_k,
+            issuance,
+            registry,
+            block_height,
+        ),
+        (4, 2, Some(registry)) => token_issuance::verify_token_issuance::<4, 2>(
+            circuit_k,
+            issuance,
+            registry,
+            block_height,
+        ),
+        (32, 1, Some(registry)) => token_issuance::verify_token_issuance::<32, 1>(
+            circuit_k,
+            issuance,
+            registry,
+            block_height,
+        ),
+        (32, 2, Some(registry)) => token_issuance::verify_token_issuance::<32, 2>(
+            circuit_k,
+            issuance,
+            registry,
+            block_height,
+        ),
+        (2, 1, None) => token_issuance::verify_token_issuance_proof::<2, 1>(circuit_k, issuance),
+        (2, 2, None) => token_issuance::verify_token_issuance_proof::<2, 2>(circuit_k, issuance),
+        (4, 1, None) => token_issuance::verify_token_issuance_proof::<4, 1>(circuit_k, issuance),
+        (4, 2, None) => token_issuance::verify_token_issuance_proof::<4, 2>(circuit_k, issuance),
+        (32, 1, None) => token_issuance::verify_token_issuance_proof::<32, 1>(circuit_k, issuance),
+        (32, 2, None) => token_issuance::verify_token_issuance_proof::<32, 2>(circuit_k, issuance),
+        _ => return Err(()),
+    }
+    .map_err(|_| ())
 }
 
 /// Verify a canonical authorized Onyx transfer envelope.
@@ -572,6 +633,185 @@ pub extern "C" fn onyx_verify_apply_program_deployment(
             *snapshot_len_out = len;
             *fee_out = deployment.funding.preimage.fee;
             std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+        }
+        1
+    })
+}
+
+/// Verify the proof and binding signature of a canonical token issuance and extract its delta.
+/// Issuer authorization and cumulative supply are snapshot-dependent and are checked by apply.
+#[no_mangle]
+pub extern "C" fn onyx_verify_and_extract_token_issuance(
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    program_id_out: *mut u8,
+    sequence_out: *mut u64,
+    issued_amount_out: *mut u64,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > token_issuance::MAX_TOKEN_ISSUANCE_BYTES
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || program_id_out.is_null()
+            || sequence_out.is_null()
+            || issued_amount_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+        {
+            return -1;
+        }
+        let issuance = match token_issuance::AuthorizedTokenIssuance::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(issuance) => issuance,
+            Err(_) => return -2,
+        };
+        let preimage = &issuance.transaction.preimage;
+        if commitment_capacity < preimage.outputs.len() {
+            return -4;
+        }
+        if verify_token_issuance_dispatch(&issuance, merkle_depth, circuit_k, None, 0).is_err() {
+            return 0;
+        }
+        let program_id = preimage.programs[0].program_id;
+        unsafe {
+            std::ptr::copy_nonoverlapping(preimage.network_id.as_ptr(), network_out, 16);
+            std::ptr::copy_nonoverlapping(preimage.anchor.bytes().as_ptr(), anchor_out, 32);
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+            *expiry_height_out = preimage.expiry_height;
+            *sequence_out = issuance.sequence;
+            *issued_amount_out = issuance.issued_amount;
+            *commitment_count_out = preimage.outputs.len();
+            for (index, output) in preimage.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+        }
+        1
+    })
+}
+
+fn apply_token_issuance_to_snapshot<const DEPTH: usize>(
+    snapshot: &[u8],
+    issuance: &token_issuance::AuthorizedTokenIssuance,
+    block_height: u64,
+    circuit_k: u32,
+) -> Result<Vec<u8>, ()> {
+    let mut state = state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?;
+    verify_token_issuance_dispatch(
+        issuance,
+        DEPTH as u32,
+        circuit_k,
+        Some(state.program_registry()),
+        block_height,
+    )?;
+    state
+        .apply_token_issuance(
+            &issuance.transaction.preimage,
+            issuance.sequence,
+            issuance.issued_amount,
+            block_height,
+        )
+        .map_err(|_| ())?;
+    Ok(state.encode_snapshot())
+}
+
+/// Verify issuer, proof, cap, sequence, and active registry entry, then atomically apply issuance.
+#[no_mangle]
+pub extern "C" fn onyx_verify_apply_token_issuance(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+    expected_network: *const u8,
+    block_height: u64,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+    program_id_out: *mut u8,
+    sequence_out: *mut u64,
+    issued_amount_out: *mut u64,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > token_issuance::MAX_TOKEN_ISSUANCE_BYTES
+            || expected_network.is_null()
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+            || program_id_out.is_null()
+            || sequence_out.is_null()
+            || issued_amount_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+            *sequence_out = 0;
+            *issued_amount_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
+        let issuance = match token_issuance::AuthorizedTokenIssuance::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(issuance) => issuance,
+            Err(_) => return -2,
+        };
+        let preimage = &issuance.transaction.preimage;
+        let network = unsafe { slice::from_raw_parts(expected_network, 16) };
+        if preimage.network_id.as_slice() != network
+            || block_height > preimage.expiry_height
+            || preimage.expiry_height - block_height > MAX_EXPIRY_DISTANCE_BLOCKS
+        {
+            return -5;
+        }
+        let snapshot = unsafe { slice::from_raw_parts(snapshot, snapshot_len) };
+        let next = match merkle_depth {
+            2 => {
+                apply_token_issuance_to_snapshot::<2>(snapshot, &issuance, block_height, circuit_k)
+            }
+            4 => {
+                apply_token_issuance_to_snapshot::<4>(snapshot, &issuance, block_height, circuit_k)
+            }
+            32 => {
+                apply_token_issuance_to_snapshot::<32>(snapshot, &issuance, block_height, circuit_k)
+            }
+            _ => return -3,
+        };
+        let next = match next {
+            Ok(next) => next,
+            Err(_) => return -5,
+        };
+        if next.len() > MAX_STATE_SNAPSHOT_BYTES {
+            return -6;
+        }
+        let program_id = preimage.programs[0].program_id;
+        let (ptr, len) = into_raw(next);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+            *sequence_out = issuance.sequence;
+            *issued_amount_out = issuance.issued_amount;
         }
         1
     })
@@ -1094,6 +1334,13 @@ pub extern "C" fn onyx_wallet_scan(
                         .scan_transfer(&keys, &deployment.funding)
                         .map_err(|_| ())
                 }),
+            3 => token_issuance::AuthorizedTokenIssuance::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|issuance| {
+                    wallet
+                        .scan_transfer(&keys, &issuance.transaction)
+                        .map_err(|_| ())
+                }),
             _ => return -3,
         };
         if scanned.is_err() {
@@ -1188,6 +1435,13 @@ pub extern "C" fn onyx_wallet_scan_viewing(
                 .and_then(|deployment| {
                     wallet
                         .scan_transfer(&keys, &deployment.funding)
+                        .map_err(|_| ())
+                }),
+            3 => token_issuance::AuthorizedTokenIssuance::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|issuance| {
+                    wallet
+                        .scan_transfer(&keys, &issuance.transaction)
                         .map_err(|_| ())
                 }),
             _ => return -3,
@@ -1444,6 +1698,154 @@ pub extern "C" fn onyx_wallet_finalize_bridge(
         unsafe {
             *bridge_out = ptr;
             *bridge_len_out = len;
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_token_issuance(
+    consensus_snapshot: *const u8,
+    consensus_snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    program_id: *const u8,
+    issued_amount: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    issuance_out: *mut *mut u8,
+    issuance_len_out: *mut usize,
+    sequence_out: *mut u64,
+) -> i32 {
+    ffi_i32(|| {
+        if consensus_snapshot.is_null()
+            || consensus_snapshot_len == 0
+            || consensus_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || recipient.is_null()
+            || program_id.is_null()
+            || issued_amount == 0
+            || memo_len > types::MAX_MEMO_BYTES
+            || (memo.is_null() && memo_len != 0)
+            || !(10..=20).contains(&circuit_k)
+            || issuance_out.is_null()
+            || issuance_len_out.is_null()
+            || sequence_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *issuance_out = std::ptr::null_mut();
+            *issuance_len_out = 0;
+            *sequence_out = 0;
+        }
+        let state = match state::ShieldedState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(consensus_snapshot, consensus_snapshot_len)
+        }) {
+            Ok(state) => state,
+            Err(_) => return -2,
+        };
+        let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
+            .try_into()
+            .unwrap();
+        let entry = match state.program_registry().get(&program_id) {
+            Some(entry) => entry,
+            None => return -5,
+        };
+        let (depth, manifest_k, policy) = match token_program::issuance_policy_from_entry(entry) {
+            Ok(policy) => policy,
+            Err(_) => return -5,
+        };
+        let sequence = state.token_next_issuance_sequence(&program_id);
+        let remaining = match policy
+            .max_supply
+            .checked_sub(state.token_issued_supply(&program_id))
+        {
+            Some(remaining) => remaining,
+            None => return -5,
+        };
+        let next_height = match state.current_height().checked_add(1) {
+            Some(height) => height,
+            None => return -5,
+        };
+        if depth != 32
+            || manifest_k != circuit_k
+            || issued_amount > remaining
+            || expiry_height < next_height
+            || expiry_height - next_height > MAX_EXPIRY_DISTANCE_BLOCKS
+            || state
+                .program_registry()
+                .active_function(
+                    &program_id,
+                    token_program::issuance_function_id(1).unwrap(),
+                    next_height,
+                )
+                .is_err()
+        {
+            return -5;
+        }
+        let recipient = unsafe { slice::from_raw_parts(recipient, 91) };
+        let address = keys::RecipientAddress {
+            network_id: recipient[0..16].try_into().unwrap(),
+            diversifier: recipient[16..27].try_into().unwrap(),
+            transmission_key: recipient[27..59].try_into().unwrap(),
+            spend_authority_key: recipient[59..91].try_into().unwrap(),
+        };
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let issuer = match keys::MasterSeed::new(seed).derive(address.network_id) {
+            Ok(issuer) => issuer,
+            Err(_) => return -2,
+        };
+        if issuer
+            .address(0)
+            .map(|address| address.spend_authority_key)
+            .ok()
+            != Some(policy.issuer)
+        {
+            return -8;
+        }
+        let issuance = match wallet::build_token_issuance(
+            &issuer,
+            &address,
+            state.root(),
+            program_id,
+            sequence,
+            issued_amount,
+            expiry_height,
+            if memo_len == 0 {
+                vec![]
+            } else {
+                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+            },
+            circuit_k,
+        ) {
+            Ok(issuance) => issuance,
+            Err(_) => return -2,
+        };
+        if verify_token_issuance_dispatch(
+            &issuance,
+            32,
+            circuit_k,
+            Some(state.program_registry()),
+            next_height,
+        )
+        .is_err()
+        {
+            return -2;
+        }
+        let encoded = match issuance.encode() {
+            Ok(encoded) if encoded.len() <= token_issuance::MAX_TOKEN_ISSUANCE_BYTES => encoded,
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *issuance_out = ptr;
+            *issuance_len_out = len;
+            *sequence_out = sequence;
         }
         1
     })

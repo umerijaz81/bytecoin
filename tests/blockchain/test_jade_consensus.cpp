@@ -124,6 +124,12 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(decoded.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT &&
 		              decoded.onyx_envelope == tx.onyx_envelope,
 		    "Onyx program deployment envelope did not round-trip");
+		tx.onyx_type = parameters::ONYX_TYPE_TOKEN_ISSUANCE;
+		const common::BinaryArray issuance_encoded = seria::to_binary(tx);
+		seria::from_binary(decoded, issuance_encoded);
+		invariant(decoded.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE &&
+		              decoded.onyx_envelope == tx.onyx_envelope,
+		    "Onyx token issuance envelope did not round-trip");
 		invariant(currency.get_block_major_version_for_height(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
 		        currency.jade_block_version,
 		    "pre-Onyx block version changed");

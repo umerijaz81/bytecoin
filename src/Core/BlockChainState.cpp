@@ -189,6 +189,13 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 				throw ConsensusError("Invalid Onyx program deployment");
 			return verified.funding.fee;
 		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+			zk::Halo2ProofSystem::VerifiedTokenIssuance verified;
+			if (!zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &verified))
+				throw ConsensusError("Invalid Onyx token issuance proof");
+			return 0;
+		}
 		throw ConsensusError("Unknown Onyx envelope type");
 #else
 		throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
@@ -732,6 +739,7 @@ void BlockChainState::on_reorganization(
 		m_memory_state_ki_tx.clear();
 		m_memory_state_onyx_nf_tx.clear();
 		m_memory_state_onyx_program_tx.clear();
+		m_memory_state_onyx_issuance_tx.clear();
 		m_memory_state_fee_tx.clear();
 		m_memory_state_total_size = 0;
 		for (auto &&msf : old_memory_state_tx) {
@@ -793,6 +801,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
 	std::array<uint8_t, 32> onyx_program_id{};
 	bool has_onyx_program_id = false;
+	std::array<uint8_t, 32> onyx_issuance_program_id{};
+	bool has_onyx_issuance_program_id = false;
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
 		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta))
@@ -838,6 +848,29 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
 				return false;
 		if (m_memory_state_onyx_program_tx.count(onyx_program_id) != 0)
+			return false;
+	}
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+		zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+		if (!zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &issuance))
+			throw ConsensusError("Invalid Onyx token issuance proof");
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		BinaryArray dry_run_snapshot;
+		std::array<uint8_t, 16> network{};
+		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+		zk::Halo2ProofSystem::VerifiedTokenIssuance applied;
+		if (!zk::Halo2ProofSystem::verify_apply_token_issuance(snapshot, tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, network, next_block_height,
+		        &dry_run_snapshot, &applied) ||
+		    applied.program_id != issuance.program_id || applied.sequence != issuance.sequence ||
+		    applied.issued_amount != issuance.issued_amount)
+			throw ConsensusError("Onyx token issuance rejected against current state");
+		onyx_issuance_program_id = issuance.program_id;
+		has_onyx_issuance_program_id = true;
+		if (m_memory_state_onyx_issuance_tx.count(onyx_issuance_program_id) != 0)
 			return false;
 	}
 #else
@@ -915,6 +948,9 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 			all_inserted = false;
 	if (has_onyx_program_id &&
 	    !m_memory_state_onyx_program_tx.insert(std::make_pair(onyx_program_id, tid)).second)
+		all_inserted = false;
+	if (has_onyx_issuance_program_id &&
+	    !m_memory_state_onyx_issuance_tx.insert(std::make_pair(onyx_issuance_program_id, tid)).second)
 		all_inserted = false;
 #endif
 	// insert all before throw
@@ -1003,6 +1039,15 @@ void BlockChainState::remove_from_pool(Hash tid) {
 			if (m_memory_state_onyx_nf_tx.erase(nullifier) != 1)
 				all_erased = false;
 		if (m_memory_state_onyx_program_tx.erase(deployment.program_id) != 1)
+			all_erased = false;
+	}
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+		zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+		invariant(zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
+		              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &issuance),
+		    "stored Onyx token issuance failed verification");
+		if (m_memory_state_onyx_issuance_tx.erase(issuance.program_id) != 1)
 			all_erased = false;
 	}
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
@@ -1130,6 +1175,12 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, network,
 			        delta_state->get_block_height(), &next_snapshot, &fee, &program_id))
 				throw ConsensusError("Onyx program deployment state transition rejected");
+		} else if (transaction.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+			zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+			if (!zk::Halo2ProofSystem::verify_apply_token_issuance(snapshot, transaction.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, network,
+			        delta_state->get_block_height(), &next_snapshot, &issuance))
+				throw ConsensusError("Onyx token issuance state transition rejected");
 		} else if (transaction.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 			zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
 			if (!zk::Halo2ProofSystem::verify_apply_bridge(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
@@ -1303,7 +1354,17 @@ void BlockChainState::redo_block(const Hash &bhash, const Block &block, const ap
 						conflicting_pool_transactions.insert(conflict->second);
 				}
 				for (const auto &conflict : conflicting_pool_transactions)
-					remove_from_pool(conflict);
+					if (conflict != tid)
+						remove_from_pool(conflict);
+			}
+			if (tit->onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+				zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+				invariant(zk::Halo2ProofSystem::verify_token_issuance(tit->onyx_envelope,
+				              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &issuance),
+				    "accepted Onyx token issuance failed verification");
+				auto conflict = m_memory_state_onyx_issuance_tx.find(issuance.program_id);
+				if (conflict != m_memory_state_onyx_issuance_tx.end() && conflict->second != tid)
+					remove_from_pool(conflict->second);
 			}
 #endif
 			remove_from_pool(tid);

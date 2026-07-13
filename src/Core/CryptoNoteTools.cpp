@@ -201,6 +201,14 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 			*fee = deployment.funding.fee;
 			return true;
 		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+			zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+			if (!zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &issuance))
+				return false;
+			*fee = 0;
+			return true;
+		}
 		return false;
 	}
 #endif

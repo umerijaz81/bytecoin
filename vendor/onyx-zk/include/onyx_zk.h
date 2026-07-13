@@ -96,6 +96,21 @@ int onyx_verify_apply_program_deployment(
     uint8_t **snapshot_out, size_t *snapshot_len_out, uint64_t *fee_out,
     uint8_t program_id_out[32]);
 
+/* Verify a token issuance proof/binding and extract its public state delta. */
+int onyx_verify_and_extract_token_issuance(
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out,
+    uint8_t program_id_out[32], uint64_t *sequence_out, uint64_t *issued_amount_out,
+    uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
+
+/* Verify issuer/cap/sequence/registry/proof and atomically apply token issuance. */
+int onyx_verify_apply_token_issuance(
+    const uint8_t *snapshot, size_t snapshot_len,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t expected_network[16], uint64_t block_height,
+    uint8_t **snapshot_out, size_t *snapshot_len_out, uint8_t program_id_out[32],
+    uint64_t *sequence_out, uint64_t *issued_amount_out);
+
 /* Decode the rollback-safe consensus snapshot and return its public supply-accounting totals. */
 int onyx_state_supply_audit(
     const uint8_t *snapshot, size_t snapshot_len,
@@ -152,6 +167,12 @@ int onyx_wallet_create_bridge(
 int onyx_wallet_finalize_bridge(
     const uint8_t *unsigned_bridge, size_t unsigned_bridge_len,
     const uint8_t ownership_signature[64], uint8_t **bridge_out, size_t *bridge_len_out);
+int onyx_wallet_create_token_issuance(
+    const uint8_t *consensus_snapshot, size_t consensus_snapshot_len,
+    const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],
+    uint64_t issued_amount, uint64_t expiry_height,
+    const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
+    uint8_t **issuance_out, size_t *issuance_len_out, uint64_t *sequence_out);
 int onyx_wallet_create_transfer(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
     const uint8_t recipient[91], uint64_t amount, uint64_t fee, uint64_t expiry_height,

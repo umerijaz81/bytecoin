@@ -171,6 +171,7 @@ private:
 	std::map<KeyImage, Hash> m_memory_state_ki_tx;
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_nf_tx;
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_program_tx;
+	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_issuance_tx;
 	std::set<std::pair<Amount, Hash>> m_memory_state_fee_tx;
 	size_t m_memory_state_total_size = 0;
 

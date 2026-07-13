@@ -4,18 +4,22 @@
 //! deferred until their encodings, vectors, persistence, and rollback behavior are independently
 //! reviewed.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use ff::PrimeField;
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, P128Pow5T3};
 use halo2_proofs::pasta::Fp;
 
 use crate::program::{ProgramDelta, ProgramEntry, ProgramRegistry};
+use crate::token_program::{
+    issuance_function_id, issuance_policy_from_entry, issuance_public_data_hash,
+};
 use crate::transaction::TransactionPreimage;
 use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
-const SNAPSHOT_VERSION: u8 = 4;
+const SNAPSHOT_VERSION: u8 = 5;
+const PROGRAM_COST_SNAPSHOT_VERSION: u8 = 4;
 const PROGRAM_REGISTRY_SNAPSHOT_VERSION: u8 = 3;
 const ACCOUNTING_SNAPSHOT_VERSION: u8 = 2;
 const LEGACY_SNAPSHOT_VERSION: u8 = 1;
@@ -77,6 +81,7 @@ pub enum SnapshotError {
     InvalidSupply,
     InvalidRegistry,
     InvalidProgramCost,
+    InvalidIssuanceLedger,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -235,6 +240,13 @@ pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     circulating_supply: u64,
     programs: ProgramRegistry,
     current_block_program_cost: u64,
+    issuance: BTreeMap<[u8; 32], TokenIssuanceState>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TokenIssuanceState {
+    issued_supply: u64,
+    next_sequence: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -272,6 +284,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             circulating_supply: 0,
             programs: ProgramRegistry::default(),
             current_block_program_cost: 0,
+            issuance: BTreeMap::new(),
         }
     }
 
@@ -281,6 +294,10 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
 
     pub fn leaf_count(&self) -> u64 {
         self.tree.leaf_count()
+    }
+
+    pub fn current_height(&self) -> u64 {
+        self.current_height
     }
 
     pub fn total_bridged(&self) -> u64 {
@@ -305,6 +322,20 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
 
     pub fn current_block_program_cost(&self) -> u64 {
         self.current_block_program_cost
+    }
+
+    pub fn token_issued_supply(&self, program_id: &[u8; 32]) -> u64 {
+        self.issuance
+            .get(program_id)
+            .map(|state| state.issued_supply)
+            .unwrap_or(0)
+    }
+
+    pub fn token_next_issuance_sequence(&self, program_id: &[u8; 32]) -> u64 {
+        self.issuance
+            .get(program_id)
+            .map(|state| state.next_sequence)
+            .unwrap_or(0)
     }
 
     pub fn register_program(&mut self, entry: ProgramEntry) -> Result<ProgramDelta, StateError> {
@@ -333,6 +364,63 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         next.apply_transfer(funding, block_height)?;
         next.current_block_program_cost = next_block_program_cost;
         next.register_program(entry)?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn apply_token_issuance(
+        &mut self,
+        transaction: &TransactionPreimage,
+        sequence: u64,
+        issued_amount: u64,
+        block_height: u64,
+    ) -> Result<(), StateError> {
+        if issued_amount == 0
+            || !transaction.spends.is_empty()
+            || !(1..=2).contains(&transaction.outputs.len())
+            || transaction.fee != 0
+            || transaction.programs.len() != 1
+        {
+            return Err(StateError::InvalidProgram);
+        }
+        let call = &transaction.programs[0];
+        if call.function_id != issuance_function_id(transaction.outputs.len()).unwrap()
+            || call.public_data_hash != issuance_public_data_hash(sequence, issued_amount)
+        {
+            return Err(StateError::InvalidProgram);
+        }
+        let entry = self
+            .programs
+            .get(&call.program_id)
+            .ok_or(StateError::InvalidProgram)?;
+        let (depth, _, policy) =
+            issuance_policy_from_entry(entry).map_err(|_| StateError::InvalidProgram)?;
+        if depth != DEPTH {
+            return Err(StateError::InvalidProgram);
+        }
+        let current = self
+            .issuance
+            .get(&call.program_id)
+            .copied()
+            .unwrap_or_default();
+        if sequence != current.next_sequence {
+            return Err(StateError::InvalidProgram);
+        }
+        let issued_supply = current
+            .issued_supply
+            .checked_add(issued_amount)
+            .filter(|supply| *supply <= policy.max_supply)
+            .ok_or(StateError::SupplyOverflow)?;
+        let next_sequence = sequence.checked_add(1).ok_or(StateError::SupplyOverflow)?;
+        let mut next = self.clone();
+        next.apply_transaction(transaction, block_height)?;
+        next.issuance.insert(
+            call.program_id,
+            TokenIssuanceState {
+                issued_supply,
+                next_sequence,
+            },
+        );
         *self = next;
         Ok(())
     }
@@ -543,6 +631,12 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         write_varint(programs.len() as u64, &mut out);
         out.extend_from_slice(&programs);
         write_varint(self.current_block_program_cost, &mut out);
+        write_varint(self.issuance.len() as u64, &mut out);
+        for (program_id, issuance) in &self.issuance {
+            out.extend_from_slice(program_id);
+            write_varint(issuance.issued_supply, &mut out);
+            write_varint(issuance.next_sequence, &mut out);
+        }
         out
     }
 
@@ -555,6 +649,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         if version != SNAPSHOT_VERSION
             && version != ACCOUNTING_SNAPSHOT_VERSION
             && version != PROGRAM_REGISTRY_SNAPSHOT_VERSION
+            && version != PROGRAM_COST_SNAPSHOT_VERSION
             && version != LEGACY_SNAPSHOT_VERSION
         {
             return Err(SnapshotError::WrongVersion);
@@ -663,7 +758,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         } else {
             ProgramRegistry::default()
         };
-        let current_block_program_cost = if version == SNAPSHOT_VERSION {
+        let current_block_program_cost = if version >= PROGRAM_COST_SNAPSHOT_VERSION {
             let cost = reader.varint()?;
             if cost > MAX_BLOCK_PROGRAM_COST {
                 return Err(SnapshotError::InvalidProgramCost);
@@ -671,6 +766,44 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             cost
         } else {
             0
+        };
+        let issuance = if version == SNAPSHOT_VERSION {
+            let count = bounded_snapshot_count(
+                reader.varint()?,
+                crate::program::MAX_REGISTERED_PROGRAMS,
+                SnapshotError::InvalidIssuanceLedger,
+            )?;
+            let mut issuance = BTreeMap::new();
+            let mut previous = None;
+            for _ in 0..count {
+                let program_id: [u8; 32] = reader.array()?;
+                if previous.is_some_and(|id| id >= program_id)
+                    || programs.get(&program_id).is_none()
+                {
+                    return Err(SnapshotError::InvalidIssuanceLedger);
+                }
+                previous = Some(program_id);
+                let issued_supply = reader.varint()?;
+                let next_sequence = reader.varint()?;
+                let entry = programs
+                    .get(&program_id)
+                    .ok_or(SnapshotError::InvalidIssuanceLedger)?;
+                let (_, _, policy) = issuance_policy_from_entry(entry)
+                    .map_err(|_| SnapshotError::InvalidIssuanceLedger)?;
+                if issued_supply == 0 || issued_supply > policy.max_supply || next_sequence == 0 {
+                    return Err(SnapshotError::InvalidIssuanceLedger);
+                }
+                issuance.insert(
+                    program_id,
+                    TokenIssuanceState {
+                        issued_supply,
+                        next_sequence,
+                    },
+                );
+            }
+            issuance
+        } else {
+            BTreeMap::new()
         };
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData.into());
@@ -686,6 +819,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             circulating_supply,
             programs,
             current_block_program_cost,
+            issuance,
         })
     }
 }
@@ -986,7 +1120,7 @@ mod tests {
         let mut legacy = ShieldedState::<4>::new(3).encode_snapshot();
         legacy[0] = LEGACY_SNAPSHOT_VERSION;
         legacy.drain(6..9);
-        legacy.truncate(legacy.len() - 4);
+        legacy.truncate(legacy.len() - 5);
         let migrated = ShieldedState::<4>::decode_snapshot(&legacy).unwrap();
         assert_eq!(
             (
@@ -999,7 +1133,7 @@ mod tests {
 
         let mut accounting_v2 = state.encode_snapshot();
         accounting_v2[0] = ACCOUNTING_SNAPSHOT_VERSION;
-        accounting_v2.truncate(accounting_v2.len() - 4);
+        accounting_v2.truncate(accounting_v2.len() - 5);
         let migrated_v2 = ShieldedState::<4>::decode_snapshot(&accounting_v2).unwrap();
         assert_eq!(
             (
@@ -1052,7 +1186,7 @@ mod tests {
         );
         let mut registry_v3 = snapshot.clone();
         registry_v3[0] = PROGRAM_REGISTRY_SNAPSHOT_VERSION;
-        registry_v3.truncate(registry_v3.len() - 1);
+        registry_v3.truncate(registry_v3.len() - 2);
         let migrated_v3 = ShieldedState::<4>::decode_snapshot(&registry_v3).unwrap();
         assert_eq!(migrated_v3.program_count(), 1);
         assert_eq!(migrated_v3.current_block_program_cost(), 0);
@@ -1104,6 +1238,73 @@ mod tests {
         assert_eq!(state.current_block_program_cost(), 0);
         state.rollback_program(registry_delta);
         assert_eq!(state.program_count(), 0);
+    }
+
+    #[test]
+    fn token_issuance_ledger_enforces_sequence_cap_and_snapshot_binding() {
+        use crate::token_program::{
+            issuance_function_id, issuance_public_data_hash, standard_token_program,
+            TokenIssuancePolicy,
+        };
+        use crate::transaction::ProgramCall;
+        use group::GroupEncoding;
+
+        let issuer = (crate::spend_auth_circuit::spend_auth_generator()
+            * pasta_curves::pallas::Scalar::from(77))
+        .to_bytes();
+        let manifest = TokenIssuancePolicy {
+            issuer,
+            max_supply: 100,
+            metadata: b"symbol=CAP".to_vec(),
+        }
+        .encode()
+        .unwrap();
+        let entry = standard_token_program::<4>(14, &manifest, 1, None).unwrap();
+        let program_id = entry.id().unwrap();
+        let mut state = ShieldedState::<4>::new(3);
+        state.register_program(entry).unwrap();
+
+        let issuance = |anchor, sequence, amount, commitment| {
+            let mut tx = transaction(anchor, 1, commitment);
+            tx.fee = 0;
+            tx.spends.clear();
+            tx.programs.push(ProgramCall {
+                program_id,
+                function_id: issuance_function_id(1).unwrap(),
+                public_data_hash: issuance_public_data_hash(sequence, amount),
+            });
+            tx
+        };
+        let first = issuance(state.root(), 0, 60, 70);
+        state.apply_token_issuance(&first, 0, 60, 1).unwrap();
+        assert_eq!(state.token_issued_supply(&program_id), 60);
+        assert_eq!(state.token_next_issuance_sequence(&program_id), 1);
+        let after_first = state.encode_snapshot();
+
+        let wrong_sequence = issuance(state.root(), 0, 40, 71);
+        assert_eq!(
+            state.apply_token_issuance(&wrong_sequence, 0, 40, 2).err(),
+            Some(StateError::InvalidProgram)
+        );
+        assert_eq!(state.encode_snapshot(), after_first);
+
+        let overflow = issuance(state.root(), 1, 41, 72);
+        assert_eq!(
+            state.apply_token_issuance(&overflow, 1, 41, 2).err(),
+            Some(StateError::SupplyOverflow)
+        );
+        assert_eq!(state.encode_snapshot(), after_first);
+
+        let final_issuance = issuance(state.root(), 1, 40, 73);
+        state
+            .apply_token_issuance(&final_issuance, 1, 40, 2)
+            .unwrap();
+        assert_eq!(state.token_issued_supply(&program_id), 100);
+        assert_eq!(state.token_next_issuance_sequence(&program_id), 2);
+        let snapshot = state.encode_snapshot();
+        let restored = ShieldedState::<4>::decode_snapshot(&snapshot).unwrap();
+        assert_eq!(restored.encode_snapshot(), snapshot);
+        assert_eq!(restored.token_issued_supply(&program_id), 100);
     }
 
     #[test]

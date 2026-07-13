@@ -131,6 +131,27 @@ pub(crate) struct AssignedNativeValues {
     pub output_cells: Vec<AssignedCell<Fp, Fp>>,
 }
 
+pub(crate) fn synthesize_issued_values(
+    output_values: &[Option<u64>],
+    config: &ValueConfig,
+    mut layouter: impl Layouter<Fp>,
+) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
+    if output_values.len() != MAX_OUTPUTS {
+        return Err(Error::Synthesis);
+    }
+    let mut output_cells = Vec::with_capacity(MAX_OUTPUTS);
+    for (index, value) in output_values.iter().enumerate() {
+        output_cells.push(assign_u64(
+            layouter.namespace(|| format!("issued output {index}")),
+            config,
+            *value,
+        )?);
+    }
+    let total = assign_sum(layouter.namespace(|| "issued total"), config, &output_cells)?;
+    layouter.constrain_instance(total.cell(), config.instance, 0)?;
+    Ok(output_cells)
+}
+
 pub(crate) fn synthesize_native_values(
     circuit: &NativeValueCircuit,
     config: &ValueConfig,

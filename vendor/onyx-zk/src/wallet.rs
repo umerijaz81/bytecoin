@@ -13,11 +13,18 @@ use crate::bridge::{AuthorizedBridge, BridgePreimage};
 use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
 use crate::proof::{
-    create_bridge_proof, create_multi_transfer_proof, multi_transfer_backend_id, BridgeWitness,
-    MultiSpendWitness, MultiTransferWitness, BRIDGE_BACKEND,
+    create_bridge_proof, create_multi_transfer_proof, create_token_issuance_proof,
+    multi_transfer_backend_id, BridgeWitness, MultiSpendWitness, MultiTransferWitness,
+    TokenIssuanceWitness, BRIDGE_BACKEND,
 };
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
-use crate::transaction::{AuthorizedTransaction, PublicOutput, PublicSpend, TransactionPreimage};
+use crate::token_issuance::{sign_issuer_authorization, AuthorizedTokenIssuance};
+use crate::token_program::{
+    issuance_function_id, issuance_public_data_hash, TOKEN_PROGRAM_BACKEND,
+};
+use crate::transaction::{
+    AuthorizedTransaction, ProgramCall, PublicOutput, PublicSpend, TransactionPreimage,
+};
 use crate::types::NATIVE_ASSET_ID;
 use crate::types::{write_varint, DecodeError, NotePlaintext, Reader};
 use crate::value_commitment_circuit::value_commitment_bytes;
@@ -178,6 +185,118 @@ pub fn build_bridge(
         proof,
         ownership_signature: [0; 64],
     })
+}
+
+pub fn build_token_issuance(
+    issuer: &KeyBundle,
+    recipient: &RecipientAddress,
+    anchor: CanonicalField,
+    program_id: [u8; 32],
+    sequence: u64,
+    issued_amount: u64,
+    expiry_height: u64,
+    memo: Vec<u8>,
+    circuit_k: u32,
+) -> Result<AuthorizedTokenIssuance, WalletBuildError> {
+    if issued_amount == 0
+        || recipient.network_id
+            != issuer
+                .full_viewing_key()
+                .map_err(|_| WalletBuildError::Crypto)?
+                .network_id()
+    {
+        return Err(WalletBuildError::InvalidRecipient);
+    }
+    let mut rho_wide = [0u8; 64];
+    let mut randomness_wide = [0u8; 64];
+    rand::rngs::OsRng.fill_bytes(&mut rho_wide);
+    rand::rngs::OsRng.fill_bytes(&mut randomness_wide);
+    let note = NotePlaintext {
+        network_id: recipient.network_id,
+        program_id,
+        asset_id: program_id,
+        value: issued_amount,
+        diversifier: recipient.diversifier,
+        transmission_key: recipient.transmission_key,
+        spend_authority_key: recipient.spend_authority_key,
+        rho: CanonicalField::from_field(Fp::from_uniform_bytes(&rho_wide)),
+        randomness: CanonicalField::from_field(Fp::from_uniform_bytes(&randomness_wide)),
+        memo,
+    };
+    let value_randomness = note.randomness.field();
+    let commitment = note.commitment().map_err(|_| WalletBuildError::Crypto)?;
+    let value_commitment_bytes = value_commitment_bytes(issued_amount, value_randomness);
+    let value_commitment =
+        Option::<pallas::Point>::from(pallas::Point::from_bytes(&value_commitment_bytes))
+            .ok_or(WalletBuildError::Crypto)?
+            .to_affine();
+    let mut preimage = TransactionPreimage {
+        network_id: recipient.network_id,
+        anchor,
+        expiry_height,
+        fee: 0,
+        spends: vec![],
+        outputs: vec![PublicOutput {
+            commitment,
+            value_commitment: value_commitment_bytes,
+            ephemeral_key: [0; 32],
+            ciphertext: vec![],
+            outgoing_ciphertext: vec![],
+        }],
+        programs: vec![ProgramCall {
+            program_id,
+            function_id: issuance_function_id(1).expect("one-output issuance is supported"),
+            public_data_hash: issuance_public_data_hash(sequence, issued_amount),
+        }],
+    };
+    let binding = preimage
+        .encryption_binding()
+        .map_err(|_| WalletBuildError::Crypto)?;
+    let encrypted = issuer
+        .encrypt_note(&note, recipient, binding, 0)
+        .map_err(|_| WalletBuildError::Crypto)?;
+    preimage.outputs[0].ephemeral_key = encrypted.ephemeral_key;
+    preimage.outputs[0].ciphertext = encrypted.ciphertext;
+    preimage.outputs[0].outgoing_ciphertext = encrypted.outgoing_ciphertext;
+    let witness = TokenIssuanceWitness {
+        output_values: vec![issued_amount],
+        output_notes: vec![note
+            .commitment_inputs()
+            .map_err(|_| WalletBuildError::Crypto)?],
+        output_value_randomness: vec![value_randomness],
+        output_value_commitments: vec![value_commitment],
+    };
+    let proof = create_token_issuance_proof::<1>(
+        circuit_k,
+        &witness,
+        issued_amount,
+        recipient.network_id,
+        program_id,
+    )
+    .map_err(|_| WalletBuildError::Crypto)?;
+    let binding_signature = sign_binding_authorization(
+        &preimage,
+        TOKEN_PROGRAM_BACKEND,
+        &proof,
+        &[],
+        &[value_randomness],
+    )
+    .map_err(|_| WalletBuildError::Crypto)?;
+    let mut issuance = AuthorizedTokenIssuance {
+        sequence,
+        issued_amount,
+        transaction: AuthorizedTransaction {
+            preimage,
+            backend_id: TOKEN_PROGRAM_BACKEND.to_owned(),
+            proof,
+            spend_signatures: vec![],
+            binding_signature,
+        },
+        issuer_signature: [0; 64],
+    };
+    issuance.issuer_signature =
+        sign_issuer_authorization(issuer, &issuance).map_err(|_| WalletBuildError::Crypto)?;
+    Ok(issuance)
 }
 
 impl From<WitnessError> for WalletError {

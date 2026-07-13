@@ -57,6 +57,7 @@ const uint8_t TRANSACTION_VERSION_ONYX  = 6;
 const uint8_t ONYX_TYPE_TRANSFER         = 0;
 const uint8_t ONYX_TYPE_BRIDGE           = 1;
 const uint8_t ONYX_TYPE_PROGRAM_DEPLOYMENT = 2;
+const uint8_t ONYX_TYPE_TOKEN_ISSUANCE      = 3;
 const size_t ONYX_MAX_ENVELOPE_SIZE     = 384 * 1024;
 const uint32_t ONYX_MERKLE_DEPTH        = 32;
 const uint32_t ONYX_CIRCUIT_K           = 20;

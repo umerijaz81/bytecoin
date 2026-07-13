@@ -54,6 +54,28 @@ Any failure commits none of those effects. Duplicate Program IDs are rejected bo
 dedicated mempool conflict index, which is rebuilt on reorganization. Seed and view-only wallet scanners
 scan the embedded funding transfer so change recovery remains identical to an ordinary native transfer.
 
+## Capped private issuance
+
+Mintable token manifests use canonical `ONXM` version-1 metadata containing a nonidentity RedPallas
+issuer key, a positive `u64` maximum supply, and bounded printable metadata. Legacy manifests remain
+transfer-only; a manifest beginning with `ONXM` must decode canonically or deployment fails. Mintable
+programs add immutable one- and two-output issuance functions with shape-specific schema hashes and VK
+descriptors.
+
+Envelope type `3` contains a zero-spend, zero-fee authorized transaction, public issued amount and
+monotonic sequence, private per-output values, an issuance Halo2 proof, a value-binding signature, and
+a separate issuer signature. The proof constrains each encrypted output note and value commitment to
+the called Program ID and proves that private output values sum to the public issued amount. Issuance
+uses the distinct binding equation `issued*V - sum(outputs) = -sum(rcv)*R`; the ordinary transfer
+equation remains unable to create value.
+
+Snapshot version 5 stores a canonical sorted `(Program ID, issued supply, next sequence)` ledger.
+Application requires the active registered issuance function, exact next sequence, retained anchor,
+valid issuer/proof/binding signatures, and checked cumulative supply at or below the immutable cap.
+Outputs and ledger updates commit atomically. The mempool permits at most one pending issuance per
+Program ID and rebuilds that index after reorganizations. Full and view-only scanners recover issuance
+outputs, and the wallet builder derives the sequence/cap from a consensus snapshot before proving.
+
 A program call becomes executable only after its audited function circuit supplies all of the
 following:
 
@@ -63,7 +85,7 @@ following:
 4. transaction-level binding of ordered calls and public-data hashes;
 5. verification cost within the entry and block limits;
 
-Only the standard token-transfer functions currently satisfy these consensus execution gates. Every
-other call continues to fail closed. Private issuance, mixed-fee token bundles, wallet deployment and
-issuance construction, SDK vectors, and independent audit coverage remain required before the
-fungible-token phase is eligible for production activation.
+Only the standard token transfer and capped issuance functions currently satisfy these consensus
+execution gates. Every other call continues to fail closed. Mixed-fee token bundles, wallet deployment
+RPC, SDK vectors, and independent audit coverage remain required before the fungible-token phase is
+eligible for production activation.

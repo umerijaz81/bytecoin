@@ -12,7 +12,10 @@ use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 use pasta_curves::{arithmetic::CurveAffine, pallas};
 
-use crate::authorization::{verify_authorized_transaction, AuthorizationError};
+use crate::authorization::{
+    verify_authorized_transaction, verify_issuance_binding_authorization,
+    verify_spend_authorizations, AuthorizationError,
+};
 use crate::bridge::{AuthorizedBridge, BridgeError};
 use crate::bridge_circuit::BridgeCircuit;
 use crate::linked_transfer_circuit::LinkedTransferCircuit;
@@ -22,9 +25,11 @@ use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
 use crate::program::ProgramRegistry;
 use crate::spend_auth_circuit::SpendAuthCircuit;
 use crate::state::CanonicalField;
+use crate::token_issuance_circuit::TokenIssuanceCircuit;
 use crate::token_program::{
-    descriptor_from_vk, empty_program_circuit, transfer_function_id, transfer_public_data_hash,
-    transfer_schema_hash, TOKEN_PROGRAM_BACKEND,
+    descriptor_from_vk, empty_issuance_circuit, empty_program_circuit, issuance_descriptor_from_vk,
+    issuance_function_id, issuance_public_data_hash, issuance_schema_hash, transfer_function_id,
+    transfer_public_data_hash, transfer_schema_hash, TOKEN_PROGRAM_BACKEND,
 };
 use crate::transaction::{AuthorizedTransaction, TransactionError, MAX_PROOF_BYTES};
 
@@ -224,6 +229,26 @@ pub struct MultiTransferWitness<const DEPTH: usize> {
     pub output_value_commitments: Vec<pallas::Affine>,
 }
 
+#[derive(Clone)]
+pub struct TokenIssuanceWitness {
+    pub output_values: Vec<u64>,
+    pub output_notes: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
+    pub output_value_randomness: Vec<Fp>,
+    pub output_value_commitments: Vec<pallas::Affine>,
+}
+
+impl TokenIssuanceWitness {
+    fn circuit<const OUTPUTS: usize>(&self) -> Result<TokenIssuanceCircuit<OUTPUTS>, ProofError> {
+        TokenIssuanceCircuit::new(
+            &self.output_values,
+            self.output_notes.clone(),
+            self.output_value_randomness.clone(),
+            self.output_value_commitments.clone(),
+        )
+        .map_err(|_| ProofError::InvalidShape)
+    }
+}
+
 impl<const DEPTH: usize> MultiSpendWitness<DEPTH> {
     fn linked(&self) -> Result<LinkedSpend<DEPTH>, ProofError> {
         Ok(LinkedSpend::new(
@@ -294,6 +319,175 @@ fn randomized_key_coordinates(key: pallas::Affine) -> Result<[Fp; 2], ProofError
     }
     let coordinates = coordinates.unwrap();
     Ok([*coordinates.x(), *coordinates.y()])
+}
+
+fn token_issuance_public_inputs(
+    issued_amount: u64,
+    network_id: &[u8; 16],
+    program_id: &[u8; 32],
+    outputs: &[crate::transaction::PublicOutput],
+) -> Result<[Vec<Fp>; 3], ProofError> {
+    let amount = vec![Fp::from(issued_amount)];
+    let mut notes = outputs
+        .iter()
+        .map(|output| output.commitment.field())
+        .collect::<Vec<_>>();
+    notes.push(crate::types::network_field(network_id));
+    notes.extend(crate::types::pack_32(program_id));
+    let mut commitments = Vec::with_capacity(outputs.len() * 2);
+    for output in outputs {
+        let point =
+            Option::<pallas::Point>::from(pallas::Point::from_bytes(&output.value_commitment))
+                .ok_or(ProofError::InvalidPublicInput)?
+                .to_affine();
+        commitments.extend(randomized_key_coordinates(point)?);
+    }
+    Ok([amount, notes, commitments])
+}
+
+pub fn create_token_issuance_proof<const OUTPUTS: usize>(
+    k: u32,
+    witness: &TokenIssuanceWitness,
+    issued_amount: u64,
+    network_id: [u8; 16],
+    program_id: [u8; 32],
+) -> Result<Vec<u8>, ProofError> {
+    if issuance_function_id(OUTPUTS).is_none()
+        || witness
+            .output_values
+            .iter()
+            .try_fold(0u64, |sum, value| sum.checked_add(*value))
+            != Some(issued_amount)
+        || issued_amount == 0
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let circuit = witness.circuit::<OUTPUTS>()?;
+    let outputs = witness
+        .output_notes
+        .iter()
+        .zip(&witness.output_value_commitments)
+        .map(|(note, commitment)| {
+            crate::transaction::PublicOutput {
+                    commitment:
+                        CanonicalField::from_field(
+                            PrimitiveHash::<
+                                Fp,
+                                P128Pow5T3,
+                                ConstantLength<NOTE_COMMITMENT_INPUTS>,
+                                3,
+                                2,
+                            >::init()
+                            .hash(*note),
+                        ),
+                    value_commitment: commitment.to_bytes(),
+                    ephemeral_key: [1; 32],
+                    ciphertext: vec![],
+                    outgoing_ciphertext: vec![],
+                }
+        })
+        .collect::<Vec<_>>();
+    let public = token_issuance_public_inputs(issued_amount, &network_id, &program_id, &outputs)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
+    create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
+        &params,
+        &pk,
+        &[circuit],
+        &[&[&public[0], &public[1], &public[2]]],
+        rand::rngs::OsRng,
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::ProvingFailed)?;
+    let proof = transcript.finalize();
+    if proof.len() > MAX_PROOF_BYTES {
+        return Err(ProofError::ProofTooLarge);
+    }
+    Ok(proof)
+}
+
+pub fn verify_authorized_token_issuance<const DEPTH: usize, const OUTPUTS: usize>(
+    k: u32,
+    transaction: &AuthorizedTransaction,
+    issued_amount: u64,
+    sequence: u64,
+    registry: Option<&ProgramRegistry>,
+    block_height: u64,
+) -> Result<(), ProofError> {
+    let expected_function = issuance_function_id(OUTPUTS).ok_or(ProofError::InvalidShape)?;
+    if issued_amount == 0
+        || transaction.backend_id != TOKEN_PROGRAM_BACKEND
+        || !transaction.preimage.spends.is_empty()
+        || transaction.preimage.outputs.len() != OUTPUTS
+        || transaction.preimage.fee != 0
+        || transaction.preimage.programs.len() != 1
+        || transaction.proof.len() > MAX_PROOF_BYTES
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let call = &transaction.preimage.programs[0];
+    if call.function_id != expected_function
+        || call.public_data_hash != issuance_public_data_hash(sequence, issued_amount)
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let registered_function = if let Some(registry) = registry {
+        registry
+            .validate_calls(std::slice::from_ref(call), block_height, 10_000_000)
+            .map_err(|_| ProofError::InvalidShape)?;
+        let (entry, function) = registry
+            .active_function(&call.program_id, call.function_id, block_height)
+            .map_err(|_| ProofError::InvalidShape)?;
+        if entry.backend != TOKEN_PROGRAM_BACKEND
+            || function.public_input_schema_hash
+                != issuance_schema_hash(DEPTH, OUTPUTS).map_err(|_| ProofError::InvalidShape)?
+        {
+            return Err(ProofError::InvalidShape);
+        }
+        Some(function)
+    } else {
+        None
+    };
+    transaction.preimage.encode()?;
+    verify_spend_authorizations(
+        &transaction.preimage,
+        &transaction.backend_id,
+        &transaction.proof,
+        &transaction.spend_signatures,
+    )?;
+    verify_issuance_binding_authorization(
+        &transaction.preimage,
+        issued_amount,
+        &transaction.backend_id,
+        &transaction.proof,
+        transaction.binding_signature,
+    )?;
+    let circuit = empty_issuance_circuit::<OUTPUTS>().map_err(|_| ProofError::InvalidShape)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
+    if let Some(function) = registered_function {
+        if function.verifying_key != issuance_descriptor_from_vk(OUTPUTS, k, &vk) {
+            return Err(ProofError::InvalidShape);
+        }
+    }
+    let public = token_issuance_public_inputs(
+        issued_amount,
+        &transaction.preimage.network_id,
+        &call.program_id,
+        &transaction.preimage.outputs,
+    )?;
+    let mut transcript =
+        Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
+    verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
+        &params,
+        &vk,
+        SingleVerifier::new(&params),
+        &[&[&public[0], &public[1], &public[2]]],
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::VerificationFailed)
 }
 
 pub fn create_multi_transfer_proof<
