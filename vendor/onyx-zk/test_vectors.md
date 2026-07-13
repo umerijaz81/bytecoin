@@ -13,3 +13,16 @@ deliverable D4) so the C++ side asserts byte-for-byte agreement with the Rust re
 
 These are pipeline-validation vectors, not protocol commitments. Real note-commitment and nullifier
 vectors are produced in O1 once those circuits exist.
+
+## Capped-token SDK vectors
+
+The canonical `ONXM` manifest vector uses the RedPallas issuer key derived as generator times scalar
+19 (`40bc7088034d07f4b45b5ff02dc0098130a44fc5d5fa4560eee0be603d1ef8b`), maximum supply
+1,000,000, and ASCII metadata `symbol=TEST;decimals=8`:
+
+`4f4e584d0140bc7088034d07f4b45b5ff02dc0098130a44fc5d5fa4560eee0be603d1ef8b0c0843d1673796d626f6c3d544553543b646563696d616c733d38`
+
+The reduced-depth circuit test descriptor (`depth=2`, `K=14`, activation 10, deactivation 20) has
+Program ID `a7249f5e44ebb1045937aa148bb7c6385f49d9d831f4131e8f5bba431eb501f1`.
+Production clients must call `onyx_token_program_descriptor`, which fixes the consensus depth at 32,
+to preview the deployment Program ID; they must not substitute the reduced-depth test identifier.

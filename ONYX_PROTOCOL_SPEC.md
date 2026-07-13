@@ -4,6 +4,9 @@ Status: draft consensus specification. Constants and encodings are frozen for de
 Mainnet activation is prohibited until independent cryptographic and consensus audits approve a
 versioned release of this document.
 
+Current code coverage and the remaining engineering, audit, testnet, and release gates are tracked in
+`ONYX_IMPLEMENTATION_STATUS.md`.
+
 ## 1. Safety model
 
 Onyx V6 is a new shielded protocol carried by the Bytecoin node. It does not claim perfect,

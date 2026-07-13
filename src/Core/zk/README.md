@@ -1,22 +1,22 @@
-# src/Core/zk — Onyx (V6) zero-knowledge seam
+# Onyx C++ proof-system adapter
 
-This directory anchors the zero-knowledge core of the Onyx programmable-privacy protocol. See
-`ONYX_ARCHITECTURE.md` at the repo root for the full design.
+This directory contains the C++ boundary between Bytecoin consensus/wallet code and the vendored
+Rust Onyx backend:
 
-**Current contents are a design stub, not an implementation.**
+- `IProofSystem.hpp` defines the backend-neutral proof verification seam.
+- `Halo2ProofSystem.hpp/.cpp` implements the current Halo2/IPA/Pasta backend over the bounded C ABI in
+  `vendor/onyx-zk/include/onyx_zk.h`.
 
-- `IProofSystem.hpp` — the abstract proof backend. Fixes the interface between block validation /
-  the mempool and the (vendored) proving system, and the place a future post-quantum (STARK)
-  backend slots in. **Not yet added to `CMakeLists.txt`** so it cannot affect the build.
+The adapter is integrated into CMake when `ONYX_ZK=ON`. Consensus uses typed verification and atomic
+state-application methods for transfers, bridge operations, program deployments, and token issuance.
+Wallet methods cover derivation, scanning, witness persistence, spend reservation, proving, asset
+balances, and wallet-derived program status. Returned Rust buffers are copied and released on every
+success and failure path.
 
-What lands here in the phased rollout (each vendored + audited, testnet-first):
+The generic `verify()` override and toy prover exist only for O0 pipeline tests. They must not be used
+to validate Onyx transaction envelopes. Unknown versions, backends, functions, malformed data, or
+unsupported builds fail closed.
 
-- **O0** — a vendored Halo2/PLONKish backend implementing `IProofSystem` (over the Pasta curve
-  cycle), plus Poseidon/Sinsemilla gadgets and Pedersen value commitments.
-- **O1** — the note-commitment incremental Merkle tree, the nullifier set, and the note
-  format + in-band encryption (reusing `src/crypto/chacha.*`).
-- **O2** — the spend/viewing-key hierarchy.
-- **O4** — the program / verifying-key registry and the standard circuit library.
-
-Non-negotiable: nothing consensus-critical is hand-rolled. Implementations are peer-reviewed,
-vendored, and externally audited before any mainnet activation height is committed.
+See `ONYX_PROTOCOL_SPEC.md`, `ONYX_PROGRAMS.md`, and `vendor/onyx-zk/README.md` for the canonical
+protocol, registry, SDK, build, and activation constraints. The current backend is not post-quantum;
+backend agility is a future fork and never an automatic security claim.

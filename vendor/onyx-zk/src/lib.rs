@@ -1887,6 +1887,90 @@ pub extern "C" fn onyx_wallet_token_program_status(
     })
 }
 
+fn token_program_descriptor<const DEPTH: usize>(
+    issuer: [u8; 32],
+    max_supply: u64,
+    metadata: Vec<u8>,
+    activation_height: u64,
+    deactivation_height: Option<u64>,
+    circuit_k: u32,
+) -> Result<(Vec<u8>, [u8; 32]), ()> {
+    let manifest = (token_program::TokenIssuancePolicy {
+        issuer,
+        max_supply,
+        metadata,
+    })
+    .encode()
+    .map_err(|_| ())?;
+    let entry = token_program::standard_token_program::<DEPTH>(
+        circuit_k,
+        &manifest,
+        activation_height,
+        deactivation_height,
+    )
+    .map_err(|_| ())?;
+    let program_id = entry.id().map_err(|_| ())?;
+    Ok((manifest, program_id))
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_token_program_descriptor(
+    issuer: *const u8,
+    max_supply: u64,
+    metadata: *const u8,
+    metadata_len: usize,
+    activation_height: u64,
+    deactivation_height: u64,
+    circuit_k: u32,
+    manifest_out: *mut *mut u8,
+    manifest_len_out: *mut usize,
+    program_id_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if issuer.is_null()
+            || max_supply == 0
+            || metadata.is_null()
+            || metadata_len == 0
+            || metadata_len > 128
+            || (deactivation_height != 0 && deactivation_height <= activation_height)
+            || !(10..=20).contains(&circuit_k)
+            || manifest_out.is_null()
+            || manifest_len_out.is_null()
+            || program_id_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *manifest_out = std::ptr::null_mut();
+            *manifest_len_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
+        let issuer = unsafe { slice::from_raw_parts(issuer, 32) }
+            .try_into()
+            .unwrap();
+        let metadata = unsafe { slice::from_raw_parts(metadata, metadata_len) }.to_vec();
+        let deactivation = (deactivation_height != 0).then_some(deactivation_height);
+        let (manifest, program_id) = match token_program_descriptor::<32>(
+            issuer,
+            max_supply,
+            metadata,
+            activation_height,
+            deactivation,
+            circuit_k,
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(()) => return -2,
+        };
+        let (manifest_ptr, manifest_len) = into_raw(manifest);
+        unsafe {
+            *manifest_out = manifest_ptr;
+            *manifest_len_out = manifest_len;
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+        }
+        1
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn onyx_wallet_create_bridge(
     seed: *const u8,
@@ -2843,6 +2927,30 @@ mod tests {
             ),
             -1
         );
+
+        let invalid_issuer = [0u8; 32];
+        let metadata = b"symbol=TEST";
+        let mut manifest = 1usize as *mut u8;
+        let mut manifest_len = usize::MAX;
+        let mut program_id = [0xffu8; 32];
+        assert_eq!(
+            onyx_token_program_descriptor(
+                invalid_issuer.as_ptr(),
+                1_000_000,
+                metadata.as_ptr(),
+                metadata.len(),
+                10,
+                20,
+                14,
+                &mut manifest,
+                &mut manifest_len,
+                program_id.as_mut_ptr(),
+            ),
+            -2
+        );
+        assert!(manifest.is_null());
+        assert_eq!(manifest_len, 0);
+        assert_eq!(program_id, [0u8; 32]);
     }
 
     #[test]

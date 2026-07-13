@@ -174,6 +174,13 @@ int onyx_wallet_token_program_status(
     uint64_t *issued_supply_out, uint64_t *next_sequence_out,
     uint64_t *activation_height_out, uint64_t *deactivation_height_out,
     int *active_out, uint8_t **metadata_out, size_t *metadata_len_out);
+/* SDK helper: construct the canonical capped-token policy manifest and preview the Program ID for
+ * the production Merkle depth. A zero deactivation height means no scheduled deactivation. */
+int onyx_token_program_descriptor(
+    const uint8_t issuer[32], uint64_t max_supply,
+    const uint8_t *metadata, size_t metadata_len,
+    uint64_t activation_height, uint64_t deactivation_height, uint32_t circuit_k,
+    uint8_t **manifest_out, size_t *manifest_len_out, uint8_t program_id_out[32]);
 
 /* Build a proved/encrypted bridge with a zero ownership signature, returning the 32-byte message
  * the legacy wallet must sign. Finalize by injecting the resulting 64-byte CryptoNote signature. */

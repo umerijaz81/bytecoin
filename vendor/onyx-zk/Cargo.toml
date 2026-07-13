@@ -12,8 +12,7 @@ name = "onyx_zk"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-# Pinned, vendored (cargo vendor) before mainnet use. These are the SAME primitives the protocol
-# will use, so the test vectors below are authoritative.
+# Exact-pinned and committed under vendor/ for locked offline builds.
 halo2_proofs = "=0.3.2"
 halo2_gadgets = "=0.5.0"
 pasta_curves = "=0.5.1"

@@ -16,9 +16,8 @@ namespace zk {
 
 // IProofSystem backed by the vendored Halo2 C ABI (include/onyx_zk.h).
 //
-// O0 scope: backend identity, the Orchard Poseidon/Sinsemilla primitives, and the toy prove/verify
-// pipeline used to validate the FFI end-to-end. The protocol's real program-verifying-key dispatch
-// lands in O4; until then verify() targets the toy circuit.
+// The generic verify() override targets only the O0 toy pipeline. Consensus callers use the typed
+// fail-closed transfer, bridge, deployment, and issuance methods below.
 class Halo2ProofSystem : public IProofSystem {
 public:
 	struct VerifiedTransferDelta {

@@ -108,6 +108,13 @@ Only the standard token transfer, mixed native-fee transfer, and capped issuance
 satisfy these consensus execution gates. Every other call continues to fail closed. Walletd now
 constructs the canonical capped-token manifest, derives the issuer from its Onyx seed, funds the
 deployment from shielded native notes, binds the reserved deployment call into both authorization
-signatures, returns the Program ID, and reserves pending deployment nullifiers. SDK vectors and
-independent audit coverage remain required before the fungible-token phase is eligible for production
-activation.
+signatures, returns the Program ID, and reserves pending deployment nullifiers. SDK vectors are
+included, while independent audit coverage remains required before the fungible-token phase is
+eligible for production activation.
+
+For offline integration, the bounded C ABI function `onyx_token_program_descriptor` constructs the
+canonical `ONXM` policy manifest and previews the Program ID at consensus Merkle depth 32. The ID
+commits to the activation window and exact standard function descriptors, so changing any input
+changes the ID. This helper neither funds nor authorizes deployment; walletd remains the supported
+deployment path. Canonical manifest and reduced-depth circuit vectors live in
+`vendor/onyx-zk/test_vectors.md`.

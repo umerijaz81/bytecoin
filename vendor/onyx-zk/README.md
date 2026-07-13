@@ -1,51 +1,50 @@
-# onyx-zk — Onyx (V6) zero-knowledge backend (Rust)
+# onyx-zk — Onyx (V6) zero-knowledge backend
 
-> Reproducibility status: dependency versions are exact-pinned in `Cargo.toml` and
-> `Cargo.lock`; dependency sources are committed under `vendor/`; and the workspace Cargo
-> configuration plus CMake enforce locked offline builds.
+This crate is the vendored Rust proof and wallet backend used by the C++ node and wallet through the
+bounded C ABI in `include/onyx_zk.h`. Dependencies are exact-pinned in `Cargo.toml` and `Cargo.lock`,
+their sources are committed under `vendor/`, and workspace configuration enforces locked offline
+builds. The repository pins Rust 1.88.0 in `../../rust-toolchain.toml`.
 
-The workspace pins Rust 1.88.0 in `../../rust-toolchain.toml`. This minimum is required by the
-locked dependency graph (which includes Rust 2024-edition crates).
+## Implemented protocol surface
 
-Halo2/PLONKish (Pasta) proving stack exposed to the C++ node through a small C ABI
-(`include/onyx_zk.h`). Backs `cn::zk::Halo2ProofSystem` (`src/Core/zk`). This is **wrappers only** —
-no bespoke cryptography. See `../../ONYX_ARCHITECTURE.md` and `../../ONYX_O0_PLAN.md`.
+- Orchard-compatible Poseidon and Sinsemilla primitives plus the non-consensus O0 toy pipeline.
+- Canonical Onyx notes, encryption, commitment tree, retained anchors, nullifiers, apply/undo state,
+  wallet key derivation, full viewing keys, scanning, witness history, proving, and pending spends.
+- Authorized native transfers, mixed private-token/native-fee transfers, and one-way legacy shielding.
+- Canonical program registry and resource accounting, funded standard-token deployment, capped private
+  issuance, issuer authorization, sequence/cap enforcement, and wallet-derived program status.
+- Deterministic SDK descriptor construction through `onyx_token_program_descriptor`; canonical vectors
+  are recorded in `test_vectors.md`.
 
-## What it exposes (Onyx phase O0)
+Consensus callers must use the typed verification/application entry points. The toy verifier is only
+an FFI smoke test and is never valid on a consensus path. Mainnet activation remains prohibited until
+the external audit and release gates in `../../ONYX_PROTOCOL_SPEC.md` are satisfied.
 
-- `onyx_poseidon_hash2` — Orchard Poseidon (P128Pow5T3, arity 2) over the Pallas base field.
-- `onyx_sinsemilla_hash` — Sinsemilla hash over a fixed test domain.
-- `onyx_toy_prove` / `onyx_toy_verify` — a toy `a*b = public` circuit, present only to validate the
-  prove→verify pipeline and the FFI boundary end-to-end. **Not** a protocol circuit; real circuits
-  (notes, nullifiers, programs) arrive in O1/O4.
+## Reproducible build and test
 
-It deliberately contains **no** notes, nullifiers, value transfer, or consensus logic.
-
-## Build
-
-```
-# Rust-only checks (fast iteration):
-cargo test --release        # runs Poseidon/Sinsemilla + toy round-trip tests, prints KATs
-
-# Produces target/release/libonyx_zk.a (staticlib) for linking into the C++ tests/node,
-# wired via CMake (Corrosion) behind the OFF-by-default option ONYX_ZK (see ONYX_O0_PLAN.md, D3).
+```text
+cargo check --release --locked --offline
+cargo test --release --locked --offline
+cargo build --release --locked --offline
 ```
 
-Toolchain: developed against Rust 1.94. Pin with a `rust-toolchain.toml` before CI bring-up.
+CMake links the `staticlib` into Onyx-enabled node, wallet, and test targets behind `-DONYX_ZK=ON`.
+CI exercises the locked offline crate on Linux, Windows, and macOS.
 
-## Reproducible / offline builds
+## SDK descriptor contract
 
-Before any mainnet use, vendor the full dependency graph and build offline:
+`onyx_token_program_descriptor` accepts a canonical RedPallas issuer key, positive supply cap,
+printable metadata (1–128 bytes), activation window, and circuit K. It returns the canonical `ONXM`
+policy manifest and the Program ID for consensus Merkle depth 32. The Program ID commits to the
+manifest, activation window, backend, exact function shapes, schemas, costs, and verifying-key
+descriptors. Callers release the returned manifest with `onyx_free`.
 
-```
-cargo vendor vendor/          # writes the dep sources here; commit Cargo.lock + this tree
-cargo build --release --offline
-```
+Actual deployment still goes through `onyx_wallet_create_program_deployment`, which funds and signs
+the reserved deployment call. A descriptor preview grants no authority and cannot register a program.
 
-`PROVENANCE.md` records every crate with its version and checksum. Dependency versions are pinned in
-`Cargo.toml`; upgrades are explicit, reviewed changes.
+## FFI ownership and errors
 
-## Memory ownership across the FFI
-
-Rust allocates buffers returned via out-params (`onyx_toy_prove`); the C++ side must release them
-with `onyx_free`. The `--zk` C++ tests run under ASan in CI to catch boundary leaks.
+Every input length is bounded and every exported function is panic-contained. Positive `1` means
+success for protocol APIs; zero or negative values are fail-closed errors as documented by callers.
+Buffers returned through out-parameters are Rust-owned and must be released exactly once with
+`onyx_free(ptr, len)`.

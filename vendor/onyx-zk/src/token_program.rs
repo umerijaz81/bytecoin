@@ -584,6 +584,12 @@ mod tests {
 
     #[test]
     fn issuance_policy_is_canonical_and_adds_shape_bound_functions() {
+        let to_hex = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
         let issuer = (crate::spend_auth_circuit::spend_auth_generator() * pallas::Scalar::from(19))
             .to_bytes();
         let policy = TokenIssuancePolicy {
@@ -592,8 +598,16 @@ mod tests {
             metadata: b"symbol=TEST;decimals=8".to_vec(),
         };
         let encoded = policy.encode().unwrap();
+        assert_eq!(
+            to_hex(&encoded),
+            "4f4e584d0140bc7088034d07f4b45b5ff02dc0098130a44fc5d5fa4560eee0be603d1ef8b0c0843d1673796d626f6c3d544553543b646563696d616c733d38"
+        );
         assert_eq!(TokenIssuancePolicy::decode(&encoded).unwrap(), policy);
         let program = standard_token_program::<2>(14, &encoded, 10, Some(20)).unwrap();
+        assert_eq!(
+            to_hex(&program.id().unwrap()),
+            "a7249f5e44ebb1045937aa148bb7c6385f49d9d831f4131e8f5bba431eb501f1"
+        );
         assert_eq!(program.functions.len(), 14);
         assert_eq!(
             issuance_policy_from_entry(&program).unwrap(),
