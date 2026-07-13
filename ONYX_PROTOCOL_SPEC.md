@@ -186,6 +186,12 @@ the block's cumulative program cost, and inserts the immutable registry entry at
 Program IDs, insufficient fees, inactive windows, unknown circuit shapes, state replay, or aggregate
 cost overflow reject the entire transition.
 
+Walletd exposes this path as `create_onyx_program_deployment`. It derives the immutable issuer key
+from the wallet's Onyx seed, creates the canonical capped-token manifest, funds the minimum deployment
+fee from native shielded notes, and returns the derived Program ID with the relayable transaction.
+Pending type-0 transfers and type-2 deployments share nullifier reservation, preventing local
+double-selection before confirmation.
+
 A mintable standard manifest begins with `ONXM`, version `1`, and canonically encodes the RedPallas
 issuer verification key, positive maximum supply, and bounded printable metadata. It adds one- and
 two-output issuance functions. An issuance envelope contains a zero-spend/zero-fee authorized

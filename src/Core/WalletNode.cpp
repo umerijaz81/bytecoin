@@ -2,6 +2,8 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "WalletNode.hpp"
+#include <algorithm>
+#include <limits>
 #include "Config.hpp"
 #include "CryptoNoteTools.hpp"
 #include "TransactionBuilder.hpp"
@@ -33,6 +35,8 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
         json_rpc::make_member_method(&WalletNode::on_create_onyx_transaction)},
     {api::walletd::CreateOnyxTokenTransaction::method(),
         json_rpc::make_member_method(&WalletNode::on_create_onyx_token_transaction)},
+    {api::walletd::CreateOnyxProgramDeployment::method(),
+        json_rpc::make_member_method(&WalletNode::on_create_onyx_program_deployment)},
     {api::walletd::CreateOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_create_onyx_bridge)},
     {api::walletd::FinalizeOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_finalize_onyx_bridge)},
     {api::walletd::GetUnspents::method(), json_rpc::make_member_method(&WalletNode::on_get_unspent)},
@@ -462,6 +466,58 @@ bool WalletNode::on_create_onyx_token_transaction(http::Client *, http::RequestB
 	transaction.onyx_envelope = std::move(envelope);
 	response.binary_transaction = seria::to_binary(transaction);
 	response.transaction_hash = get_transaction_hash(transaction);
+	return true;
+}
+
+bool WalletNode::on_create_onyx_program_deployment(http::Client *, http::RequestBody &&,
+    json_rpc::Request &&, api::walletd::CreateOnyxProgramDeployment::Request &&request,
+    api::walletd::CreateOnyxProgramDeployment::Response &response) {
+	check_wallet_open();
+	if (get_wallet_state().db_empty())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	if (request.max_supply == 0 || request.metadata.empty() || request.metadata.size() > 128 ||
+	    !std::all_of(request.metadata.begin(), request.metadata.end(),
+	        [](unsigned char ch) { return ch >= 0x20 && ch <= 0x7e; }))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid capped-token supply or metadata");
+	if (request.fee < parameters::ONYX_MIN_PROGRAM_DEPLOYMENT_FEE)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program deployment fee is below consensus minimum");
+	const Height tip = get_wallet_state().get_tip_height();
+	if (tip == std::numeric_limits<Height>::max())
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx inclusion height overflow");
+	const Height inclusion = tip + 1;
+	Height activation = request.activation_height;
+	if (activation == 0) {
+		if (inclusion > std::numeric_limits<Height>::max() - 20)
+			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx activation height overflow");
+		// Keep the default valid if the transaction is mined anywhere in its default expiry window.
+		activation = inclusion + 20;
+	}
+	if (activation <= inclusion ||
+	    activation - inclusion > parameters::ONYX_MAX_PROGRAM_ACTIVATION_DELAY)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program activation outside consensus window");
+	if (request.deactivation_height != 0 && request.deactivation_height <= activation)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program deactivation must follow activation");
+	Height expiry = request.expiry_height;
+	if (expiry == 0) {
+		if (tip > std::numeric_limits<Height>::max() - 20)
+			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
+		expiry = tip + 20;
+	}
+	if (expiry < inclusion || expiry - inclusion > parameters::ONYX_MAX_EXPIRY_DISTANCE)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	BinaryArray envelope;
+	std::array<uint8_t, 32> program_id{};
+	if (!get_wallet_state().create_onyx_program_deployment(request.max_supply,
+	        common::as_binary_array(request.metadata), inclusion, activation, request.deactivation_height,
+	        request.fee, expiry, &envelope, &program_id))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx program deployment");
+	Transaction transaction;
+	transaction.version = m_currency.onyx_transaction_version;
+	transaction.onyx_type = parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT;
+	transaction.onyx_envelope = std::move(envelope);
+	response.binary_transaction = seria::to_binary(transaction);
+	response.transaction_hash = get_transaction_hash(transaction);
+	std::copy(program_id.begin(), program_id.end(), response.program_id.data);
 	return true;
 }
 

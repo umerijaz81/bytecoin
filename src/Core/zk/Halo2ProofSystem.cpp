@@ -372,6 +372,30 @@ bool Halo2ProofSystem::wallet_reserve_spends(const BinaryArray &snapshot,
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_reserve_deployment_spends(const BinaryArray &snapshot,
+    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 16> &network,
+    const BinaryArray &encoded, BinaryArray *next_snapshot) {
+	if (snapshot.empty() || encoded.empty() || next_snapshot == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len = 0;
+	const int rc = onyx_wallet_reserve_deployment_spends(snapshot.data(), snapshot.size(), seed.data(),
+	    network.data(), encoded.data(), encoded.size(), &next_ptr, &next_len);
+	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	return true;
+}
+
 bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
     const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
     uint64_t legacy_amount, uint64_t legacy_stack_index,
@@ -414,6 +438,33 @@ bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge
 	}
 	try {
 		finalized_bridge->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
+	return true;
+}
+
+bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &wallet_snapshot,
+    const std::array<uint8_t, 32> &seed, uint64_t max_supply, const BinaryArray &metadata,
+    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
+    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
+    std::array<uint8_t, 32> *program_id) {
+	if (wallet_snapshot.empty() || metadata.empty() || deployment == nullptr || program_id == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	const int rc = onyx_wallet_create_program_deployment(wallet_snapshot.data(), wallet_snapshot.size(),
+	    seed.data(), max_supply, metadata.data(), metadata.size(), inclusion_height, activation_height,
+	    deactivation_height, expiry_height, fee, circuit_k, &ptr, &len, program_id->data());
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		deployment->assign(ptr, ptr + len);
 	} catch (...) {
 		onyx_free(ptr, len);
 		throw;

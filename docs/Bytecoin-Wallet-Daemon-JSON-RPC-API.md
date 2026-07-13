@@ -59,6 +59,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | `get_onyx_asset_balance` | Returns the confirmed balance and unspent-note count for one exact Onyx program/asset pair. |
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
 | `create_onyx_token_transaction` | Transfers a private standard token while paying the miner fee from native Onyx notes in the same proof. |
+| `create_onyx_program_deployment` | Deploys a capped private fungible-token program, funded and authorized by native Onyx notes. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
 
@@ -163,6 +164,36 @@ Insufficient token funds and insufficient native fee funds both fail closed.
     "fee":1000,
     "expiry_height":0,
     "memo":"private token payment"
+  }
+}
+```
+
+#### `create_onyx_program_deployment`
+
+This method constructs the canonical mintable private-token manifest from the wallet's Onyx issuer
+key. `max_supply` is the immutable atomic-unit cap and `metadata` must contain 1-128 printable ASCII
+bytes. The fee must be at least `100000` atomic native units. Zero `activation_height` selects 20
+blocks after the expected inclusion, keeping it valid throughout the default expiry window; a
+nonzero activation must be 1-100,000 blocks after that expected inclusion. Zero
+`deactivation_height` means no scheduled deactivation. Zero
+`expiry_height` selects the wallet tip plus 20.
+
+The response returns `binary_transaction`, `transaction_hash`, and the manifest-derived `program_id`.
+Submit the binary transaction through `send_transaction`. Pending transfers and deployments reserve
+their native nullifiers against one another, so a second builder cannot reuse the same funding note.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"deploy-token",
+  "method":"create_onyx_program_deployment",
+  "params":{
+    "max_supply":1000000000,
+    "metadata":"PRIVATE-USD/v1",
+    "activation_height":0,
+    "deactivation_height":0,
+    "fee":100000,
+    "expiry_height":0
   }
 }
 ```

@@ -154,6 +154,10 @@ int onyx_wallet_reserve_spends(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
     const uint8_t expected_network[16], const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out);
+int onyx_wallet_reserve_deployment_spends(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
+    const uint8_t expected_network[16], const uint8_t *encoded, size_t encoded_len,
+    uint8_t **snapshot_out, size_t *snapshot_len_out);
 int onyx_wallet_summary(const uint8_t *snapshot, size_t snapshot_len,
                         uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
 /* Return the confirmed unspent balance for one exact (program id, asset id) pair. */
@@ -172,6 +176,15 @@ int onyx_wallet_create_bridge(
 int onyx_wallet_finalize_bridge(
     const uint8_t *unsigned_bridge, size_t unsigned_bridge_len,
     const uint8_t ownership_signature[64], uint8_t **bridge_out, size_t *bridge_len_out);
+/* Build a fee-funded deployment for the capped standard private-token program. A zero
+ * deactivation height means no scheduled deactivation. */
+int onyx_wallet_create_program_deployment(
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
+    const uint8_t seed[32], uint64_t max_supply,
+    const uint8_t *metadata, size_t metadata_len,
+    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
+    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k,
+    uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
 int onyx_wallet_create_token_issuance(
     const uint8_t *consensus_snapshot, size_t consensus_snapshot_len,
     const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],

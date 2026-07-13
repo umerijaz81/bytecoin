@@ -97,17 +97,42 @@ impl AuthorizedProgramDeployment {
     }
 
     pub fn deployment_hash(&self) -> [u8; 32] {
-        let mut hash = Sha256::new();
-        hash.update(DEPLOYMENT_HASH_DOMAIN);
-        hash.update([PROGRAM_DEPLOYMENT_VERSION]);
-        hash.update(self.funding.preimage.network_id);
-        hash.update(self.activation_height.to_le_bytes());
-        hash.update(self.deactivation_height.unwrap_or(u64::MAX).to_le_bytes());
-        hash.update((self.token_manifest.len() as u64).to_le_bytes());
-        hash.update(&self.token_manifest);
-        hash.finalize().into()
+        deployment_hash(
+            self.funding.preimage.network_id,
+            &self.token_manifest,
+            self.activation_height,
+            self.deactivation_height,
+        )
     }
 
+    pub fn id(&self) -> Result<[u8; 32], ProgramDeploymentError> {
+        let encoded = self.encode()?;
+        let mut hash = Sha256::new();
+        hash.update(DEPLOYMENT_ID_DOMAIN);
+        hash.update((encoded.len() as u64).to_le_bytes());
+        hash.update(encoded);
+        Ok(hash.finalize().into())
+    }
+}
+
+pub fn deployment_hash(
+    network_id: [u8; 16],
+    token_manifest: &[u8],
+    activation_height: u64,
+    deactivation_height: Option<u64>,
+) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(DEPLOYMENT_HASH_DOMAIN);
+    hash.update([PROGRAM_DEPLOYMENT_VERSION]);
+    hash.update(network_id);
+    hash.update(activation_height.to_le_bytes());
+    hash.update(deactivation_height.unwrap_or(u64::MAX).to_le_bytes());
+    hash.update((token_manifest.len() as u64).to_le_bytes());
+    hash.update(token_manifest);
+    hash.finalize().into()
+}
+
+impl AuthorizedProgramDeployment {
     pub fn program_entry<const DEPTH: usize>(
         &self,
         k: u32,
@@ -159,15 +184,6 @@ impl AuthorizedProgramDeployment {
         };
         deployment.validate_structure()?;
         Ok(deployment)
-    }
-
-    pub fn id(&self) -> Result<[u8; 32], ProgramDeploymentError> {
-        let encoded = self.encode()?;
-        let mut hash = Sha256::new();
-        hash.update(DEPLOYMENT_ID_DOMAIN);
-        hash.update((encoded.len() as u64).to_le_bytes());
-        hash.update(encoded);
-        Ok(hash.finalize().into())
     }
 }
 

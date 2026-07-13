@@ -124,6 +124,9 @@ public:
 	    WalletScanResult *result);
 	static bool wallet_reserve_spends(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, const BinaryArray &encoded, BinaryArray *next_snapshot);
+	static bool wallet_reserve_deployment_spends(const BinaryArray &snapshot,
+	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 16> &network,
+	    const BinaryArray &encoded, BinaryArray *next_snapshot);
 	static bool wallet_summary(const BinaryArray &snapshot, WalletScanResult *result);
 	static bool wallet_asset_balance(const BinaryArray &snapshot,
 	    const std::array<uint8_t, 32> &program_id, const std::array<uint8_t, 32> &asset_id,
@@ -135,6 +138,11 @@ public:
 	    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash);
 	static bool wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
 	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge);
+	static bool wallet_create_program_deployment(const BinaryArray &wallet_snapshot,
+	    const std::array<uint8_t, 32> &seed, uint64_t max_supply, const BinaryArray &metadata,
+	    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
+	    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
+	    std::array<uint8_t, 32> *program_id);
 	static bool wallet_create_token_issuance(const BinaryArray &consensus_snapshot,
 	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t expiry_height,

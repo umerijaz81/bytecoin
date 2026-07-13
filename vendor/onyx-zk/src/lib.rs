@@ -1631,6 +1631,79 @@ pub extern "C" fn onyx_wallet_reserve_spends(
 }
 
 #[no_mangle]
+pub extern "C" fn onyx_wallet_reserve_deployment_spends(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    expected_network: *const u8,
+    encoded: *const u8,
+    encoded_len: usize,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || expected_network.is_null()
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+        }
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let network: [u8; 16] = unsafe { slice::from_raw_parts(expected_network, 16) }
+            .try_into()
+            .unwrap();
+        let keys = match keys::MasterSeed::new(seed)
+            .derive(network)
+            .and_then(|keys| keys.full_viewing_key())
+        {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let mut wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let deployment = match program_deployment::AuthorizedProgramDeployment::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(deployment) => deployment,
+            Err(_) => return -2,
+        };
+        if wallet
+            .reserve_transfer_spends(&keys, &deployment.funding)
+            .is_err()
+        {
+            return -2;
+        }
+        let encoded = match wallet.encode_snapshot() {
+            Ok(encoded) if encoded.len() <= MAX_STATE_SNAPSHOT_BYTES => encoded,
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+        }
+        1
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_wallet_summary(
     snapshot: *const u8,
     snapshot_len: usize,
@@ -1983,6 +2056,114 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
             *issuance_out = ptr;
             *issuance_len_out = len;
             *sequence_out = sequence;
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_program_deployment(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    max_supply: u64,
+    metadata: *const u8,
+    metadata_len: usize,
+    inclusion_height: u64,
+    activation_height: u64,
+    deactivation_height: u64,
+    expiry_height: u64,
+    fee: u64,
+    circuit_k: u32,
+    deployment_out: *mut *mut u8,
+    deployment_len_out: *mut usize,
+    program_id_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if wallet_snapshot.is_null()
+            || wallet_snapshot_len == 0
+            || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || max_supply == 0
+            || metadata.is_null()
+            || metadata_len == 0
+            || metadata_len > 128
+            || activation_height <= inclusion_height
+            || activation_height - inclusion_height
+                > program_deployment::MAX_PROGRAM_ACTIVATION_DELAY
+            || (deactivation_height != 0 && deactivation_height <= activation_height)
+            || expiry_height < inclusion_height
+            || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
+            || fee < program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE
+            || !(10..=20).contains(&circuit_k)
+            || deployment_out.is_null()
+            || deployment_len_out.is_null()
+            || program_id_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *deployment_out = std::ptr::null_mut();
+            *deployment_len_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let keys = match keys::MasterSeed::new(seed).derive(wallet.network_id()) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let issuer = match keys.address(0) {
+            Ok(address) => address.spend_authority_key,
+            Err(_) => return -2,
+        };
+        let manifest = match (token_program::TokenIssuancePolicy {
+            issuer,
+            max_supply,
+            metadata: unsafe { slice::from_raw_parts(metadata, metadata_len) }.to_vec(),
+        })
+        .encode()
+        {
+            Ok(manifest) => manifest,
+            Err(_) => return -1,
+        };
+        let deactivation = (deactivation_height != 0).then_some(deactivation_height);
+        let deployment = match wallet.build_program_deployment(
+            &keys,
+            manifest,
+            activation_height,
+            deactivation,
+            expiry_height,
+            fee,
+            circuit_k,
+        ) {
+            Ok(deployment) => deployment,
+            Err(_) => return -5,
+        };
+        if verify_program_deployment_dispatch(&deployment, 32, circuit_k, Some(inclusion_height))
+            .is_err()
+        {
+            return -2;
+        }
+        let program_id = deployment.funding.preimage.programs[0].program_id;
+        let encoded = match deployment.encode() {
+            Ok(encoded) if encoded.len() <= program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES => {
+                encoded
+            }
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *deployment_out = ptr;
+            *deployment_len_out = len;
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
         }
         1
     })

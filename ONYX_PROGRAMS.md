@@ -95,6 +95,9 @@ commitment, program call, proof byte, and the fee. This permits normal miner fee
 token value to offset native value or vice versa.
 
 Only the standard token transfer, mixed native-fee transfer, and capped issuance functions currently
-satisfy these consensus execution gates. Every other call continues to fail closed. Wallet deployment
-RPC, SDK vectors, and independent audit coverage remain required before the fungible-token phase is
-eligible for production activation.
+satisfy these consensus execution gates. Every other call continues to fail closed. Walletd now
+constructs the canonical capped-token manifest, derives the issuer from its Onyx seed, funds the
+deployment from shielded native notes, binds the reserved deployment call into both authorization
+signatures, returns the Program ID, and reserves pending deployment nullifiers. SDK vectors and
+independent audit coverage remain required before the fungible-token phase is eligible for production
+activation.

@@ -12,6 +12,9 @@ use crate::authorization::{
 use crate::bridge::{AuthorizedBridge, BridgePreimage};
 use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
+use crate::program_deployment::{
+    deployment_hash, AuthorizedProgramDeployment, PROGRAM_DEPLOYMENT_FUNCTION_ID,
+};
 use crate::proof::{
     create_bridge_proof, create_mixed_token_transfer_proof, create_multi_transfer_proof,
     create_token_issuance_proof, multi_transfer_backend_id, BridgeWitness, MixedTokenWitness,
@@ -21,7 +24,7 @@ use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_M
 use crate::token_issuance::{sign_issuer_authorization, AuthorizedTokenIssuance};
 use crate::token_program::{
     issuance_function_id, issuance_public_data_hash, mixed_transfer_function_id,
-    mixed_transfer_public_data_hash, TOKEN_PROGRAM_BACKEND,
+    mixed_transfer_public_data_hash, standard_token_program, TOKEN_PROGRAM_BACKEND,
 };
 use crate::transaction::{
     AuthorizedTransaction, ProgramCall, PublicOutput, PublicSpend, TransactionPreimage,
@@ -346,6 +349,10 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         self.tree.root()
     }
 
+    pub fn network_id(&self) -> [u8; 16] {
+        self.network_id
+    }
+
     pub fn leaf_count(&self) -> u64 {
         self.tree.leaf_count()
     }
@@ -401,6 +408,79 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         expiry_height: u64,
         memo: Vec<u8>,
         circuit_k: u32,
+    ) -> Result<AuthorizedTransaction, WalletBuildError> {
+        self.build_native_transfer(
+            keys,
+            recipient,
+            amount,
+            fee,
+            expiry_height,
+            memo,
+            circuit_k,
+            vec![],
+        )
+    }
+
+    pub fn build_program_deployment(
+        &self,
+        keys: &KeyBundle,
+        token_manifest: Vec<u8>,
+        activation_height: u64,
+        deactivation_height: Option<u64>,
+        expiry_height: u64,
+        fee: u64,
+        circuit_k: u32,
+    ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
+        let entry = standard_token_program::<DEPTH>(
+            circuit_k,
+            &token_manifest,
+            activation_height,
+            deactivation_height,
+        )
+        .map_err(|_| WalletBuildError::InvalidValue)?;
+        let program_id = entry.id().map_err(|_| WalletBuildError::Crypto)?;
+        let call = ProgramCall {
+            program_id,
+            function_id: PROGRAM_DEPLOYMENT_FUNCTION_ID,
+            public_data_hash: deployment_hash(
+                self.network_id,
+                &token_manifest,
+                activation_height,
+                deactivation_height,
+            ),
+        };
+        // A one-unit self-payment gives the generic native builder a canonical non-zero output;
+        // every remaining selected unit returns as shielded change and only `fee` is destroyed.
+        let self_address = keys.address(0).map_err(|_| WalletBuildError::Crypto)?;
+        let funding = self.build_native_transfer(
+            keys,
+            &self_address,
+            1,
+            fee,
+            expiry_height,
+            vec![],
+            circuit_k,
+            vec![call],
+        )?;
+        Ok(AuthorizedProgramDeployment {
+            token_manifest,
+            activation_height,
+            deactivation_height,
+            funding,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_native_transfer(
+        &self,
+        keys: &KeyBundle,
+        recipient: &RecipientAddress,
+        amount: u64,
+        fee: u64,
+        expiry_height: u64,
+        memo: Vec<u8>,
+        circuit_k: u32,
+        programs: Vec<ProgramCall>,
     ) -> Result<AuthorizedTransaction, WalletBuildError> {
         let required = amount
             .checked_add(fee)
@@ -510,7 +590,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
                 })
                 .collect(),
             outputs,
-            programs: vec![],
+            programs,
         };
         let prepared =
             prepare_same_owner_spends(keys, &mut preimage).map_err(|_| WalletBuildError::Crypto)?;
@@ -1246,6 +1326,46 @@ mod tests {
             .scan_transfer(&sender.full_viewing_key().unwrap(), &change)
             .unwrap();
         assert_eq!(sender_wallet.unspent_balance().unwrap(), 3);
+    }
+
+    #[test]
+    fn program_deployment_builder_binds_manifest_call_and_fee() {
+        const DEPTH: usize = 2;
+        const K: u32 = 14;
+        let network = [19; NETWORK_ID_BYTES];
+        let sender = MasterSeed::new([41; 32]).derive(network).unwrap();
+        let wallet = funded_wallet::<DEPTH>(
+            &sender,
+            network,
+            &[crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE + 1],
+        );
+        let deployment = wallet
+            .build_program_deployment(
+                &sender,
+                b"onyx.standard.private-fungible-token/v1".to_vec(),
+                10,
+                Some(100),
+                20,
+                crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE,
+                K,
+            )
+            .unwrap();
+        assert_eq!(deployment.funding.preimage.programs.len(), 1);
+        assert_eq!(
+            deployment.funding.preimage.programs[0].public_data_hash,
+            deployment.deployment_hash()
+        );
+        let entry =
+            crate::program_deployment::verify_standard_deployment::<DEPTH, 1, 1>(K, &deployment, 9)
+                .unwrap();
+        assert_eq!(
+            entry.id().unwrap(),
+            deployment.funding.preimage.programs[0].program_id
+        );
+        assert_eq!(
+            AuthorizedProgramDeployment::decode(&deployment.encode().unwrap()).unwrap(),
+            deployment
+        );
     }
 
     #[test]
