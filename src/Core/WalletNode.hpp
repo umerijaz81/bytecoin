@@ -46,6 +46,8 @@ public:
 	    api::walletd::GetOnyxStatus::Request &&, api::walletd::GetOnyxStatus::Response &);
 	bool on_get_onyx_asset_balance(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::GetOnyxAssetBalance::Request &&, api::walletd::GetOnyxAssetBalance::Response &);
+	bool on_get_onyx_program_status(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::walletd::GetOnyxProgramStatus::Request &&, api::walletd::GetOnyxProgramStatus::Response &);
 	bool on_create_onyx_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::CreateOnyxTransaction::Request &&, api::walletd::CreateOnyxTransaction::Response &);
 	bool on_create_onyx_token_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,

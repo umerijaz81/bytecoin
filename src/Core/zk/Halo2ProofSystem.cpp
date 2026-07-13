@@ -353,6 +353,39 @@ bool Halo2ProofSystem::wallet_asset_balance(const BinaryArray &snapshot,
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_token_program_status(const BinaryArray &snapshot,
+    const std::array<uint8_t, 32> &program_id, uint64_t query_height,
+    WalletTokenProgramStatus *result) {
+	if (snapshot.empty() || result == nullptr)
+		return false;
+	WalletTokenProgramStatus status;
+	uint8_t *metadata_ptr = nullptr;
+	size_t metadata_len = 0;
+	int active = 0;
+	const int rc = onyx_wallet_token_program_status(snapshot.data(), snapshot.size(), program_id.data(),
+	    query_height, status.issuer.data(), &status.max_supply, &status.issued_supply,
+	    &status.next_sequence, &status.activation_height, &status.deactivation_height, &active,
+	    &metadata_ptr, &metadata_len);
+	if (rc != 1 || (metadata_len != 0 && metadata_ptr == nullptr)) {
+		if (metadata_ptr != nullptr)
+			onyx_free(metadata_ptr, metadata_len);
+		return false;
+	}
+	try {
+		if (metadata_len != 0)
+			status.metadata.assign(metadata_ptr, metadata_ptr + metadata_len);
+	} catch (...) {
+		if (metadata_ptr != nullptr)
+			onyx_free(metadata_ptr, metadata_len);
+		throw;
+	}
+	if (metadata_ptr != nullptr)
+		onyx_free(metadata_ptr, metadata_len);
+	status.active = active != 0;
+	*result = std::move(status);
+	return true;
+}
+
 bool Halo2ProofSystem::wallet_reserve_spends(const BinaryArray &snapshot,
     const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 16> &network,
     const BinaryArray &encoded, BinaryArray *next_snapshot) {

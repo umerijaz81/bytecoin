@@ -1807,6 +1807,87 @@ pub extern "C" fn onyx_wallet_asset_balance(
 }
 
 #[no_mangle]
+pub extern "C" fn onyx_wallet_token_program_status(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    program_id: *const u8,
+    query_height: u64,
+    issuer_out: *mut u8,
+    max_supply_out: *mut u64,
+    issued_supply_out: *mut u64,
+    next_sequence_out: *mut u64,
+    activation_height_out: *mut u64,
+    deactivation_height_out: *mut u64,
+    active_out: *mut i32,
+    metadata_out: *mut *mut u8,
+    metadata_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || program_id.is_null()
+            || issuer_out.is_null()
+            || max_supply_out.is_null()
+            || issued_supply_out.is_null()
+            || next_sequence_out.is_null()
+            || activation_height_out.is_null()
+            || deactivation_height_out.is_null()
+            || active_out.is_null()
+            || metadata_out.is_null()
+            || metadata_len_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(issuer_out, 0, 32);
+            *max_supply_out = 0;
+            *issued_supply_out = 0;
+            *next_sequence_out = 0;
+            *activation_height_out = 0;
+            *deactivation_height_out = 0;
+            *active_out = 0;
+            *metadata_out = std::ptr::null_mut();
+            *metadata_len_out = 0;
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
+            .try_into()
+            .unwrap();
+        let entry = match wallet.program_registry().get(&program_id) {
+            Some(entry) => entry,
+            None => return -5,
+        };
+        let (_, _, policy) = match token_program::issuance_policy_from_entry(entry) {
+            Ok(policy) => policy,
+            Err(_) => return -5,
+        };
+        let active = query_height >= entry.activation_height
+            && entry
+                .deactivation_height
+                .is_none_or(|height| query_height < height);
+        let (metadata_ptr, metadata_len) = into_raw(policy.metadata);
+        unsafe {
+            std::ptr::copy_nonoverlapping(policy.issuer.as_ptr(), issuer_out, 32);
+            *max_supply_out = policy.max_supply;
+            *issued_supply_out = wallet.token_issued_supply(&program_id);
+            *next_sequence_out = wallet.token_next_issuance_sequence(&program_id);
+            *activation_height_out = entry.activation_height;
+            *deactivation_height_out = entry.deactivation_height.unwrap_or(0);
+            *active_out = i32::from(active);
+            *metadata_out = metadata_ptr;
+            *metadata_len_out = metadata_len;
+        }
+        1
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_wallet_create_bridge(
     seed: *const u8,
     recipient: *const u8,
@@ -2762,6 +2843,50 @@ mod tests {
             ),
             -1
         );
+    }
+
+    #[test]
+    fn wallet_program_status_fails_closed_for_unknown_program() {
+        let wallet = wallet::WalletState::<32>::new([9u8; 16]);
+        let snapshot = wallet.encode_snapshot().unwrap();
+        let program_id = [7u8; 32];
+        let mut issuer = [0xffu8; 32];
+        let mut max_supply = u64::MAX;
+        let mut issued_supply = u64::MAX;
+        let mut next_sequence = u64::MAX;
+        let mut activation_height = u64::MAX;
+        let mut deactivation_height = u64::MAX;
+        let mut active = -1;
+        let mut metadata = 1usize as *mut u8;
+        let mut metadata_len = usize::MAX;
+
+        assert_eq!(
+            onyx_wallet_token_program_status(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                program_id.as_ptr(),
+                10,
+                issuer.as_mut_ptr(),
+                &mut max_supply,
+                &mut issued_supply,
+                &mut next_sequence,
+                &mut activation_height,
+                &mut deactivation_height,
+                &mut active,
+                &mut metadata,
+                &mut metadata_len,
+            ),
+            -5
+        );
+        assert_eq!(issuer, [0u8; 32]);
+        assert_eq!(max_supply, 0);
+        assert_eq!(issued_supply, 0);
+        assert_eq!(next_sequence, 0);
+        assert_eq!(activation_height, 0);
+        assert_eq!(deactivation_height, 0);
+        assert_eq!(active, 0);
+        assert!(metadata.is_null());
+        assert_eq!(metadata_len, 0);
     }
 
     #[test]

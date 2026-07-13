@@ -181,6 +181,29 @@ bool WalletState::get_onyx_asset_balance(const std::array<uint8_t, 32> &program_
 #endif
 }
 
+bool WalletState::get_onyx_token_program_status(const std::array<uint8_t, 32> &program_id,
+    Height query_height, OnyxTokenProgramStatus *result) const {
+#ifdef onyx_USE_ZK
+	if (m_onyx_wallet_snapshot.empty() || result == nullptr)
+		return false;
+	zk::Halo2ProofSystem::WalletTokenProgramStatus status;
+	if (!zk::Halo2ProofSystem::wallet_token_program_status(
+	        m_onyx_wallet_snapshot, program_id, query_height, &status))
+		return false;
+	result->issuer = status.issuer;
+	result->max_supply = status.max_supply;
+	result->issued_supply = status.issued_supply;
+	result->next_sequence = status.next_sequence;
+	result->activation_height = status.activation_height;
+	result->deactivation_height = status.deactivation_height;
+	result->active = status.active;
+	result->metadata = std::move(status.metadata);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
     Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const {
 #ifdef onyx_USE_ZK

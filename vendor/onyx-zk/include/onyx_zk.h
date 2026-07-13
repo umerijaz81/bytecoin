@@ -167,6 +167,13 @@ int onyx_wallet_asset_balance(
     const uint8_t *snapshot, size_t snapshot_len,
     const uint8_t program_id[32], const uint8_t asset_id[32],
     uint64_t *balance_out, size_t *unspent_note_count_out);
+/* Inspect one capped token program from the wallet-derived public consensus view. */
+int onyx_wallet_token_program_status(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t program_id[32],
+    uint64_t query_height, uint8_t issuer_out[32], uint64_t *max_supply_out,
+    uint64_t *issued_supply_out, uint64_t *next_sequence_out,
+    uint64_t *activation_height_out, uint64_t *deactivation_height_out,
+    int *active_out, uint8_t **metadata_out, size_t *metadata_len_out);
 
 /* Build a proved/encrypted bridge with a zero ownership signature, returning the 32-byte message
  * the legacy wallet must sign. Finalize by injecting the resulting 64-byte CryptoNote signature. */

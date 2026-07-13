@@ -59,6 +59,16 @@ public:
 		uint64_t balance = 0;
 		size_t unspent_note_count = 0;
 	};
+	struct WalletTokenProgramStatus {
+		std::array<uint8_t, 32> issuer{};
+		uint64_t max_supply = 0;
+		uint64_t issued_supply = 0;
+		uint64_t next_sequence = 0;
+		uint64_t activation_height = 0;
+		uint64_t deactivation_height = 0;
+		bool active = false;
+		BinaryArray metadata;
+	};
 	struct SupplyAudit {
 		uint64_t total_bridged = 0;
 		uint64_t total_fees = 0;
@@ -133,6 +143,9 @@ public:
 	static bool wallet_asset_balance(const BinaryArray &snapshot,
 	    const std::array<uint8_t, 32> &program_id, const std::array<uint8_t, 32> &asset_id,
 	    WalletAssetBalance *result);
+	static bool wallet_token_program_status(const BinaryArray &snapshot,
+	    const std::array<uint8_t, 32> &program_id, uint64_t query_height,
+	    WalletTokenProgramStatus *result);
 	static bool wallet_create_bridge(const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
 	    uint64_t legacy_amount, uint64_t legacy_stack_index,

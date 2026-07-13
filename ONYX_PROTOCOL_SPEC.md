@@ -211,7 +211,8 @@ Wallet snapshot version `2` appends the canonical program registry and issuance 
 from accepted type-2 and type-3 envelopes. Registry entries, activation, Program IDs, issuance calls,
 sequence, and cap are rechecked while scanning; block acceptance remains the source of cryptographic
 proof validity. Issuance proving consumes this local view and the wallet commitment root, avoiding an
-unauthenticated full-state download from the daemon.
+unauthenticated full-state download from the daemon. Walletd's `get_onyx_program_status` reads the
+same local view and evaluates activation at the next possible inclusion height.
 
 Mixed token transfers remain envelope type `0` and use the standard token backend. Eight registered
 function shapes compose a token lane `(1..=2 spends, 1..=2 outputs)` with a native lane `(1..=2

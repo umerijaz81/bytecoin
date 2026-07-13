@@ -52,6 +52,16 @@ class WalletState : public WalletStateBasic {
 	};
 
 public:
+	struct OnyxTokenProgramStatus {
+		std::array<uint8_t, 32> issuer{};
+		uint64_t max_supply = 0;
+		uint64_t issued_supply = 0;
+		uint64_t next_sequence = 0;
+		Height activation_height = 0;
+		Height deactivation_height = 0;
+		bool active = false;
+		BinaryArray metadata;
+	};
 	explicit WalletState(Wallet &, logging::ILogger &, const Config &, const Currency &, DB &db);
 
 	const Wallet &get_wallet() const { return m_wallet; }
@@ -89,6 +99,8 @@ public:
 	const std::array<uint8_t, 32> &get_onyx_root() const { return m_onyx_root; }
 	bool get_onyx_asset_balance(const std::array<uint8_t, 32> &program_id,
 	    const std::array<uint8_t, 32> &asset_id, uint64_t *balance, size_t *unspent_note_count) const;
+	bool get_onyx_token_program_status(const std::array<uint8_t, 32> &program_id, Height query_height,
+	    OnyxTokenProgramStatus *result) const;
 	bool create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const;
 	bool create_onyx_token_transfer(const std::array<uint8_t, 91> &recipient,

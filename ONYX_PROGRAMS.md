@@ -82,6 +82,12 @@ so walletd does not download or trust a daemon-supplied raw consensus snapshot. 
 `create_onyx_token_issuance` RPC also checks issuer ownership, activation, expiry, remaining cap, and
 pending same-program sequence conflicts.
 
+Walletd exposes the same locally reconstructed public state through `get_onyx_program_status`. The
+method reports the immutable issuer and cap, accepted issued and remaining supply, next consensus
+sequence, activation window, and canonical metadata. Its `active` field is evaluated at the next
+possible inclusion height. This is an introspection API only: builders and callers still fail closed
+when the program is missing, inactive, unauthorized, over cap, or has a pending sequence conflict.
+
 A program call becomes executable only after its audited function circuit supplies all of the
 following:
 

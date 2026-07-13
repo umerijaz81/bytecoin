@@ -356,6 +356,23 @@ void ser_members(api::walletd::GetOnyxAssetBalance::Response &v, ISeria &s) {
 	seria_kv("unspent_note_count", v.unspent_note_count, s);
 }
 
+void ser_members(api::walletd::GetOnyxProgramStatus::Request &v, ISeria &s) {
+	seria_kv("program_id", v.program_id, s);
+}
+
+void ser_members(api::walletd::GetOnyxProgramStatus::Response &v, ISeria &s) {
+	seria_kv("issuer", v.issuer, s);
+	seria_kv("max_supply", v.max_supply, s);
+	seria_kv("issued_supply", v.issued_supply, s);
+	seria_kv("remaining_supply", v.remaining_supply, s);
+	seria_kv("next_sequence", v.next_sequence, s);
+	seria_kv("query_height", v.query_height, s);
+	seria_kv("activation_height", v.activation_height, s);
+	seria_kv("deactivation_height", v.deactivation_height, s);
+	seria_kv("active", v.active, s);
+	seria_kv("metadata", v.metadata, s);
+}
+
 void ser_members(api::walletd::CreateOnyxTransaction::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("amount", v.amount, s);

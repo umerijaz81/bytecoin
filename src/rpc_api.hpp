@@ -401,6 +401,25 @@ struct GetOnyxAssetBalance {
 	};
 };
 
+struct GetOnyxProgramStatus {
+	static std::string method() { return "get_onyx_program_status"; }
+	struct Request {
+		std::string program_id;  // canonical 32-byte hex identifier
+	};
+	struct Response {
+		Hash issuer{};
+		Amount max_supply = 0;
+		Amount issued_supply = 0;
+		Amount remaining_supply = 0;
+		uint64_t next_sequence = 0;
+		Height query_height = 0;  // status at the next possible inclusion height
+		Height activation_height = 0;
+		Height deactivation_height = 0;  // zero means no scheduled deactivation
+		bool active = false;
+		BinaryArray metadata;
+	};
+};
+
 struct CreateOnyxTransaction {
 	static std::string method() { return "create_onyx_transaction"; }
 	struct Request {
@@ -1103,6 +1122,8 @@ void ser_members(cn::api::walletd::GetOnyxStatus::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxStatus::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxAssetBalance::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxAssetBalance::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxProgramStatus::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxProgramStatus::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTransaction::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTransaction::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTokenTransaction::Request &v, ISeria &s);

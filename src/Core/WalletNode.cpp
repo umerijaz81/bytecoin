@@ -31,6 +31,8 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
     {api::walletd::GetOnyxStatus::method(), json_rpc::make_member_method(&WalletNode::on_get_onyx_status)},
     {api::walletd::GetOnyxAssetBalance::method(),
         json_rpc::make_member_method(&WalletNode::on_get_onyx_asset_balance)},
+    {api::walletd::GetOnyxProgramStatus::method(),
+        json_rpc::make_member_method(&WalletNode::on_get_onyx_program_status)},
     {api::walletd::CreateOnyxTransaction::method(),
         json_rpc::make_member_method(&WalletNode::on_create_onyx_transaction)},
     {api::walletd::CreateOnyxTokenTransaction::method(),
@@ -403,6 +405,37 @@ bool WalletNode::on_get_onyx_asset_balance(http::Client *, http::RequestBody &&,
 	if (!get_wallet_state().get_onyx_asset_balance(
 	        program_id, asset_id, &response.balance, &response.unspent_note_count))
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Onyx wallet state is unavailable");
+	return true;
+}
+
+bool WalletNode::on_get_onyx_program_status(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::walletd::GetOnyxProgramStatus::Request &&request,
+    api::walletd::GetOnyxProgramStatus::Response &response) {
+	check_wallet_open();
+	if (get_wallet_state().db_empty())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	std::array<uint8_t, 32> program_id{};
+	if (!common::from_hex(request.program_id, program_id.data(), program_id.size()))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx Program ID");
+	const Height tip = get_wallet_state().get_tip_height();
+	if (tip == std::numeric_limits<Height>::max())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Onyx query height overflow");
+	response.query_height = tip + 1;
+	WalletState::OnyxTokenProgramStatus status;
+	if (!get_wallet_state().get_onyx_token_program_status(program_id, response.query_height, &status))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS,
+		    "Unknown capped-token program or Onyx wallet state unavailable");
+	if (status.issued_supply > status.max_supply)
+		throw json_rpc::Error(json_rpc::INTERNAL_ERROR, "Corrupted Onyx token supply state");
+	std::copy(status.issuer.begin(), status.issuer.end(), response.issuer.data);
+	response.max_supply = status.max_supply;
+	response.issued_supply = status.issued_supply;
+	response.remaining_supply = status.max_supply - status.issued_supply;
+	response.next_sequence = status.next_sequence;
+	response.activation_height = status.activation_height;
+	response.deactivation_height = status.deactivation_height;
+	response.active = status.active;
+	response.metadata = std::move(status.metadata);
 	return true;
 }
 

@@ -57,6 +57,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 |--------|-------------|
 | `get_onyx_status` | Returns the wallet's canonical Onyx address, confirmed shielded balance, recovered-note count, and commitment-tree root. |
 | `get_onyx_asset_balance` | Returns the confirmed balance and unspent-note count for one exact Onyx program/asset pair. |
+| `get_onyx_program_status` | Returns the wallet-derived issuer, cap, issuance sequence, activation state, and metadata for a capped-token program. |
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
 | `create_onyx_token_transaction` | Transfers a private standard token while paying the miner fee from native Onyx notes in the same proof. |
 | `create_onyx_program_deployment` | Deploys a capped private fungible-token program, funded and authorized by native Onyx notes. |
@@ -103,6 +104,35 @@ from different private assets from being combined.
 ```
 
 The response contains `balance` and `unspent_note_count`.
+
+#### `get_onyx_program_status`
+
+`program_id` is a required canonical 32-byte hexadecimal identifier. The response is derived from
+deployments and issuances in blocks accepted by the wallet; it does not trust a raw registry snapshot
+returned by the daemon. `active` is evaluated at `query_height`, which is the next possible block
+height (`wallet tip + 1`). An unknown program returns an invalid-parameters error.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `issuer` | `string` | Canonical 32-byte RedPallas issuer verification key. |
+| `max_supply` | `uint64` | Immutable issuance cap. |
+| `issued_supply` | `uint64` | Supply accepted by consensus so far. |
+| `remaining_supply` | `uint64` | Checked `max_supply - issued_supply`. |
+| `next_sequence` | `uint64` | Sequence required by the next issuance. |
+| `query_height` | `uint64` | Next possible inclusion height used to evaluate `active`. |
+| `activation_height` | `uint64` | First active height. |
+| `deactivation_height` | `uint64` | First inactive height, or zero when unscheduled. |
+| `active` | `bool` | Whether issuance is active at `query_height`. |
+| `metadata` | binary | Canonical bounded printable manifest metadata. |
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"program-status",
+  "method":"get_onyx_program_status",
+  "params":{"program_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+}
+```
 
 #### `create_onyx_transaction`
 
