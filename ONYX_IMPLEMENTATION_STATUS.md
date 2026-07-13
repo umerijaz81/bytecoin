@@ -8,7 +8,7 @@ unreachable until the release gates below are independently satisfied.
 
 | Gate | Implemented evidence | Remaining exit condition |
 |---|---|---|
-| O0 proof foundation | Exact-pinned vendored Halo2/Pasta crate, bounded panic-contained C ABI, CMake integration, locked offline three-platform workflow, primitive vectors and malformed-input tests. | External dependency/proof-boundary review and reproducible release artifacts. |
+| O0 proof foundation | Exact-pinned vendored Halo2/Pasta crate, bounded panic-contained C ABI, CMake integration, locked offline three-platform workflow, primitive vectors, malformed-input tests, and a sanitizer fuzzer target with restored C++ parser/Onyx envelope selectors. | External dependency/proof-boundary review, sustained sanitizer fuzz campaigns and reproducible release artifacts. |
 | O1 state model | Canonical notes/envelopes, encryption, commitment tree, retained anchors, nullifier set, bounded snapshots, atomic apply/undo, replay and reorg tests. | Independent consensus-state audit and long-running randomized differential/fuzz campaigns. |
 | O2 private transfer | Shape-bound Halo2 transfer circuits, spend and binding authorization, value conservation, expiry/network binding, negative mutation tests and cost limits. | Independent circuit audit and published laptop benchmarks at frozen release parameters. |
 | O3 wallet | Seed/key hierarchy, Onyx addresses, full viewing keys, scanning, historical witnesses, proving, recovery snapshots, pending reservations, native/token balances and wallet RPC. | End-to-end multi-node devnet recovery, backup, hardware-wallet and operator acceptance tests. |

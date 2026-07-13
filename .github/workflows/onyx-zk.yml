@@ -6,12 +6,14 @@ on:
       - ".cargo/**"
       - ".github/workflows/onyx-zk.yml"
       - "rust-toolchain.toml"
+      - "sdk/onyx/**"
       - "vendor/onyx-zk/**"
   pull_request:
     paths:
       - ".cargo/**"
       - ".github/workflows/onyx-zk.yml"
       - "rust-toolchain.toml"
+      - "sdk/onyx/**"
       - "vendor/onyx-zk/**"
 
 permissions:
@@ -31,4 +33,5 @@ jobs:
         run: cargo fmt --manifest-path vendor/onyx-zk/Cargo.toml -- --check
       - name: Test without network access
         run: cargo test --locked --offline --manifest-path vendor/onyx-zk/Cargo.toml
-
+      - name: Test Python SDK binding
+        run: python -m unittest discover -s sdk/onyx/python -p "test_*.py"
