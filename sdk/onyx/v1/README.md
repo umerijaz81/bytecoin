@@ -7,6 +7,7 @@ This profile freezes the developer-facing contract independently from consensus 
 - Program descriptor: `onyx_token_program_descriptor` at fixed Merkle depth 32.
 - Wallet RPC request/response field contract: `wallet-rpc.json`.
 - Canonical cryptographic and descriptor bytes: `../../../vendor/onyx-zk/test_vectors.md`.
+- Dependency-free Python descriptor binding: `../python/`.
 
 ABI v1 callers must release every successful returned buffer with `onyx_free`. A future incompatible
 signature, ownership, encoding, or error-contract change requires a new ABI number and compatibility
