@@ -499,6 +499,14 @@ impl<const DEPTH: usize> Default for WitnessTree<DEPTH> {
 }
 
 impl<const DEPTH: usize> WitnessTree<DEPTH> {
+    pub fn leaf_count(&self) -> u64 {
+        self.leaves.len() as u64
+    }
+
+    pub fn commitments(&self) -> &[CanonicalField] {
+        &self.leaves
+    }
+
     pub fn append(&mut self, commitment: CanonicalField) -> Result<u64, WitnessError> {
         if self.leaves.len() as u64 == (1u64 << DEPTH) {
             return Err(WitnessError::TreeFull);

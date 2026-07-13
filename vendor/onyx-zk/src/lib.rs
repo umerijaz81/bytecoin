@@ -41,6 +41,7 @@ pub mod transaction;
 pub mod transfer_circuit;
 pub mod types;
 pub mod value_commitment_circuit;
+pub mod wallet;
 
 const SINSEMILLA_DOMAIN: &str = "z.cash:Onyx-test-v6";
 const TOY_K: u32 = 4; // 2^4 rows is ample for the one-multiplication toy circuit
@@ -501,6 +502,177 @@ pub extern "C" fn onyx_verify_bridge(
                 ownership_signature_out,
                 64,
             );
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_address(
+    seed: *const u8,
+    network: *const u8,
+    address_index: u32,
+    address_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if seed.is_null() || network.is_null() || address_out.is_null() {
+            return -1;
+        }
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .expect("fixed seed length");
+        let network: [u8; 16] = unsafe { slice::from_raw_parts(network, 16) }
+            .try_into()
+            .expect("fixed network length");
+        let address = match keys::MasterSeed::new(seed)
+            .derive(network)
+            .and_then(|keys| keys.address(address_index))
+        {
+            Ok(address) => address,
+            Err(_) => return -2,
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(address.network_id.as_ptr(), address_out, 16);
+            std::ptr::copy_nonoverlapping(address.diversifier.as_ptr(), address_out.add(16), 11);
+            std::ptr::copy_nonoverlapping(
+                address.transmission_key.as_ptr(),
+                address_out.add(27),
+                32,
+            );
+            std::ptr::copy_nonoverlapping(
+                address.spend_authority_key.as_ptr(),
+                address_out.add(59),
+                32,
+            );
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_scan(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    expected_network: *const u8,
+    envelope_type: u8,
+    encoded: *const u8,
+    encoded_len: usize,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+    balance_out: *mut u64,
+    note_count_out: *mut usize,
+    root_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if seed.is_null()
+            || expected_network.is_null()
+            || encoded.is_null()
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+            || balance_out.is_null()
+            || note_count_out.is_null()
+            || root_out.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || (snapshot.is_null() && snapshot_len != 0)
+        {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+            *balance_out = 0;
+            *note_count_out = 0;
+        }
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .expect("fixed seed length");
+        let network: [u8; 16] = unsafe { slice::from_raw_parts(expected_network, 16) }
+            .try_into()
+            .expect("fixed network length");
+        let keys = match keys::MasterSeed::new(seed).derive(network) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let mut wallet = if snapshot_len == 0 {
+            wallet::WalletState::<32>::new(network)
+        } else {
+            match wallet::WalletState::<32>::decode_snapshot(unsafe {
+                slice::from_raw_parts(snapshot, snapshot_len)
+            }) {
+                Ok(wallet) => wallet,
+                Err(_) => return -2,
+            }
+        };
+        let encoded = unsafe { slice::from_raw_parts(encoded, encoded_len) };
+        let scanned = match envelope_type {
+            0 => transaction::AuthorizedTransaction::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|transaction| wallet.scan_transfer(&keys, &transaction).map_err(|_| ())),
+            1 => bridge::AuthorizedBridge::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|bridge| wallet.scan_bridge(&keys, &bridge).map_err(|_| ())),
+            _ => return -3,
+        };
+        if scanned.is_err() {
+            return -2;
+        }
+        let balance = match wallet.unspent_balance() {
+            Ok(balance) => balance,
+            Err(_) => return -2,
+        };
+        let root = wallet.root().bytes();
+        let encoded = match wallet.encode_snapshot() {
+            Ok(encoded) if encoded.len() <= MAX_STATE_SNAPSHOT_BYTES => encoded,
+            _ => return -6,
+        };
+        let note_count = wallet.notes().len();
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+            *balance_out = balance;
+            *note_count_out = note_count;
+            std::ptr::copy_nonoverlapping(root.as_ptr(), root_out, 32);
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_summary(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    balance_out: *mut u64,
+    note_count_out: *mut usize,
+    root_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || balance_out.is_null()
+            || note_count_out.is_null()
+            || root_out.is_null()
+        {
+            return -1;
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let balance = match wallet.unspent_balance() {
+            Ok(balance) => balance,
+            Err(_) => return -2,
+        };
+        unsafe {
+            *balance_out = balance;
+            *note_count_out = wallet.notes().len();
+            std::ptr::copy_nonoverlapping(wallet.root().bytes().as_ptr(), root_out, 32);
         }
         1
     })

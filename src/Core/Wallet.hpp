@@ -93,6 +93,7 @@ public:
 	// called by WalletState, updates creation timestamp for imported wallet
 
 	const Hash &get_view_seed() const { return m_view_seed; }
+	const Hash &get_onyx_seed() const { return m_seed; }
 
 	virtual void backup(const std::string &dst_name, const std::string &pass) const = 0;
 

@@ -15,6 +15,7 @@ pub const MAX_OUT_CIPHERTEXT_BYTES: usize = 512;
 pub const MAX_BACKEND_ID_BYTES: usize = 64;
 pub const MAX_PROOF_BYTES: usize = 192 * 1024;
 const TRANSACTION_ID_DOMAIN: &[u8] = b"bytecoin.onyx.v6.transaction-id";
+const ENCRYPTION_BINDING_DOMAIN: &[u8] = b"bytecoin.onyx.v6.encryption-binding";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicSpend {
@@ -144,6 +145,40 @@ impl TransactionPreimage {
             out.extend_from_slice(&program.public_data_hash);
         }
         Ok(out)
+    }
+
+    /// Stable note-encryption context. Ephemeral keys and ciphertexts are excluded to avoid a
+    /// construction cycle; associated data binds them separately together with output index and
+    /// commitment.
+    pub fn encryption_binding(&self) -> Result<[u8; 32], TransactionError> {
+        self.validate()?;
+        let mut bytes = Vec::new();
+        bytes.push(ONYX_TRANSACTION_VERSION);
+        bytes.extend_from_slice(&self.network_id);
+        bytes.extend_from_slice(&self.anchor.bytes());
+        write_varint(self.expiry_height, &mut bytes);
+        write_varint(self.fee, &mut bytes);
+        write_varint(self.spends.len() as u64, &mut bytes);
+        for spend in &self.spends {
+            bytes.extend_from_slice(&spend.nullifier.0);
+            bytes.extend_from_slice(&spend.value_commitment);
+            bytes.extend_from_slice(&spend.randomized_key);
+        }
+        write_varint(self.outputs.len() as u64, &mut bytes);
+        for output in &self.outputs {
+            bytes.extend_from_slice(&output.commitment.bytes());
+            bytes.extend_from_slice(&output.value_commitment);
+        }
+        write_varint(self.programs.len() as u64, &mut bytes);
+        for program in &self.programs {
+            bytes.extend_from_slice(&program.program_id);
+            write_varint(program.function_id.into(), &mut bytes);
+            bytes.extend_from_slice(&program.public_data_hash);
+        }
+        let mut hash = Sha256::new();
+        hash.update(ENCRYPTION_BINDING_DOMAIN);
+        hash.update(bytes);
+        Ok(hash.finalize().into())
     }
 
     pub fn decode(input: &[u8]) -> Result<Self, TransactionError> {
@@ -431,6 +466,19 @@ mod tests {
     fn public_statement_round_trips() {
         let tx = transaction();
         assert_eq!(TransactionPreimage::decode(&tx.encode().unwrap()), Ok(tx));
+    }
+
+    #[test]
+    fn encryption_binding_is_stable_and_non_circular() {
+        let tx = transaction();
+        let binding = tx.encryption_binding().unwrap();
+        let mut ciphertext = tx.clone();
+        ciphertext.outputs[0].ciphertext[0] ^= 1;
+        ciphertext.outputs[0].ephemeral_key[0] ^= 1;
+        assert_eq!(ciphertext.encryption_binding().unwrap(), binding);
+        let mut commitment = tx;
+        commitment.outputs[0].commitment = field(12);
+        assert_ne!(commitment.encryption_binding().unwrap(), binding);
     }
 
     #[test]

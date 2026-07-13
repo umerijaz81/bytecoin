@@ -37,6 +37,11 @@ public:
 		std::array<uint8_t, 32> ownership_sighash{};
 		std::array<uint8_t, 64> ownership_signature{};
 	};
+	struct WalletScanResult {
+		uint64_t balance = 0;
+		size_t note_count = 0;
+		std::array<uint8_t, 32> root{};
+	};
 	const char *backend_id() const override;
 
 	// O0: maps to the toy-circuit verifier. args.public_inputs must be the 32-byte public field
@@ -69,6 +74,12 @@ public:
 	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
 	static bool verify_bridge(const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta);
+	static bool wallet_address(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, uint32_t address_index, std::array<uint8_t, 91> *address);
+	static bool wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
+	    BinaryArray *next_snapshot, WalletScanResult *result);
+	static bool wallet_summary(const BinaryArray &snapshot, WalletScanResult *result);
 };
 
 }  // namespace zk

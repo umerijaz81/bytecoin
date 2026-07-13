@@ -15,6 +15,7 @@ use crate::types::{write_varint, DecodeError, Reader, NETWORK_ID_BYTES};
 pub const BRIDGE_VERSION: u8 = 1;
 const BRIDGE_SIGHASH_DOMAIN: &[u8] = b"bytecoin.onyx.v6.bridge-sighash";
 const BRIDGE_ID_DOMAIN: &[u8] = b"bytecoin.onyx.v6.bridge-id";
+const BRIDGE_ENCRYPTION_BINDING_DOMAIN: &[u8] = b"bytecoin.onyx.v6.bridge-encryption-binding";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgePreimage {
@@ -99,6 +100,22 @@ impl BridgePreimage {
         }
         result.validate()?;
         Ok(result)
+    }
+
+    pub fn encryption_binding(&self) -> Result<[u8; 32], BridgeError> {
+        self.validate()?;
+        let mut hash = Sha256::new();
+        hash.update(BRIDGE_ENCRYPTION_BINDING_DOMAIN);
+        hash.update([BRIDGE_VERSION]);
+        hash.update(self.network_id);
+        hash.update(self.expiry_height.to_le_bytes());
+        hash.update(self.fee.to_le_bytes());
+        hash.update(self.legacy_amount.to_le_bytes());
+        hash.update(self.legacy_stack_index.to_le_bytes());
+        hash.update(self.legacy_key_image);
+        hash.update(self.output.commitment.bytes());
+        hash.update(self.output.value_commitment);
+        Ok(hash.finalize().into())
     }
 }
 
@@ -209,6 +226,11 @@ mod tests {
             bridge.ownership_sighash().unwrap(),
             changed.ownership_sighash().unwrap()
         );
+        let binding = bridge.preimage.encryption_binding().unwrap();
+        let mut ciphertext = bridge.preimage.clone();
+        ciphertext.output.ciphertext[0] ^= 1;
+        ciphertext.output.ephemeral_key[0] ^= 1;
+        assert_eq!(ciphertext.encryption_binding().unwrap(), binding);
     }
 
     #[test]

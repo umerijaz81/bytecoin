@@ -87,6 +87,22 @@ int onyx_verify_bridge(
     uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
     uint8_t ownership_signature_out[64], uint64_t *fee_out);
 
+/* Derive canonical Onyx address bytes: network[16] || diversifier[11] || transmission[32] ||
+ * spend-authority[32]. */
+int onyx_wallet_address(const uint8_t seed[32], const uint8_t network[16], uint32_t address_index,
+                        uint8_t address_out[91]);
+
+/* Scan one confirmed transfer (type 0) or bridge (type 1), append every commitment, recover owned
+ * notes, mark spends, and return a canonical wallet snapshot. */
+int onyx_wallet_scan(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
+    const uint8_t expected_network[16], uint8_t envelope_type,
+    const uint8_t *encoded, size_t encoded_len,
+    uint8_t **snapshot_out, size_t *snapshot_len_out,
+    uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
+int onyx_wallet_summary(const uint8_t *snapshot, size_t snapshot_len,
+                        uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
+
 /* Release a buffer previously returned by this library. */
 void onyx_free(uint8_t *ptr, size_t len);
 

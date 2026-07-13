@@ -137,6 +137,12 @@ Note encryption uses an audited AEAD with unique ephemeral keys. Associated data
 transaction preimage, output index, commitment, and ephemeral key. Wallets never mark a note
 spendable before its commitment is confirmed in the canonical tree.
 
+The transaction encryption-binding digest is SHA-256 over its domain plus version, network, anchor,
+expiry, fee, ordered spends, ordered `(note commitment, value commitment)` output pairs, and program
+calls. Ephemeral keys and ciphertext bytes are excluded to avoid a construction cycle; the AEAD
+associated data binds both separately with the digest and output index. Bridge envelopes use the
+equivalent bridge-specific digest over their stable legacy statement and sole output commitments.
+
 ## 7. Programs
 
 `ProgramId = H(domain_program || manifest || verifying_key_hash)`. Registry entries include version,

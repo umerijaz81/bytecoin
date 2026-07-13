@@ -134,6 +134,50 @@ bool Halo2ProofSystem::verify_bridge(
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_address(const std::array<uint8_t, 32> &seed,
+    const std::array<uint8_t, 16> &network, uint32_t address_index, std::array<uint8_t, 91> *address) {
+	return address != nullptr &&
+	       onyx_wallet_address(seed.data(), network.data(), address_index, address->data()) == 0;
+}
+
+bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
+    const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
+    BinaryArray *next_snapshot, WalletScanResult *result) {
+	if (encoded.empty() || next_snapshot == nullptr || result == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len = 0;
+	WalletScanResult scanned;
+	const int rc = onyx_wallet_scan(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(), seed.data(),
+	    network.data(), envelope_type, encoded.data(), encoded.size(), &next_ptr, &next_len, &scanned.balance,
+	    &scanned.note_count, scanned.root.data());
+	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	*result = scanned;
+	return true;
+}
+
+bool Halo2ProofSystem::wallet_summary(const BinaryArray &snapshot, WalletScanResult *result) {
+	if (snapshot.empty() || result == nullptr)
+		return false;
+	WalletScanResult summary;
+	if (onyx_wallet_summary(snapshot.data(), snapshot.size(), &summary.balance, &summary.note_count,
+	        summary.root.data()) != 1)
+		return false;
+	*result = summary;
+	return true;
+}
+
 bool Halo2ProofSystem::toy_prove(
     uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out) {
 	uint8_t *proof_ptr = nullptr;

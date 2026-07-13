@@ -16,8 +16,12 @@
 #include "seria/BinaryInputStream.hpp"
 #include "seria/KVBinaryInputStream.hpp"
 #include "seria/KVBinaryOutputStream.hpp"
+#ifdef onyx_USE_ZK
+#include "zk/Halo2ProofSystem.hpp"
+#endif
 
 static const std::string ADDRESSES_PREFIX = "a";  // this is not undone
+static const std::string ONYX_WALLET_STATE_KEY = "O";
 
 using namespace cn;
 using namespace platform;
@@ -131,6 +135,7 @@ WalletState::WalletState(Wallet &wallet, logging::ILogger &log, const Config &co
 		}
 	}
 	wallet_addresses_updated();
+	reload_onyx_wallet_state();
 	auto pq = m_wallet.payment_queue_get();
 	for (const auto &body : pq) {
 		Transaction tx;
@@ -141,6 +146,23 @@ WalletState::WalletState(Wallet &wallet, logging::ILogger &log, const Config &co
 			continue;
 		}
 	}
+}
+
+void WalletState::reload_onyx_wallet_state() {
+	m_onyx_wallet_snapshot.clear();
+	m_onyx_balance = 0;
+	m_onyx_note_count = 0;
+	m_onyx_root.fill(0);
+#ifdef onyx_USE_ZK
+	if (!read_extension_state(ONYX_WALLET_STATE_KEY, &m_onyx_wallet_snapshot))
+		return;
+	zk::Halo2ProofSystem::WalletScanResult summary;
+	if (!zk::Halo2ProofSystem::wallet_summary(m_onyx_wallet_snapshot, &summary))
+		throw std::runtime_error("Corrupted Onyx wallet-state snapshot");
+	m_onyx_balance = summary.balance;
+	m_onyx_note_count = summary.note_count;
+	m_onyx_root = summary.root;
+#endif
 }
 
 void WalletState::db_commit() {
@@ -433,24 +455,55 @@ bool WalletState::sync_with_blockchain(const PreparedWalletTransaction &pwtx) {
 bool WalletState::redo_block(
     const PreparedWalletBlock &pb, const std::vector<std::vector<size_t>> &stack_indexes, Height height) {
 	//	invariant(height == get_tip_height() + 1, "Redo of incorrect block height");
+	reload_onyx_wallet_state();
 	if (stack_indexes.size() != pb.transactions.size())
 		return false;  // Bad node - TODO
 	size_t key_outputs_count = 0;
 	for (const auto &tx : pb.transactions)
 		key_outputs_count += get_tx_key_outputs_count(tx.tx);
 	DeltaState delta_state;
+#ifdef onyx_USE_ZK
+	BinaryArray next_onyx_snapshot = m_onyx_wallet_snapshot;
+	zk::Halo2ProofSystem::WalletScanResult next_onyx_summary;
+	bool onyx_changed = false;
+	std::array<uint8_t, 32> onyx_seed{};
+	std::array<uint8_t, 16> onyx_network{};
+	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + onyx_seed.size(), onyx_seed.begin());
+	std::copy(m_config.network_id.data, m_config.network_id.data + onyx_network.size(), onyx_network.begin());
+#endif
 	size_t start_global_key_output_index = pb.raw_block.header.already_generated_key_outputs - key_outputs_count;
 	for (size_t tx_index = 0; tx_index != pb.transactions.size(); ++tx_index) {
 		const Hash tid = pb.transactions.at(tx_index).tid;
 		if (m_pool_hashes.erase(tid) != 0)
 			remove_transaction_from_mempool(tid, false);
 		m_memory_state.undo_transaction(tid);
+#ifdef onyx_USE_ZK
+		if (pb.transactions.at(tx_index).tx.version == m_currency.onyx_transaction_version &&
+		    m_wallet.get_onyx_seed() != Hash{}) {
+			BinaryArray scanned;
+			if (!zk::Halo2ProofSystem::wallet_scan(next_onyx_snapshot, onyx_seed, onyx_network,
+			        pb.transactions.at(tx_index).tx.onyx_type, pb.transactions.at(tx_index).tx.onyx_envelope,
+			        &scanned, &next_onyx_summary))
+				return false;
+			next_onyx_snapshot = std::move(scanned);
+			onyx_changed = true;
+		}
+#endif
 		redo_transaction(pb.transactions.at(tx_index), stack_indexes.at(tx_index), start_global_key_output_index,
 		    &delta_state, tx_index == 0, tid, get_tip_height() + 1, pb.raw_block.header.hash,
 		    pb.raw_block.header.timestamp);
 		start_global_key_output_index += get_tx_key_outputs_count(pb.transactions.at(tx_index).tx);
 	}
 	invariant(pb.raw_block.header.already_generated_key_outputs == start_global_key_output_index, "");
+#ifdef onyx_USE_ZK
+	if (onyx_changed) {
+		put_extension_state_with_undo(ONYX_WALLET_STATE_KEY, next_onyx_snapshot);
+		m_onyx_wallet_snapshot = std::move(next_onyx_snapshot);
+		m_onyx_balance = next_onyx_summary.balance;
+		m_onyx_note_count = next_onyx_summary.note_count;
+		m_onyx_root = next_onyx_summary.root;
+	}
+#endif
 	// no exceptions starting from here
 	delta_state.apply(this, get_tip_height() + 1);
 	unlock(height, pb.raw_block.header.timestamp_median);
