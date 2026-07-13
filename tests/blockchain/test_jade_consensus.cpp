@@ -13,6 +13,9 @@
 #include "crypto/crypto.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
+#include "seria/KVBinaryInputStream.hpp"
+#include "seria/KVBinaryOutputStream.hpp"
+#include "rpc_api.hpp"
 
 using namespace cn;
 
@@ -149,6 +152,22 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		const bool inactive_rejected = semantic_rejects(currency, currency.onyx_block_version, tx, &what);
 		invariant(inactive_rejected, "inactive Onyx state transition was accepted");
 		std::cout << "  [onyx] bounded opaque envelope round-trip and reserved-version skip ok" << std::endl;
+	}
+
+	// 7. Onyx-aware wallets explicitly request all post-activation commitment history. Keep the
+	// versioned binary method and the serialized flag covered together so either side cannot drift.
+	{
+		api::cnd::SyncBlocks::Request request;
+		request.need_redundant_data = false;
+		request.need_onyx_history = true;
+		const common::BinaryArray encoded = seria::to_binary_kv(request);
+		api::cnd::SyncBlocks::Request decoded;
+		seria::from_binary_kv(decoded, encoded);
+		invariant(api::cnd::SyncBlocks::bin_method() == "sync_blocks_v3.4.4",
+		    "Onyx sync request method version changed unexpectedly");
+		invariant(!decoded.need_redundant_data && decoded.need_onyx_history,
+		    "Onyx sync history flag did not round-trip");
+		std::cout << "  [onyx] global commitment-history sync request round-trip ok" << std::endl;
 	}
 
 	std::cout << "  test_jade_consensus: OK" << std::endl;

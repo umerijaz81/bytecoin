@@ -259,6 +259,11 @@ Version-5 snapshots append the capped token-issuance ledger. Earlier snapshots m
 ledger; nonempty entries must reference a registered mintable standard program, remain sorted and
 unique, have nonzero issued supply and next sequence, and not exceed the manifest cap.
 
+Wallet synchronization sets `need_onyx_history` on the versioned `sync_blocks_v3.4.4` request. The
+node clamps timestamp-based skipping to the Onyx activation height, so newly-created wallets process
+every global commitment needed for correct Merkle witnesses without rescanning pre-Onyx history that
+predates both the wallet and the shielded tree.
+
 ## 10. Phase gates
 
 | Phase | Exit gate |

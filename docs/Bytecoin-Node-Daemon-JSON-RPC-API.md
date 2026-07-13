@@ -913,6 +913,13 @@ __Output:__
 
 ### 7. `sync_blocks`
 
+Onyx-capable wallet clients set `need_onyx_history=true`. When set, timestamp-based fast-forwarding
+never starts later than the Onyx activation height, because shielded Merkle witnesses require every
+post-activation commitment even for a newly-created wallet. The binary method version is
+`sync_blocks_v3.4.4`.
+Nodes continue accepting `sync_blocks_v3.4.3` for older wallets; those requests retain the legacy
+timestamp behavior because they do not carry the new flag.
+
 #### About
 
 Fetches blocks from local blockchain. In order to perform a request a sparse chain (a specific sequence of local blocks) \

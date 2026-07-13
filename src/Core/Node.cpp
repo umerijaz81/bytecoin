@@ -311,6 +311,7 @@ void Node::on_api_http_disconnect(http::Client *who) {
 
 const std::unordered_map<std::string, Node::BINARYRPCHandlerFunction> Node::m_binaryrpc_handlers = {
     {api::cnd::SyncBlocks::bin_method(), json_rpc::make_binary_member_method(&Node::on_sync_blocks_bin)},
+    {"sync_blocks_v3.4.3", json_rpc::make_binary_member_method(&Node::on_sync_blocks_bin)},
     {api::cnd::SyncMemPool::bin_method(), json_rpc::make_binary_member_method(&Node::on_sync_mempool)}};
 
 std::unordered_map<std::string, Node::JSONRPCHandlerFunction> Node::m_jsonrpc_handlers = {
@@ -517,6 +518,8 @@ std::vector<Hash> Node::fill_sync_blocks_subchain(api::cnd::SyncBlocks::Request 
 	// We need range of blocks to cover req.timestamp, otherwise wallet cannot be sure it got the whole chain
 	if (full_offset != 0)
 		full_offset -= 1;
+	if (req.need_onyx_history)
+		full_offset = std::min(full_offset, parameters::UPGRADE_HEIGHT_ONYX);
 	std::vector<Hash> subchain =
 	    m_block_chain.get_sync_headers_chain(req.sparse_chain, start_height, req.max_count + 1);
 	// Will throw if no common subchain

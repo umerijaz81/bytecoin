@@ -251,6 +251,9 @@ void WalletSync::send_get_blocks() {
 				msg.sparse_chain = m_wallet_state.get_sparse_chain();
 		}
 		msg.need_redundant_data = false;
+		// Onyx witnesses commit to the global append-only tree. Even a newly-created wallet must
+		// process every commitment since activation, not only blocks after its creation timestamp.
+		msg.need_onyx_history = true;
 		req_header.r.set_firstline("POST", api::cnd::binary_url(), 1, 1);
 		req_header.set_body(json_rpc::create_binary_request_body(api::cnd::SyncBlocks::bin_method(), msg));
 	}

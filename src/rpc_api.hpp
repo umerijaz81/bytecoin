@@ -755,7 +755,7 @@ struct GetBlockHeader {
 
 struct SyncBlocks {  // Used by walletd, block explorer, etc to sync to bytecoind
 	static std::string method() { return "sync_blocks"; }
-	static std::string bin_method() { return "sync_blocks_v3.4.3"; }
+	static std::string bin_method() { return "sync_blocks_v3.4.4"; }
 	// we increment bin method version when binary format changes
 	static std::string url_prefix() { return "/sync_blocks/v3.4.3/"; }
 	// /sync_blocks/ver/aaa/bbb/ccc, where aaabbbccc is dec height
@@ -773,6 +773,7 @@ struct SyncBlocks {  // Used by walletd, block explorer, etc to sync to bytecoin
 		size_t max_count                = MAX_COUNT / 2;
 		size_t max_size                 = MAX_SIZE / 2;  // No more than ~1 megabytes of blocks + 1 block
 		bool need_redundant_data        = true;          // smart clients can save traffic
+		bool need_onyx_history          = false;         // never skip post-activation commitment history
 	};
 	struct Response {
 		std::vector<RawBlock> blocks;

@@ -538,6 +538,7 @@ void ser_members(api::cnd::SyncBlocks::Request &v, ISeria &s) {
 	seria_kv("max_count", v.max_count, s);
 	seria_kv("max_size", v.max_size, s);
 	seria_kv("need_redundant_data", v.need_redundant_data, s);
+	seria_kv("need_onyx_history", v.need_onyx_history, s);
 }
 
 void ser_members(api::cnd::SyncBlocks::Response &v, ISeria &s) {
