@@ -142,6 +142,10 @@ public:
 	static bool wallet_create_transfer(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 91> &recipient, uint64_t amount, uint64_t fee, uint64_t expiry_height,
 	    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *transaction);
+	static bool wallet_create_mixed_token_transfer(const BinaryArray &snapshot,
+	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
+	    const std::array<uint8_t, 32> &program_id, uint64_t token_amount, uint64_t fee,
+	    uint64_t expiry_height, const BinaryArray &memo, uint32_t circuit_k, BinaryArray *transaction);
 };
 
 }  // namespace zk

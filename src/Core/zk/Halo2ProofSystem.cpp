@@ -475,6 +475,32 @@ bool Halo2ProofSystem::wallet_create_transfer(const BinaryArray &snapshot,
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_create_mixed_token_transfer(const BinaryArray &snapshot,
+    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
+    const std::array<uint8_t, 32> &program_id, uint64_t token_amount, uint64_t fee,
+    uint64_t expiry_height, const BinaryArray &memo, uint32_t circuit_k, BinaryArray *transaction) {
+	if (snapshot.empty() || transaction == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	const int rc = onyx_wallet_create_mixed_token_transfer(snapshot.data(), snapshot.size(), seed.data(),
+	    recipient.data(), program_id.data(), token_amount, fee, expiry_height,
+	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k, &ptr, &len);
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		transaction->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
+	return true;
+}
+
 bool Halo2ProofSystem::toy_prove(
     uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out) {
 	uint8_t *proof_ptr = nullptr;

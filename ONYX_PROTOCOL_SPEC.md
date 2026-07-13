@@ -201,6 +201,14 @@ sorted issuance ledger containing issued supply and next sequence for each progr
 Proof, issuer authorization, output appends, program-cost accounting, and ledger mutation are one
 atomic transition. Envelope type `3` is the only path that may increase a token program's supply.
 
+Mixed token transfers remain envelope type `0` and use the standard token backend. Eight registered
+function shapes compose a token lane `(1..=2 spends, 1..=2 outputs)` with a native lane `(1..=2
+spends, exactly one change output)`. The token lane proves zero-fee conservation with every note's
+program and asset limbs equal to the called Program ID. The native lane independently proves
+`native inputs = native change + public fee` and constrains the native note domain. Canonical ordering
+is token spends, native spends, token outputs, native change. Both lanes share the anchor, network,
+proof, spend-authorization digest, and binding signature; cross-asset cancellation is impossible.
+
 Planned audited programs after fungible-token deployment are NFT, vesting, multisignature custody,
 and atomic swap.
 

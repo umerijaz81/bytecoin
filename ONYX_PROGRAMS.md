@@ -87,7 +87,14 @@ following:
 4. transaction-level binding of ordered calls and public-data hashes;
 5. verification cost within the entry and block limits;
 
-Only the standard token transfer and capped issuance functions currently satisfy these consensus
-execution gates. Every other call continues to fail closed. Mixed-fee token bundles, wallet deployment
+Standard token programs also register eight fixed mixed-transfer shapes. Each proof composes an
+independent token lane (one or two spends/outputs, zero fee, exact Program ID) with a native lane (one
+or two spends, one change output, public miner fee). Transaction ordering is token spends then native
+spends and token outputs then native change. One authorization transcript covers every nullifier,
+commitment, program call, proof byte, and the fee. This permits normal miner fees without allowing
+token value to offset native value or vice versa.
+
+Only the standard token transfer, mixed native-fee transfer, and capped issuance functions currently
+satisfy these consensus execution gates. Every other call continues to fail closed. Wallet deployment
 RPC, SDK vectors, and independent audit coverage remain required before the fungible-token phase is
 eligible for production activation.

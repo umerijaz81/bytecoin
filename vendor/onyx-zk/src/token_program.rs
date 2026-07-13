@@ -1,5 +1,8 @@
 //! Audited standard private fungible-token program metadata.
 
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+
 use group::{Curve, Group, GroupEncoding};
 use halo2_proofs::pasta::{EqAffine, Fp};
 use halo2_proofs::plonk::{keygen_vk, VerifyingKey};
@@ -8,6 +11,7 @@ use pasta_curves::{arithmetic::CurveAffine, pallas};
 use sha2::{Digest, Sha256};
 
 use crate::membership_circuit::MembershipCircuit;
+use crate::mixed_token_circuit::MixedTokenCircuit;
 use crate::multi_transfer_circuit::{LinkedSpend, MultiTransferCircuit};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
 use crate::program::{ProgramEntry, ProgramFunction, MAX_MANIFEST_BYTES};
@@ -19,6 +23,7 @@ use crate::types::{write_varint, Reader};
 pub const TOKEN_PROGRAM_BACKEND: &str = "halo2-ipa-pasta-onyx-token-v1";
 pub const TOKEN_TRANSFER_FUNCTION_BASE: u32 = 0x0001_0000;
 pub const TOKEN_ISSUANCE_FUNCTION_BASE: u32 = 0x0002_0000;
+pub const TOKEN_MIXED_TRANSFER_FUNCTION_BASE: u32 = 0x0003_0000;
 pub const TOKEN_ISSUANCE_MANIFEST_MAGIC: &[u8; 4] = b"ONXM";
 const TOKEN_MANIFEST_PREFIX: &[u8] = b"onyx.standard.private-fungible-token/v1\0";
 const VK_DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-vk-descriptor";
@@ -27,8 +32,14 @@ const PUBLIC_DATA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-transfer-public-data"
 const ISSUANCE_VK_DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-issuance-vk-descriptor";
 const ISSUANCE_SCHEMA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-issuance-schema";
 const ISSUANCE_PUBLIC_DATA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-issuance-public-data";
+const MIXED_VK_DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-mixed-vk-descriptor";
+const MIXED_SCHEMA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-mixed-schema";
+const MIXED_PUBLIC_DATA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.token-mixed-public-data";
 const TOKEN_ISSUANCE_MANIFEST_VERSION: u8 = 1;
 const MAX_TOKEN_METADATA_BYTES: usize = 128;
+type MixedShapeKey = (usize, u32, usize, usize, usize);
+static MIXED_VK_DESCRIPTOR_CACHE: OnceLock<Mutex<BTreeMap<MixedShapeKey, Vec<u8>>>> =
+    OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenIssuancePolicy {
@@ -116,6 +127,48 @@ pub fn issuance_function_id(outputs: usize) -> Option<u32> {
         .then_some(TOKEN_ISSUANCE_FUNCTION_BASE | outputs as u32)
 }
 
+pub fn mixed_transfer_function_id(
+    token_spends: usize,
+    token_outputs: usize,
+    native_spends: usize,
+) -> Option<u32> {
+    if !(1..=2).contains(&token_spends)
+        || !(1..=2).contains(&token_outputs)
+        || !(1..=2).contains(&native_spends)
+    {
+        return None;
+    }
+    Some(
+        TOKEN_MIXED_TRANSFER_FUNCTION_BASE
+            | ((token_spends as u32) << 12)
+            | ((token_outputs as u32) << 8)
+            | native_spends as u32,
+    )
+}
+
+pub fn mixed_transfer_public_data_hash() -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(MIXED_PUBLIC_DATA_DOMAIN);
+    hash.update([1]);
+    hash.finalize().into()
+}
+
+pub fn mixed_transfer_schema_hash(
+    depth: usize,
+    token_spends: usize,
+    token_outputs: usize,
+    native_spends: usize,
+) -> Result<[u8; 32], TokenProgramError> {
+    let function_id = mixed_transfer_function_id(token_spends, token_outputs, native_spends)
+        .ok_or(TokenProgramError::InvalidParameter)?;
+    let mut hash = Sha256::new();
+    hash.update(MIXED_SCHEMA_DOMAIN);
+    hash.update((depth as u64).to_le_bytes());
+    hash.update(function_id.to_le_bytes());
+    hash.update(b"token:fee=0+program|native:fee+native-asset|ordered-token-then-native");
+    Ok(hash.finalize().into())
+}
+
 pub fn issuance_public_data_hash(sequence: u64, issued_amount: u64) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(ISSUANCE_PUBLIC_DATA_DOMAIN);
@@ -187,6 +240,16 @@ pub fn standard_token_program<const DEPTH: usize>(
         functions.push(standard_issuance_function::<DEPTH, 1>(k)?);
         functions.push(standard_issuance_function::<DEPTH, 2>(k)?);
     }
+    functions.extend([
+        standard_mixed_function::<DEPTH, 1, 1, 1>(k)?,
+        standard_mixed_function::<DEPTH, 1, 1, 2>(k)?,
+        standard_mixed_function::<DEPTH, 1, 2, 1>(k)?,
+        standard_mixed_function::<DEPTH, 1, 2, 2>(k)?,
+        standard_mixed_function::<DEPTH, 2, 1, 1>(k)?,
+        standard_mixed_function::<DEPTH, 2, 1, 2>(k)?,
+        standard_mixed_function::<DEPTH, 2, 2, 1>(k)?,
+        standard_mixed_function::<DEPTH, 2, 2, 2>(k)?,
+    ]);
     Ok(ProgramEntry {
         manifest,
         backend: TOKEN_PROGRAM_BACKEND.to_owned(),
@@ -330,6 +393,141 @@ fn standard_function<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usi
     })
 }
 
+fn standard_mixed_function<
+    const DEPTH: usize,
+    const TOKEN_SPENDS: usize,
+    const TOKEN_OUTPUTS: usize,
+    const NATIVE_SPENDS: usize,
+>(
+    k: u32,
+) -> Result<ProgramFunction, TokenProgramError> {
+    Ok(ProgramFunction {
+        function_id: mixed_transfer_function_id(TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS)
+            .ok_or(TokenProgramError::InvalidParameter)?,
+        verifying_key: expected_mixed_vk_descriptor::<
+            DEPTH,
+            TOKEN_SPENDS,
+            TOKEN_OUTPUTS,
+            NATIVE_SPENDS,
+        >(k)?,
+        public_input_schema_hash: mixed_transfer_schema_hash(
+            DEPTH,
+            TOKEN_SPENDS,
+            TOKEN_OUTPUTS,
+            NATIVE_SPENDS,
+        )?,
+        max_cost: 175_000
+            + (DEPTH as u64)
+                .checked_mul((TOKEN_SPENDS + NATIVE_SPENDS) as u64)
+                .and_then(|cost| cost.checked_mul(2_000))
+                .ok_or(TokenProgramError::InvalidParameter)?
+            + (TOKEN_OUTPUTS as u64 + 1) * 25_000,
+    })
+}
+
+pub(crate) fn expected_mixed_vk_descriptor<
+    const DEPTH: usize,
+    const TOKEN_SPENDS: usize,
+    const TOKEN_OUTPUTS: usize,
+    const NATIVE_SPENDS: usize,
+>(
+    k: u32,
+) -> Result<Vec<u8>, TokenProgramError> {
+    if !(10..=20).contains(&k)
+        || mixed_transfer_function_id(TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS).is_none()
+    {
+        return Err(TokenProgramError::InvalidParameter);
+    }
+    let key = (DEPTH, k, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS);
+    let cache = MIXED_VK_DESCRIPTOR_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(descriptor) = cache
+        .lock()
+        .map_err(|_| TokenProgramError::KeyGeneration)?
+        .get(&key)
+        .cloned()
+    {
+        return Ok(descriptor);
+    }
+    let circuit = empty_mixed_circuit::<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>()?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| TokenProgramError::KeyGeneration)?;
+    let descriptor =
+        mixed_descriptor_from_vk::<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>(k, &vk);
+    cache
+        .lock()
+        .map_err(|_| TokenProgramError::KeyGeneration)?
+        .insert(key, descriptor.clone());
+    Ok(descriptor)
+}
+
+pub(crate) fn mixed_descriptor_from_vk<
+    const DEPTH: usize,
+    const TOKEN_SPENDS: usize,
+    const TOKEN_OUTPUTS: usize,
+    const NATIVE_SPENDS: usize,
+>(
+    k: u32,
+    vk: &VerifyingKey<EqAffine>,
+) -> Vec<u8> {
+    let pinned = format!("{:?}", vk.pinned());
+    let mut hash = Sha256::new();
+    hash.update(MIXED_VK_DESCRIPTOR_DOMAIN);
+    hash.update((DEPTH as u64).to_le_bytes());
+    hash.update(k.to_le_bytes());
+    hash.update([TOKEN_SPENDS as u8, TOKEN_OUTPUTS as u8, NATIVE_SPENDS as u8]);
+    hash.update((pinned.len() as u64).to_le_bytes());
+    hash.update(pinned.as_bytes());
+    let mut descriptor = Vec::with_capacity(48);
+    descriptor.push(1);
+    descriptor.extend_from_slice(&k.to_le_bytes());
+    descriptor.extend_from_slice(&(DEPTH as u64).to_le_bytes());
+    descriptor.extend_from_slice(&[TOKEN_SPENDS as u8, TOKEN_OUTPUTS as u8, NATIVE_SPENDS as u8]);
+    descriptor.extend_from_slice(&hash.finalize());
+    descriptor
+}
+
+pub(crate) fn empty_mixed_circuit<
+    const DEPTH: usize,
+    const TOKEN_SPENDS: usize,
+    const TOKEN_OUTPUTS: usize,
+    const NATIVE_SPENDS: usize,
+>(
+) -> Result<MixedTokenCircuit<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>, TokenProgramError>
+{
+    MixedTokenCircuit::new(
+        empty_program_circuit::<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS>()?,
+        empty_native_circuit::<DEPTH, NATIVE_SPENDS, 1>()?,
+    )
+    .map_err(|_| TokenProgramError::Circuit)
+}
+
+fn empty_native_circuit<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>(
+) -> Result<MultiTransferCircuit<DEPTH, SPENDS, OUTPUTS>, TokenProgramError> {
+    let siblings = vec![Fp::zero(); DEPTH];
+    let generator = pallas::Point::generator().to_affine();
+    let spends = (0..SPENDS)
+        .map(|_| {
+            Ok(LinkedSpend::new(
+                MembershipCircuit::new(Fp::zero(), &siblings, 0, Fp::zero(), Fp::zero())
+                    .map_err(|_| TokenProgramError::Circuit)?,
+                [Fp::zero(); NOTE_COMMITMENT_INPUTS],
+                SpendAuthCircuit::new(generator, Fp::zero(), generator),
+                Fp::one(),
+                binding_generator(),
+            ))
+        })
+        .collect::<Result<Vec<_>, TokenProgramError>>()?;
+    MultiTransferCircuit::new(
+        &vec![0; SPENDS],
+        &vec![0; OUTPUTS],
+        spends,
+        vec![[Fp::zero(); NOTE_COMMITMENT_INPUTS]; OUTPUTS],
+        vec![Fp::one(); OUTPUTS],
+        vec![binding_generator(); OUTPUTS],
+    )
+    .map_err(|_| TokenProgramError::Circuit)
+}
+
 pub(crate) fn empty_program_circuit<
     const DEPTH: usize,
     const SPENDS: usize,
@@ -369,7 +567,7 @@ mod tests {
         let first = standard_token_program::<2>(14, b"TEST/USD", 10, Some(20)).unwrap();
         let second = standard_token_program::<2>(14, b"TEST/USD", 10, Some(20)).unwrap();
         assert_eq!(first, second);
-        assert_eq!(first.functions.len(), 4);
+        assert_eq!(first.functions.len(), 12);
         assert!(first.validate().is_ok());
         assert_ne!(
             first.functions[0].verifying_key,
@@ -396,7 +594,7 @@ mod tests {
         let encoded = policy.encode().unwrap();
         assert_eq!(TokenIssuancePolicy::decode(&encoded).unwrap(), policy);
         let program = standard_token_program::<2>(14, &encoded, 10, Some(20)).unwrap();
-        assert_eq!(program.functions.len(), 6);
+        assert_eq!(program.functions.len(), 14);
         assert_eq!(
             issuance_policy_from_entry(&program).unwrap(),
             (2, 14, policy)

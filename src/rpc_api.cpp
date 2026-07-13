@@ -369,6 +369,20 @@ void ser_members(api::walletd::CreateOnyxTransaction::Response &v, ISeria &s) {
 	seria_kv("transaction_hash", v.transaction_hash, s);
 }
 
+void ser_members(api::walletd::CreateOnyxTokenTransaction::Request &v, ISeria &s) {
+	seria_kv("address", v.address, s);
+	seria_kv("program_id", v.program_id, s);
+	seria_kv("amount", v.amount, s);
+	seria_kv("fee", v.fee, s);
+	seria_kv("expiry_height", v.expiry_height, s);
+	seria_kv("memo", v.memo, s);
+}
+
+void ser_members(api::walletd::CreateOnyxTokenTransaction::Response &v, ISeria &s) {
+	seria_kv("binary_transaction", v.binary_transaction, s);
+	seria_kv("transaction_hash", v.transaction_hash, s);
+}
+
 void ser_members(api::walletd::CreateOnyxBridge::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("legacy_amount", v.legacy_amount, s);

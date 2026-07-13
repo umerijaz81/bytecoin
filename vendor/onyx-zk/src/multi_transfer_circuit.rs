@@ -48,7 +48,7 @@ impl<const DEPTH: usize> LinkedSpend<DEPTH> {
         }
     }
 
-    fn without_witnesses(&self) -> Self {
+    pub(crate) fn without_witnesses(&self) -> Self {
         Self {
             membership: self.membership.without_witnesses(),
             note: [None; NOTE_COMMITMENT_INPUTS],

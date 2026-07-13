@@ -13,14 +13,15 @@ use crate::bridge::{AuthorizedBridge, BridgePreimage};
 use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
 use crate::proof::{
-    create_bridge_proof, create_multi_transfer_proof, create_token_issuance_proof,
-    multi_transfer_backend_id, BridgeWitness, MultiSpendWitness, MultiTransferWitness,
-    TokenIssuanceWitness, BRIDGE_BACKEND,
+    create_bridge_proof, create_mixed_token_transfer_proof, create_multi_transfer_proof,
+    create_token_issuance_proof, multi_transfer_backend_id, BridgeWitness, MixedTokenWitness,
+    MultiSpendWitness, MultiTransferWitness, TokenIssuanceWitness, BRIDGE_BACKEND,
 };
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
 use crate::token_issuance::{sign_issuer_authorization, AuthorizedTokenIssuance};
 use crate::token_program::{
-    issuance_function_id, issuance_public_data_hash, TOKEN_PROGRAM_BACKEND,
+    issuance_function_id, issuance_public_data_hash, mixed_transfer_function_id,
+    mixed_transfer_public_data_hash, TOKEN_PROGRAM_BACKEND,
 };
 use crate::transaction::{
     AuthorizedTransaction, ProgramCall, PublicOutput, PublicSpend, TransactionPreimage,
@@ -58,14 +59,23 @@ pub enum WalletBuildError {
     InsufficientFunds,
 }
 
+#[cfg(test)]
 fn select_note_indices(
     notes: &[WalletNote],
     required: u64,
 ) -> Result<Vec<usize>, WalletBuildError> {
+    select_matching_note_indices(notes, required, |_| true)
+}
+
+fn select_matching_note_indices(
+    notes: &[WalletNote],
+    required: u64,
+    matches: impl Fn(&WalletNote) -> bool,
+) -> Result<Vec<usize>, WalletBuildError> {
     let unspent = notes
         .iter()
         .enumerate()
-        .filter(|(_, note)| !note.spent)
+        .filter(|(_, note)| !note.spent && matches(note))
         .collect::<Vec<_>>();
     if let Some((index, _)) = unspent
         .iter()
@@ -88,6 +98,17 @@ fn select_note_indices(
         }
     }
     Err(WalletBuildError::InsufficientFunds)
+}
+
+fn select_asset_note_indices(
+    notes: &[WalletNote],
+    required: u64,
+    program_id: &[u8; 32],
+    asset_id: &[u8; 32],
+) -> Result<Vec<usize>, WalletBuildError> {
+    select_matching_note_indices(notes, required, |note| {
+        note.plaintext.program_id == *program_id && note.plaintext.asset_id == *asset_id
+    })
 }
 
 pub fn build_bridge(
@@ -385,7 +406,8 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             .checked_add(fee)
             .filter(|value| amount != 0 && *value != 0)
             .ok_or(WalletBuildError::InvalidValue)?;
-        let selected_indices = select_note_indices(&self.notes, required)?;
+        let selected_indices =
+            select_asset_note_indices(&self.notes, required, &[0; 32], &NATIVE_ASSET_ID)?;
         let selected = selected_indices
             .iter()
             .map(|index| &self.notes[*index])
@@ -618,6 +640,309 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         })
     }
 
+    pub fn build_mixed_token_transfer(
+        &self,
+        keys: &KeyBundle,
+        recipient: &RecipientAddress,
+        program_id: [u8; 32],
+        token_amount: u64,
+        fee: u64,
+        expiry_height: u64,
+        memo: Vec<u8>,
+        circuit_k: u32,
+    ) -> Result<AuthorizedTransaction, WalletBuildError> {
+        if recipient.network_id != self.network_id
+            || program_id == [0; 32]
+            || token_amount == 0
+            || fee == 0
+        {
+            return Err(WalletBuildError::InvalidValue);
+        }
+        let token_indices =
+            select_asset_note_indices(&self.notes, token_amount, &program_id, &program_id)?;
+        let native_indices =
+            select_asset_note_indices(&self.notes, fee, &[0; 32], &NATIVE_ASSET_ID)?;
+        let token_inputs = token_indices
+            .iter()
+            .map(|index| &self.notes[*index])
+            .collect::<Vec<_>>();
+        let native_inputs = native_indices
+            .iter()
+            .map(|index| &self.notes[*index])
+            .collect::<Vec<_>>();
+        let sum = |notes: &[&WalletNote]| {
+            notes.iter().try_fold(0u64, |sum, note| {
+                sum.checked_add(note.plaintext.value)
+                    .ok_or(WalletBuildError::InvalidValue)
+            })
+        };
+        let token_change = sum(&token_inputs)? - token_amount;
+        let native_change = sum(&native_inputs)? - fee;
+        let change_address = keys.address(0).map_err(|_| WalletBuildError::Crypto)?;
+        let mut output_specs = vec![(
+            recipient.clone(),
+            token_amount,
+            memo,
+            program_id,
+            program_id,
+        )];
+        if token_change != 0 {
+            output_specs.push((
+                change_address.clone(),
+                token_change,
+                vec![],
+                program_id,
+                program_id,
+            ));
+        }
+        let token_output_count = output_specs.len();
+        output_specs.push((
+            change_address,
+            native_change,
+            vec![],
+            [0; 32],
+            NATIVE_ASSET_ID,
+        ));
+
+        let mut output_notes = Vec::with_capacity(output_specs.len());
+        let mut output_randomness = Vec::with_capacity(output_specs.len());
+        let mut output_commitments = Vec::with_capacity(output_specs.len());
+        let mut outputs = Vec::with_capacity(output_specs.len());
+        for (recipient, value, memo, note_program, asset_id) in &output_specs {
+            let mut rho_wide = [0u8; 64];
+            let mut randomness_wide = [0u8; 64];
+            rand::rngs::OsRng.fill_bytes(&mut rho_wide);
+            rand::rngs::OsRng.fill_bytes(&mut randomness_wide);
+            let note = NotePlaintext {
+                network_id: self.network_id,
+                program_id: *note_program,
+                asset_id: *asset_id,
+                value: *value,
+                diversifier: recipient.diversifier,
+                transmission_key: recipient.transmission_key,
+                spend_authority_key: recipient.spend_authority_key,
+                rho: CanonicalField::from_field(Fp::from_uniform_bytes(&rho_wide)),
+                randomness: CanonicalField::from_field(Fp::from_uniform_bytes(&randomness_wide)),
+                memo: memo.clone(),
+            };
+            let randomness = note.randomness.field();
+            let commitment = note.commitment().map_err(|_| WalletBuildError::Crypto)?;
+            let commitment_bytes = value_commitment_bytes(*value, randomness);
+            let commitment_point =
+                Option::<pallas::Point>::from(pallas::Point::from_bytes(&commitment_bytes))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+            output_notes.push(note);
+            output_randomness.push(randomness);
+            output_commitments.push(commitment_point);
+            outputs.push(PublicOutput {
+                commitment,
+                value_commitment: commitment_bytes,
+                ephemeral_key: [0; 32],
+                ciphertext: vec![],
+                outgoing_ciphertext: vec![],
+            });
+        }
+
+        let mut selected_indices = token_indices.clone();
+        selected_indices.extend(&native_indices);
+        let mut selected = token_inputs.clone();
+        selected.extend(&native_inputs);
+        if selected
+            .iter()
+            .any(|note| note.plaintext.network_id != self.network_id)
+        {
+            return Err(WalletBuildError::InvalidRecipient);
+        }
+        let input_randomness = selected
+            .iter()
+            .map(|note| note.plaintext.randomness.field())
+            .collect::<Vec<_>>();
+        let input_commitments = selected
+            .iter()
+            .zip(&input_randomness)
+            .map(|(note, randomness)| {
+                let bytes = value_commitment_bytes(note.plaintext.value, *randomness);
+                let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(&bytes))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+                Ok((bytes, point))
+            })
+            .collect::<Result<Vec<_>, WalletBuildError>>()?;
+        let nullifiers = selected
+            .iter()
+            .map(|note| {
+                note.plaintext
+                    .nullifier(keys.nullifier_key(), note.position)
+            })
+            .collect::<Vec<_>>();
+        let function_id =
+            mixed_transfer_function_id(token_inputs.len(), token_output_count, native_inputs.len())
+                .ok_or(WalletBuildError::Crypto)?;
+        let mut preimage = TransactionPreimage {
+            network_id: self.network_id,
+            anchor: self.root(),
+            expiry_height,
+            fee,
+            spends: nullifiers
+                .iter()
+                .zip(&input_commitments)
+                .map(|(nullifier, (value_commitment, _))| PublicSpend {
+                    nullifier: *nullifier,
+                    value_commitment: *value_commitment,
+                    randomized_key: [0; 32],
+                })
+                .collect(),
+            outputs,
+            programs: vec![ProgramCall {
+                program_id,
+                function_id,
+                public_data_hash: mixed_transfer_public_data_hash(),
+            }],
+        };
+        let prepared =
+            prepare_same_owner_spends(keys, &mut preimage).map_err(|_| WalletBuildError::Crypto)?;
+        let binding = preimage
+            .encryption_binding()
+            .map_err(|_| WalletBuildError::Crypto)?;
+        for (index, (note, spec)) in output_notes.iter().zip(&output_specs).enumerate() {
+            let encrypted = keys
+                .encrypt_note(note, &spec.0, binding, index as u32)
+                .map_err(|_| WalletBuildError::Crypto)?;
+            preimage.outputs[index].ephemeral_key = encrypted.ephemeral_key;
+            preimage.outputs[index].ciphertext = encrypted.ciphertext;
+            preimage.outputs[index].outgoing_ciphertext = encrypted.outgoing_ciphertext;
+        }
+        let spends = selected
+            .iter()
+            .zip(&selected_indices)
+            .zip(&input_randomness)
+            .zip(&input_commitments)
+            .enumerate()
+            .map(
+                |(spend_index, (((input, note_index), randomness), (_, commitment)))| {
+                    let path = self
+                        .witness(*note_index)
+                        .map_err(|_| WalletBuildError::Crypto)?;
+                    let authority = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+                        &input.plaintext.spend_authority_key,
+                    ))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+                    let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+                        &preimage.spends[spend_index].randomized_key,
+                    ))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+                    Ok(MultiSpendWitness {
+                        commitment: input.commitment.field(),
+                        input_note: input
+                            .plaintext
+                            .commitment_inputs()
+                            .map_err(|_| WalletBuildError::Crypto)?,
+                        authority_key: authority,
+                        authorization_randomizer: prepared.randomizers()[spend_index],
+                        randomized_key,
+                        siblings: path
+                            .siblings
+                            .iter()
+                            .map(|sibling| sibling.field())
+                            .collect(),
+                        position: path.position,
+                        nullifier_key: keys.nullifier_key().field(),
+                        rho: input.plaintext.rho.field(),
+                        value_randomness: *randomness,
+                        value_commitment: *commitment,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, WalletBuildError>>()?;
+        let token_spend_count = token_inputs.len();
+        let witness = MixedTokenWitness {
+            token: MultiTransferWitness::<DEPTH> {
+                input_values: token_inputs
+                    .iter()
+                    .map(|note| note.plaintext.value)
+                    .collect(),
+                output_values: output_specs[..token_output_count]
+                    .iter()
+                    .map(|spec| spec.1)
+                    .collect(),
+                spends: spends[..token_spend_count].to_vec(),
+                output_notes: output_notes[..token_output_count]
+                    .iter()
+                    .map(|note| {
+                        note.commitment_inputs()
+                            .map_err(|_| WalletBuildError::Crypto)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                output_value_randomness: output_randomness[..token_output_count].to_vec(),
+                output_value_commitments: output_commitments[..token_output_count].to_vec(),
+            },
+            native: MultiTransferWitness::<DEPTH> {
+                input_values: native_inputs
+                    .iter()
+                    .map(|note| note.plaintext.value)
+                    .collect(),
+                output_values: vec![native_change],
+                spends: spends[token_spend_count..].to_vec(),
+                output_notes: vec![output_notes[token_output_count]
+                    .commitment_inputs()
+                    .map_err(|_| WalletBuildError::Crypto)?],
+                output_value_randomness: vec![output_randomness[token_output_count]],
+                output_value_commitments: vec![output_commitments[token_output_count]],
+            },
+        };
+        let nullifier_bytes = nullifiers
+            .iter()
+            .map(|nullifier| nullifier.0)
+            .collect::<Vec<_>>();
+        macro_rules! prove {
+            ($ts:literal, $to:literal, $ns:literal) => {
+                create_mixed_token_transfer_proof::<DEPTH, $ts, $to, $ns>(
+                    circuit_k,
+                    &witness,
+                    fee,
+                    self.root(),
+                    &nullifier_bytes,
+                    self.network_id,
+                    program_id,
+                    function_id,
+                )
+            };
+        }
+        let proof = match (token_spend_count, token_output_count, native_inputs.len()) {
+            (1, 1, 1) => prove!(1, 1, 1),
+            (1, 1, 2) => prove!(1, 1, 2),
+            (1, 2, 1) => prove!(1, 2, 1),
+            (1, 2, 2) => prove!(1, 2, 2),
+            (2, 1, 1) => prove!(2, 1, 1),
+            (2, 1, 2) => prove!(2, 1, 2),
+            (2, 2, 1) => prove!(2, 2, 1),
+            (2, 2, 2) => prove!(2, 2, 2),
+            _ => return Err(WalletBuildError::Crypto),
+        }
+        .map_err(|_| WalletBuildError::Crypto)?;
+        let spend_signatures =
+            sign_prepared_spends(&prepared, &preimage, TOKEN_PROGRAM_BACKEND, &proof)
+                .map_err(|_| WalletBuildError::Crypto)?;
+        let binding_signature = sign_binding_authorization(
+            &preimage,
+            TOKEN_PROGRAM_BACKEND,
+            &proof,
+            &input_randomness,
+            &output_randomness,
+        )
+        .map_err(|_| WalletBuildError::Crypto)?;
+        Ok(AuthorizedTransaction {
+            preimage,
+            backend_id: TOKEN_PROGRAM_BACKEND.to_owned(),
+            proof,
+            spend_signatures,
+            binding_signature,
+        })
+    }
+
     pub fn encode_snapshot(&self) -> Result<Vec<u8>, WalletError> {
         let mut out = Vec::new();
         out.push(WALLET_SNAPSHOT_VERSION);
@@ -839,6 +1164,49 @@ mod tests {
         wallet
     }
 
+    fn funded_mixed_wallet<const DEPTH: usize>(
+        keys: &KeyBundle,
+        network: [u8; NETWORK_ID_BYTES],
+        program_id: [u8; 32],
+        native_values: &[u64],
+        token_values: &[u64],
+    ) -> WalletState<DEPTH> {
+        let address = keys.address(0).unwrap();
+        let mut wallet = WalletState::<DEPTH>::new(network);
+        for (index, (program, asset, value)) in native_values
+            .iter()
+            .map(|value| ([0; 32], NATIVE_ASSET_ID, *value))
+            .chain(
+                token_values
+                    .iter()
+                    .map(|value| (program_id, program_id, *value)),
+            )
+            .enumerate()
+        {
+            let note = NotePlaintext {
+                network_id: network,
+                program_id: program,
+                asset_id: asset,
+                value,
+                diversifier: address.diversifier,
+                transmission_key: address.transmission_key,
+                spend_authority_key: address.spend_authority_key,
+                rho: CanonicalField::from_field(Fp::from(500 + index as u64)),
+                randomness: CanonicalField::from_field(Fp::from(600 + index as u64)),
+                memo: vec![],
+            };
+            let commitment = note.commitment().unwrap();
+            let position = wallet.tree.append(commitment).unwrap();
+            wallet.notes.push(WalletNote {
+                commitment,
+                position,
+                plaintext: note,
+                spent: false,
+            });
+        }
+        wallet
+    }
+
     #[test]
     fn builder_combines_two_notes_for_exact_and_change_payments() {
         const DEPTH: usize = 2;
@@ -878,6 +1246,157 @@ mod tests {
             .scan_transfer(&sender.full_viewing_key().unwrap(), &change)
             .unwrap();
         assert_eq!(sender_wallet.unspent_balance().unwrap(), 3);
+    }
+
+    #[test]
+    fn mixed_token_builder_conserves_each_asset_and_pays_native_fee() {
+        const DEPTH: usize = 4;
+        const K: u32 = 16;
+        let network = [18; NETWORK_ID_BYTES];
+        let sender = MasterSeed::new([31; 32]).derive(network).unwrap();
+        let recipient_keys = MasterSeed::new([32; 32]).derive(network).unwrap();
+        let recipient = recipient_keys.address(0).unwrap();
+        let entry =
+            crate::token_program::standard_token_program::<DEPTH>(K, b"MIXED/TEST", 1, None)
+                .unwrap();
+        let program_id = entry.id().unwrap();
+        let mut registry = crate::program::ProgramRegistry::default();
+        registry.register(entry.clone()).unwrap();
+        let wallet = funded_mixed_wallet::<DEPTH>(&sender, network, program_id, &[5], &[30]);
+        assert_eq!(wallet.unspent_balance().unwrap(), 5);
+        assert_eq!(
+            wallet
+                .unspent_asset_balance(&program_id, &program_id)
+                .unwrap(),
+            30
+        );
+        let transaction = wallet
+            .build_mixed_token_transfer(
+                &sender,
+                &recipient,
+                program_id,
+                20,
+                2,
+                50,
+                b"mixed payment".to_vec(),
+                K,
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                transaction.preimage.spends.len(),
+                transaction.preimage.outputs.len(),
+                transaction.preimage.fee,
+            ),
+            (2, 3, 2)
+        );
+        crate::proof::verify_authorized_mixed_token_transfer::<DEPTH, 1, 2, 1>(
+            K,
+            &transaction,
+            Some(&registry),
+            1,
+        )
+        .unwrap();
+        let public_output = |note: &WalletNote| PublicOutput {
+            commitment: note.commitment,
+            value_commitment: value_commitment_bytes(
+                note.plaintext.value,
+                note.plaintext.randomness.field(),
+            ),
+            ephemeral_key: [1; 32],
+            ciphertext: vec![2],
+            outgoing_ciphertext: vec![3],
+        };
+        let mut consensus = crate::state::ShieldedState::<DEPTH>::new(10);
+        consensus.register_program(entry).unwrap();
+        let native_setup = TransactionPreimage {
+            network_id: network,
+            anchor: consensus.root(),
+            expiry_height: 50,
+            fee: 0,
+            spends: vec![],
+            outputs: vec![public_output(&wallet.notes()[0])],
+            programs: vec![],
+        };
+        consensus.apply_bridge(&native_setup, 5, 0, 0).unwrap();
+        let token_setup = TransactionPreimage {
+            network_id: network,
+            anchor: consensus.root(),
+            expiry_height: 50,
+            fee: 0,
+            spends: vec![],
+            outputs: vec![public_output(&wallet.notes()[1])],
+            programs: vec![],
+        };
+        consensus.apply_transaction(&token_setup, 0).unwrap();
+        assert_eq!(consensus.root(), wallet.root());
+        let snapshot = consensus.encode_snapshot();
+        let mut direct = crate::state::ShieldedState::<DEPTH>::decode_snapshot(&snapshot).unwrap();
+        assert!(direct.knows_anchor(transaction.preimage.anchor));
+        direct.apply_transfer(&transaction.preimage, 1).unwrap();
+        let encoded = transaction.encode().unwrap();
+        let mut next_ptr = std::ptr::null_mut();
+        let mut next_len = 0usize;
+        let mut extracted_fee = 0u64;
+        assert_eq!(
+            crate::onyx_verify_apply_transfer(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                10,
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                network.as_ptr(),
+                1,
+                &mut next_ptr,
+                &mut next_len,
+                &mut extracted_fee,
+            ),
+            1
+        );
+        let next_snapshot = unsafe { std::slice::from_raw_parts(next_ptr, next_len) }.to_vec();
+        crate::onyx_free(next_ptr, next_len);
+        let applied =
+            crate::state::ShieldedState::<DEPTH>::decode_snapshot(&next_snapshot).unwrap();
+        assert_eq!(extracted_fee, 2);
+        assert_eq!((applied.total_fees(), applied.circulating_supply()), (2, 3));
+        assert!(transaction
+            .preimage
+            .spends
+            .iter()
+            .all(|spend| applied.is_spent(&spend.nullifier)));
+        let mut wrong_fee = transaction.clone();
+        wrong_fee.preimage.fee = 1;
+        assert!(
+            crate::proof::verify_authorized_mixed_token_transfer::<DEPTH, 1, 2, 1>(
+                K, &wrong_fee, None, 0,
+            )
+            .is_err()
+        );
+
+        let mut recipient_wallet = WalletState::<DEPTH>::new(network);
+        recipient_wallet
+            .scan_transfer(&recipient_keys.full_viewing_key().unwrap(), &transaction)
+            .unwrap();
+        assert_eq!(recipient_wallet.unspent_balance().unwrap(), 0);
+        assert_eq!(
+            recipient_wallet
+                .unspent_asset_balance(&program_id, &program_id)
+                .unwrap(),
+            20
+        );
+        let mut sender_wallet = WalletState::<DEPTH>::new(network);
+        sender_wallet
+            .scan_transfer(&sender.full_viewing_key().unwrap(), &transaction)
+            .unwrap();
+        assert_eq!(sender_wallet.unspent_balance().unwrap(), 3);
+        assert_eq!(
+            sender_wallet
+                .unspent_asset_balance(&program_id, &program_id)
+                .unwrap(),
+            10
+        );
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub mod bundle_circuit;
 pub mod keys;
 pub mod linked_transfer_circuit;
 pub mod membership_circuit;
+pub mod mixed_token_circuit;
 pub mod multi_transfer_circuit;
 pub mod note_commitment_circuit;
 pub mod program;
@@ -62,6 +63,89 @@ fn ffi_i32(f: impl FnOnce() -> i32) -> i32 {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(ERR_PANIC)
 }
 
+fn verify_mixed_transfer_dispatch(
+    transaction: &transaction::AuthorizedTransaction,
+    merkle_depth: u32,
+    circuit_k: u32,
+    registry: Option<&program::ProgramRegistry>,
+    block_height: u64,
+) -> Result<(), proof::ProofError> {
+    let call = transaction
+        .preimage
+        .programs
+        .first()
+        .ok_or(proof::ProofError::InvalidShape)?;
+    let token_spends = ((call.function_id >> 12) & 0xf) as usize;
+    let token_outputs = ((call.function_id >> 8) & 0xf) as usize;
+    let native_spends = (call.function_id & 0xff) as usize;
+    if token_program::mixed_transfer_function_id(token_spends, token_outputs, native_spends)
+        != Some(call.function_id)
+    {
+        return Err(proof::ProofError::InvalidShape);
+    }
+    macro_rules! dispatch_depth {
+        ($depth:literal) => {
+            match (token_spends, token_outputs, native_spends) {
+                (1, 1, 1) => proof::verify_authorized_mixed_token_transfer::<$depth, 1, 1, 1>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (1, 1, 2) => proof::verify_authorized_mixed_token_transfer::<$depth, 1, 1, 2>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (1, 2, 1) => proof::verify_authorized_mixed_token_transfer::<$depth, 1, 2, 1>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (1, 2, 2) => proof::verify_authorized_mixed_token_transfer::<$depth, 1, 2, 2>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (2, 1, 1) => proof::verify_authorized_mixed_token_transfer::<$depth, 2, 1, 1>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (2, 1, 2) => proof::verify_authorized_mixed_token_transfer::<$depth, 2, 1, 2>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (2, 2, 1) => proof::verify_authorized_mixed_token_transfer::<$depth, 2, 2, 1>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                (2, 2, 2) => proof::verify_authorized_mixed_token_transfer::<$depth, 2, 2, 2>(
+                    circuit_k,
+                    transaction,
+                    registry,
+                    block_height,
+                ),
+                _ => Err(proof::ProofError::InvalidShape),
+            }
+        };
+    }
+    match merkle_depth {
+        2 => dispatch_depth!(2),
+        4 => dispatch_depth!(4),
+        32 => dispatch_depth!(32),
+        _ => Err(proof::ProofError::InvalidShape),
+    }
+}
+
 fn verify_transfer_dispatch(
     transaction: &transaction::AuthorizedTransaction,
     merkle_depth: u32,
@@ -77,7 +161,12 @@ fn verify_transfer_dispatch(
         transaction.preimage.spends.len(),
         transaction.preimage.outputs.len(),
     );
-    let result = if transaction.backend_id == token_program::TOKEN_PROGRAM_BACKEND {
+    let result = if transaction.backend_id == token_program::TOKEN_PROGRAM_BACKEND
+        && transaction.preimage.programs.first().is_some_and(|call| {
+            call.function_id & 0xffff_0000 == token_program::TOKEN_MIXED_TRANSFER_FUNCTION_BASE
+        }) {
+        verify_mixed_transfer_dispatch(transaction, merkle_depth, circuit_k, registry, block_height)
+    } else if transaction.backend_id == token_program::TOKEN_PROGRAM_BACKEND {
         match shape {
             (2, 1, 1) => proof::verify_authorized_token_transfer::<2, 1, 1>(
                 circuit_k,
@@ -1969,6 +2058,98 @@ pub extern "C" fn onyx_wallet_create_transfer(
             Err(wallet::WalletBuildError::InsufficientFunds) => return -7,
             Err(_) => return -2,
         };
+        let encoded = match transaction.encode() {
+            Ok(encoded) if encoded.len() <= MAX_AUTHORIZED_TRANSACTION_BYTES => encoded,
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *transaction_out = ptr;
+            *transaction_len_out = len;
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_mixed_token_transfer(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    program_id: *const u8,
+    token_amount: u64,
+    fee: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || recipient.is_null()
+            || program_id.is_null()
+            || transaction_out.is_null()
+            || transaction_len_out.is_null()
+            || memo_len > types::MAX_MEMO_BYTES
+            || (memo.is_null() && memo_len != 0)
+            || !(10..=20).contains(&circuit_k)
+        {
+            return -1;
+        }
+        unsafe {
+            *transaction_out = std::ptr::null_mut();
+            *transaction_len_out = 0;
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
+            .try_into()
+            .unwrap();
+        let recipient = unsafe { slice::from_raw_parts(recipient, 91) };
+        let address = keys::RecipientAddress {
+            network_id: recipient[0..16].try_into().unwrap(),
+            diversifier: recipient[16..27].try_into().unwrap(),
+            transmission_key: recipient[27..59].try_into().unwrap(),
+            spend_authority_key: recipient[59..91].try_into().unwrap(),
+        };
+        let keys = match keys::MasterSeed::new(seed).derive(address.network_id) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let transaction = match wallet.build_mixed_token_transfer(
+            &keys,
+            &address,
+            program_id,
+            token_amount,
+            fee,
+            expiry_height,
+            if memo_len == 0 {
+                vec![]
+            } else {
+                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+            },
+            circuit_k,
+        ) {
+            Ok(transaction) => transaction,
+            Err(wallet::WalletBuildError::InsufficientFunds) => return -7,
+            Err(_) => return -2,
+        };
+        if verify_transfer_dispatch(&transaction, 32, circuit_k, None, 0) != 1 {
+            return -2;
+        }
         let encoded = match transaction.encode() {
             Ok(encoded) if encoded.len() <= MAX_AUTHORIZED_TRANSACTION_BYTES => encoded,
             _ => return -6,

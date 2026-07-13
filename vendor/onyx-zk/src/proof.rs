@@ -20,6 +20,7 @@ use crate::bridge::{AuthorizedBridge, BridgeError};
 use crate::bridge_circuit::BridgeCircuit;
 use crate::linked_transfer_circuit::LinkedTransferCircuit;
 use crate::membership_circuit::MembershipCircuit;
+use crate::mixed_token_circuit::MixedTokenCircuit;
 use crate::multi_transfer_circuit::{LinkedSpend, MultiTransferCircuit};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
 use crate::program::ProgramRegistry;
@@ -27,11 +28,15 @@ use crate::spend_auth_circuit::SpendAuthCircuit;
 use crate::state::CanonicalField;
 use crate::token_issuance_circuit::TokenIssuanceCircuit;
 use crate::token_program::{
-    descriptor_from_vk, empty_issuance_circuit, empty_program_circuit, issuance_descriptor_from_vk,
-    issuance_function_id, issuance_public_data_hash, issuance_schema_hash, transfer_function_id,
+    descriptor_from_vk, empty_issuance_circuit, empty_mixed_circuit, empty_program_circuit,
+    issuance_descriptor_from_vk, issuance_function_id, issuance_public_data_hash,
+    issuance_schema_hash, mixed_descriptor_from_vk, mixed_transfer_function_id,
+    mixed_transfer_public_data_hash, mixed_transfer_schema_hash, transfer_function_id,
     transfer_public_data_hash, transfer_schema_hash, TOKEN_PROGRAM_BACKEND,
 };
-use crate::transaction::{AuthorizedTransaction, TransactionError, MAX_PROOF_BYTES};
+use crate::transaction::{
+    AuthorizedTransaction, PublicOutput, PublicSpend, TransactionError, MAX_PROOF_BYTES,
+};
 
 pub const EXPERIMENTAL_TRANSFER_BACKEND: &str = "halo2-ipa-pasta-onyx-o2-experimental";
 pub const BRIDGE_BACKEND: &str = "halo2-ipa-pasta-onyx-bridge-v1";
@@ -230,6 +235,30 @@ pub struct MultiTransferWitness<const DEPTH: usize> {
 }
 
 #[derive(Clone)]
+pub struct MixedTokenWitness<const DEPTH: usize> {
+    pub token: MultiTransferWitness<DEPTH>,
+    pub native: MultiTransferWitness<DEPTH>,
+}
+
+impl<const DEPTH: usize> MixedTokenWitness<DEPTH> {
+    fn circuit<
+        const TOKEN_SPENDS: usize,
+        const TOKEN_OUTPUTS: usize,
+        const NATIVE_SPENDS: usize,
+    >(
+        &self,
+    ) -> Result<MixedTokenCircuit<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>, ProofError>
+    {
+        MixedTokenCircuit::new(
+            self.token
+                .program_circuit::<TOKEN_SPENDS, TOKEN_OUTPUTS>()?,
+            self.native.circuit::<NATIVE_SPENDS, 1>()?,
+        )
+        .map_err(|_| ProofError::InvalidShape)
+    }
+}
+
+#[derive(Clone)]
 pub struct TokenIssuanceWitness {
     pub output_values: Vec<u64>,
     pub output_notes: Vec<[Fp; NOTE_COMMITMENT_INPUTS]>,
@@ -273,7 +302,7 @@ impl<const DEPTH: usize> MultiSpendWitness<DEPTH> {
 }
 
 impl<const DEPTH: usize> MultiTransferWitness<DEPTH> {
-    fn circuit<const SPENDS: usize, const OUTPUTS: usize>(
+    pub(crate) fn circuit<const SPENDS: usize, const OUTPUTS: usize>(
         &self,
     ) -> Result<MultiTransferCircuit<DEPTH, SPENDS, OUTPUTS>, ProofError> {
         let spends = self
@@ -292,7 +321,7 @@ impl<const DEPTH: usize> MultiTransferWitness<DEPTH> {
         .map_err(|_| ProofError::InvalidShape)
     }
 
-    fn program_circuit<const SPENDS: usize, const OUTPUTS: usize>(
+    pub(crate) fn program_circuit<const SPENDS: usize, const OUTPUTS: usize>(
         &self,
     ) -> Result<MultiTransferCircuit<DEPTH, SPENDS, OUTPUTS>, ProofError> {
         let spends = self
@@ -736,6 +765,255 @@ pub fn verify_authorized_token_transfer<
         &vk,
         SingleVerifier::new(&params),
         &[&[&public, &membership, &notes, &authorization]],
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::VerificationFailed)
+}
+
+fn witness_lane_public_inputs<const DEPTH: usize>(
+    witness: &MultiTransferWitness<DEPTH>,
+    fee: u64,
+    anchor: CanonicalField,
+    nullifiers: &[[u8; 32]],
+    network_id: &[u8; 16],
+    program_id: Option<&[u8; 32]>,
+) -> Result<[Vec<Fp>; 4], ProofError> {
+    if nullifiers.len() != witness.spends.len() {
+        return Err(ProofError::InvalidShape);
+    }
+    let public = vec![Fp::from(fee)];
+    let mut membership = Vec::with_capacity(nullifiers.len() + 1);
+    membership.push(anchor.field());
+    for nullifier in nullifiers {
+        membership.push(
+            CanonicalField::from_bytes(*nullifier)
+                .ok_or(ProofError::InvalidPublicInput)?
+                .field(),
+        );
+    }
+    let mut notes = witness
+        .output_notes
+        .iter()
+        .map(|note| {
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
+                .hash(*note)
+        })
+        .collect::<Vec<_>>();
+    notes.push(crate::types::network_field(network_id));
+    if let Some(program_id) = program_id {
+        notes.extend(crate::types::pack_32(program_id));
+    }
+    let mut authorization = witness
+        .spends
+        .iter()
+        .map(|spend| randomized_key_coordinates(spend.randomized_key))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for spend in &witness.spends {
+        authorization.extend(randomized_key_coordinates(spend.value_commitment)?);
+    }
+    for commitment in &witness.output_value_commitments {
+        authorization.extend(randomized_key_coordinates(*commitment)?);
+    }
+    Ok([public, membership, notes, authorization])
+}
+
+fn transaction_lane_public_inputs(
+    spends: &[PublicSpend],
+    outputs: &[PublicOutput],
+    fee: u64,
+    anchor: CanonicalField,
+    network_id: &[u8; 16],
+    program_id: Option<&[u8; 32]>,
+) -> Result<[Vec<Fp>; 4], ProofError> {
+    let public = vec![Fp::from(fee)];
+    let mut membership = Vec::with_capacity(spends.len() + 1);
+    membership.push(anchor.field());
+    for spend in spends {
+        membership.push(
+            CanonicalField::from_bytes(spend.nullifier.0)
+                .ok_or(ProofError::InvalidPublicInput)?
+                .field(),
+        );
+    }
+    let mut notes = outputs
+        .iter()
+        .map(|output| output.commitment.field())
+        .collect::<Vec<_>>();
+    notes.push(crate::types::network_field(network_id));
+    if let Some(program_id) = program_id {
+        notes.extend(crate::types::pack_32(program_id));
+    }
+    let mut authorization =
+        Vec::with_capacity((spends.len() * 2 + spends.len() + outputs.len()) * 2);
+    for spend in spends {
+        let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(&spend.randomized_key))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+        authorization.extend(randomized_key_coordinates(point)?);
+    }
+    for bytes in spends
+        .iter()
+        .map(|spend| &spend.value_commitment)
+        .chain(outputs.iter().map(|output| &output.value_commitment))
+    {
+        let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(bytes))
+            .ok_or(ProofError::InvalidPublicInput)?
+            .to_affine();
+        authorization.extend(randomized_key_coordinates(point)?);
+    }
+    Ok([public, membership, notes, authorization])
+}
+
+pub fn create_mixed_token_transfer_proof<
+    const DEPTH: usize,
+    const TOKEN_SPENDS: usize,
+    const TOKEN_OUTPUTS: usize,
+    const NATIVE_SPENDS: usize,
+>(
+    k: u32,
+    witness: &MixedTokenWitness<DEPTH>,
+    fee: u64,
+    anchor: CanonicalField,
+    nullifiers: &[[u8; 32]],
+    network_id: [u8; 16],
+    program_id: [u8; 32],
+    function_id: u32,
+) -> Result<Vec<u8>, ProofError> {
+    if fee == 0
+        || nullifiers.len() != TOKEN_SPENDS + NATIVE_SPENDS
+        || mixed_transfer_function_id(TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS)
+            != Some(function_id)
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let circuit = witness.circuit::<TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>()?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let token = witness_lane_public_inputs(
+        &witness.token,
+        0,
+        anchor,
+        &nullifiers[..TOKEN_SPENDS],
+        &network_id,
+        Some(&program_id),
+    )?;
+    let native = witness_lane_public_inputs(
+        &witness.native,
+        fee,
+        anchor,
+        &nullifiers[TOKEN_SPENDS..],
+        &network_id,
+        None,
+    )?;
+    let instances: [&[Fp]; 8] = [
+        &token[0], &token[1], &token[2], &token[3], &native[0], &native[1], &native[2], &native[3],
+    ];
+    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
+    create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
+        &params,
+        &pk,
+        &[circuit],
+        &[&instances],
+        rand::rngs::OsRng,
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::ProvingFailed)?;
+    let proof = transcript.finalize();
+    if proof.len() > MAX_PROOF_BYTES {
+        return Err(ProofError::ProofTooLarge);
+    }
+    Ok(proof)
+}
+
+pub fn verify_authorized_mixed_token_transfer<
+    const DEPTH: usize,
+    const TOKEN_SPENDS: usize,
+    const TOKEN_OUTPUTS: usize,
+    const NATIVE_SPENDS: usize,
+>(
+    k: u32,
+    transaction: &AuthorizedTransaction,
+    registry: Option<&ProgramRegistry>,
+    block_height: u64,
+) -> Result<(), ProofError> {
+    let expected_function = mixed_transfer_function_id(TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS)
+        .ok_or(ProofError::InvalidShape)?;
+    if transaction.backend_id != TOKEN_PROGRAM_BACKEND
+        || transaction.preimage.spends.len() != TOKEN_SPENDS + NATIVE_SPENDS
+        || transaction.preimage.outputs.len() != TOKEN_OUTPUTS + 1
+        || transaction.preimage.fee == 0
+        || transaction.preimage.programs.len() != 1
+        || transaction.proof.len() > MAX_PROOF_BYTES
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let call = &transaction.preimage.programs[0];
+    if call.function_id != expected_function
+        || call.public_data_hash != mixed_transfer_public_data_hash()
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    let registered_function = if let Some(registry) = registry {
+        registry
+            .validate_calls(std::slice::from_ref(call), block_height, 10_000_000)
+            .map_err(|_| ProofError::InvalidShape)?;
+        let (entry, function) = registry
+            .active_function(&call.program_id, call.function_id, block_height)
+            .map_err(|_| ProofError::InvalidShape)?;
+        if entry.backend != TOKEN_PROGRAM_BACKEND
+            || function.public_input_schema_hash
+                != mixed_transfer_schema_hash(DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS)
+                    .map_err(|_| ProofError::InvalidShape)?
+        {
+            return Err(ProofError::InvalidShape);
+        }
+        Some(function)
+    } else {
+        None
+    };
+    transaction.preimage.encode()?;
+    verify_authorized_transaction(transaction)?;
+    let circuit = empty_mixed_circuit::<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>()
+        .map_err(|_| ProofError::InvalidShape)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
+    if let Some(function) = registered_function {
+        if function.verifying_key
+            != mixed_descriptor_from_vk::<DEPTH, TOKEN_SPENDS, TOKEN_OUTPUTS, NATIVE_SPENDS>(k, &vk)
+        {
+            return Err(ProofError::InvalidShape);
+        }
+    }
+    let token = transaction_lane_public_inputs(
+        &transaction.preimage.spends[..TOKEN_SPENDS],
+        &transaction.preimage.outputs[..TOKEN_OUTPUTS],
+        0,
+        transaction.preimage.anchor,
+        &transaction.preimage.network_id,
+        Some(&call.program_id),
+    )?;
+    let native = transaction_lane_public_inputs(
+        &transaction.preimage.spends[TOKEN_SPENDS..],
+        &transaction.preimage.outputs[TOKEN_OUTPUTS..],
+        transaction.preimage.fee,
+        transaction.preimage.anchor,
+        &transaction.preimage.network_id,
+        None,
+    )?;
+    let instances: [&[Fp]; 8] = [
+        &token[0], &token[1], &token[2], &token[3], &native[0], &native[1], &native[2], &native[3],
+    ];
+    let mut transcript =
+        Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
+    verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
+        &params,
+        &vk,
+        SingleVerifier::new(&params),
+        &[&instances],
         &mut transcript,
     )
     .map_err(|_| ProofError::VerificationFailed)

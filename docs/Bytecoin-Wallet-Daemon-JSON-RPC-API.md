@@ -58,6 +58,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | `get_onyx_status` | Returns the wallet's canonical Onyx address, confirmed shielded balance, recovered-note count, and commitment-tree root. |
 | `get_onyx_asset_balance` | Returns the confirmed balance and unspent-note count for one exact Onyx program/asset pair. |
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
+| `create_onyx_token_transaction` | Transfers a private standard token while paying the miner fee from native Onyx notes in the same proof. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
 
@@ -141,6 +142,30 @@ then pass `binary_transaction` unchanged to `send_transaction`:
 Construction fails for malformed or foreign-network addresses, expired requests, insufficient
 confirmed funds, view-only wallets, or wallets that have not synchronized an Onyx state. Proof
 generation can take materially longer than legacy transaction construction.
+
+#### `create_onyx_token_transaction`
+
+This method accepts the same `address`, `amount`, `fee`, `expiry_height`, and `memo` fields as
+`create_onyx_transaction`, plus a required 32-byte hexadecimal `program_id`. `amount` is denominated
+in that private token; `fee` is denominated in native Bytecoin. The wallet selects the two assets
+independently, creates token and native change, and produces one atomic type-0 Onyx transaction.
+Insufficient token funds and insufficient native fee funds both fail closed.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"token-send",
+  "method":"create_onyx_token_transaction",
+  "params":{
+    "address":"<182 lowercase hexadecimal characters>",
+    "program_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "amount":2500,
+    "fee":1000,
+    "expiry_height":0,
+    "memo":"private token payment"
+  }
+}
+```
 
 #### `create_onyx_bridge` and `finalize_onyx_bridge`
 
