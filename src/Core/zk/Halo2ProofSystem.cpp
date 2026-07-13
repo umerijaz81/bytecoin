@@ -272,7 +272,9 @@ bool Halo2ProofSystem::full_viewing_key(const std::array<uint8_t, 32> &seed,
 }
 
 bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
-    const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
+    const std::array<uint8_t, 16> &network, uint8_t envelope_type, uint64_t block_height,
+    uint32_t circuit_k,
+    const BinaryArray &encoded,
     BinaryArray *next_snapshot, WalletScanResult *result) {
 	if (encoded.empty() || next_snapshot == nullptr || result == nullptr)
 		return false;
@@ -280,7 +282,8 @@ bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array
 	size_t next_len = 0;
 	WalletScanResult scanned;
 	const int rc = onyx_wallet_scan(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(), seed.data(),
-	    network.data(), envelope_type, encoded.data(), encoded.size(), &next_ptr, &next_len, &scanned.balance,
+	    network.data(), envelope_type, block_height, circuit_k,
+	    encoded.data(), encoded.size(), &next_ptr, &next_len, &scanned.balance,
 	    &scanned.note_count, scanned.root.data());
 	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
 		if (next_ptr != nullptr)
@@ -299,14 +302,16 @@ bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array
 }
 
 bool Halo2ProofSystem::wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
-    uint8_t envelope_type, const BinaryArray &encoded, BinaryArray *next_snapshot, WalletScanResult *result) {
+    uint8_t envelope_type, uint64_t block_height, uint32_t circuit_k, const BinaryArray &encoded,
+    BinaryArray *next_snapshot, WalletScanResult *result) {
 	if (viewing_key.size() != 177 || encoded.empty() || next_snapshot == nullptr || result == nullptr)
 		return false;
 	uint8_t *next_ptr = nullptr;
 	size_t next_len = 0;
 	WalletScanResult scanned;
 	const int rc = onyx_wallet_scan_viewing(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(),
-	    viewing_key.data(), viewing_key.size(), envelope_type, encoded.data(), encoded.size(), &next_ptr,
+	    viewing_key.data(), viewing_key.size(), envelope_type, block_height, circuit_k,
+	    encoded.data(), encoded.size(), &next_ptr,
 	    &next_len, &scanned.balance, &scanned.note_count, scanned.root.data());
 	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
 		if (next_ptr != nullptr)
@@ -473,17 +478,18 @@ bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &walle
 	return true;
 }
 
-bool Halo2ProofSystem::wallet_create_token_issuance(const BinaryArray &consensus_snapshot,
+bool Halo2ProofSystem::wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
     const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
-    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t expiry_height,
+    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,
+    uint64_t expiry_height,
     const BinaryArray &memo, uint32_t circuit_k, BinaryArray *issuance, uint64_t *sequence) {
-	if (consensus_snapshot.empty() || issuance == nullptr || sequence == nullptr)
+	if (wallet_snapshot.empty() || issuance == nullptr || sequence == nullptr)
 		return false;
 	uint8_t *ptr = nullptr;
 	size_t len = 0;
 	uint64_t next_sequence = 0;
-	const int rc = onyx_wallet_create_token_issuance(consensus_snapshot.data(), consensus_snapshot.size(),
-	    seed.data(), recipient.data(), program_id.data(), issued_amount, expiry_height,
+	const int rc = onyx_wallet_create_token_issuance(wallet_snapshot.data(), wallet_snapshot.size(),
+	    seed.data(), recipient.data(), program_id.data(), issued_amount, inclusion_height, expiry_height,
 	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k, &ptr, &len, &next_sequence);
 	if (rc != 1 || ptr == nullptr || len == 0) {
 		if (ptr != nullptr)

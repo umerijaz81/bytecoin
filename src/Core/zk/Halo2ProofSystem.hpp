@@ -117,10 +117,12 @@ public:
 	static bool full_viewing_key(const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key);
 	static bool wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
-	    const std::array<uint8_t, 16> &network, uint8_t envelope_type, const BinaryArray &encoded,
+	    const std::array<uint8_t, 16> &network, uint8_t envelope_type, uint64_t block_height,
+	    uint32_t circuit_k, const BinaryArray &encoded,
 	    BinaryArray *next_snapshot, WalletScanResult *result);
 	static bool wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
-	    uint8_t envelope_type, const BinaryArray &encoded, BinaryArray *next_snapshot,
+	    uint8_t envelope_type, uint64_t block_height, uint32_t circuit_k,
+	    const BinaryArray &encoded, BinaryArray *next_snapshot,
 	    WalletScanResult *result);
 	static bool wallet_reserve_spends(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, const BinaryArray &encoded, BinaryArray *next_snapshot);
@@ -143,9 +145,10 @@ public:
 	    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
 	    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
 	    std::array<uint8_t, 32> *program_id);
-	static bool wallet_create_token_issuance(const BinaryArray &consensus_snapshot,
+	static bool wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
-	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t expiry_height,
+	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,
+	    uint64_t expiry_height,
 	    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *issuance, uint64_t *sequence);
 	static bool wallet_create_transfer(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 91> &recipient, uint64_t amount, uint64_t fee, uint64_t expiry_height,

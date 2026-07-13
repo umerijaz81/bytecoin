@@ -54,6 +54,9 @@ public:
 	bool on_create_onyx_program_deployment(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::CreateOnyxProgramDeployment::Request &&,
 	    api::walletd::CreateOnyxProgramDeployment::Response &);
+	bool on_create_onyx_token_issuance(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::walletd::CreateOnyxTokenIssuance::Request &&,
+	    api::walletd::CreateOnyxTokenIssuance::Response &);
 	bool on_create_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::CreateOnyxBridge::Request &&, api::walletd::CreateOnyxBridge::Response &);
 	bool on_finalize_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,

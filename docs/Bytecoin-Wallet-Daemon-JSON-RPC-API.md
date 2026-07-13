@@ -60,6 +60,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
 | `create_onyx_token_transaction` | Transfers a private standard token while paying the miner fee from native Onyx notes in the same proof. |
 | `create_onyx_program_deployment` | Deploys a capped private fungible-token program, funded and authorized by native Onyx notes. |
+| `create_onyx_token_issuance` | Privately issues tokens under a wallet-owned active capped program and its next consensus sequence. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
 
@@ -194,6 +195,33 @@ their native nullifiers against one another, so a second builder cannot reuse th
     "deactivation_height":0,
     "fee":100000,
     "expiry_height":0
+  }
+}
+```
+
+#### `create_onyx_token_issuance`
+
+This method accepts a recipient Onyx `address`, the deployed `program_id`, a nonzero private-token
+`amount`, optional `memo`, and optional `expiry_height`. It derives the issuer from the wallet seed
+and only builds when that key matches the immutable manifest, the program is active at expected
+inclusion, the next local consensus sequence is available, and `issued + amount` does not exceed the
+cap. Issuance has zero native fee by protocol.
+
+The response returns `binary_transaction`, `transaction_hash`, and `sequence`. Submit the binary
+transaction through `send_transaction`. Walletd rejects another pending issuance for the same Program
+ID so two local requests cannot reuse a sequence.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"issue-token",
+  "method":"create_onyx_token_issuance",
+  "params":{
+    "address":"<182 lowercase hexadecimal characters>",
+    "program_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "amount":250000,
+    "expiry_height":0,
+    "memo":"private issuance batch 1"
   }
 }
 ```

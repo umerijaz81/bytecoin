@@ -1355,6 +1355,8 @@ pub extern "C" fn onyx_wallet_scan(
     seed: *const u8,
     expected_network: *const u8,
     envelope_type: u8,
+    block_height: u64,
+    circuit_k: u32,
     encoded: *const u8,
     encoded_len: usize,
     snapshot_out: *mut *mut u8,
@@ -1374,6 +1376,7 @@ pub extern "C" fn onyx_wallet_scan(
             || root_out.is_null()
             || encoded_len == 0
             || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
+            || !(10..=20).contains(&circuit_k)
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || (snapshot.is_null() && snapshot_len != 0)
         {
@@ -1420,12 +1423,18 @@ pub extern "C" fn onyx_wallet_scan(
                 .map_err(|_| ())
                 .and_then(|deployment| {
                     wallet
+                        .record_program_deployment(&deployment, block_height, circuit_k)
+                        .map_err(|_| ())?;
+                    wallet
                         .scan_transfer(&keys, &deployment.funding)
                         .map_err(|_| ())
                 }),
             3 => token_issuance::AuthorizedTokenIssuance::decode(encoded)
                 .map_err(|_| ())
                 .and_then(|issuance| {
+                    wallet
+                        .record_token_issuance_envelope(&issuance, block_height)
+                        .map_err(|_| ())?;
                     wallet
                         .scan_transfer(&keys, &issuance.transaction)
                         .map_err(|_| ())
@@ -1464,6 +1473,8 @@ pub extern "C" fn onyx_wallet_scan_viewing(
     viewing_key: *const u8,
     viewing_key_len: usize,
     envelope_type: u8,
+    block_height: u64,
+    circuit_k: u32,
     encoded: *const u8,
     encoded_len: usize,
     snapshot_out: *mut *mut u8,
@@ -1483,6 +1494,7 @@ pub extern "C" fn onyx_wallet_scan_viewing(
             || root_out.is_null()
             || encoded_len == 0
             || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
+            || !(10..=20).contains(&circuit_k)
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || (snapshot.is_null() && snapshot_len != 0)
         {
@@ -1523,12 +1535,18 @@ pub extern "C" fn onyx_wallet_scan_viewing(
                 .map_err(|_| ())
                 .and_then(|deployment| {
                     wallet
+                        .record_program_deployment(&deployment, block_height, circuit_k)
+                        .map_err(|_| ())?;
+                    wallet
                         .scan_transfer(&keys, &deployment.funding)
                         .map_err(|_| ())
                 }),
             3 => token_issuance::AuthorizedTokenIssuance::decode(encoded)
                 .map_err(|_| ())
                 .and_then(|issuance| {
+                    wallet
+                        .record_token_issuance_envelope(&issuance, block_height)
+                        .map_err(|_| ())?;
                     wallet
                         .scan_transfer(&keys, &issuance.transaction)
                         .map_err(|_| ())
@@ -1915,12 +1933,13 @@ pub extern "C" fn onyx_wallet_finalize_bridge(
 
 #[no_mangle]
 pub extern "C" fn onyx_wallet_create_token_issuance(
-    consensus_snapshot: *const u8,
-    consensus_snapshot_len: usize,
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
     seed: *const u8,
     recipient: *const u8,
     program_id: *const u8,
     issued_amount: u64,
+    inclusion_height: u64,
     expiry_height: u64,
     memo: *const u8,
     memo_len: usize,
@@ -1930,9 +1949,9 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
     sequence_out: *mut u64,
 ) -> i32 {
     ffi_i32(|| {
-        if consensus_snapshot.is_null()
-            || consensus_snapshot_len == 0
-            || consensus_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+        if wallet_snapshot.is_null()
+            || wallet_snapshot_len == 0
+            || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || seed.is_null()
             || recipient.is_null()
             || program_id.is_null()
@@ -1951,16 +1970,16 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
             *issuance_len_out = 0;
             *sequence_out = 0;
         }
-        let state = match state::ShieldedState::<32>::decode_snapshot(unsafe {
-            slice::from_raw_parts(consensus_snapshot, consensus_snapshot_len)
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
         }) {
-            Ok(state) => state,
+            Ok(wallet) => wallet,
             Err(_) => return -2,
         };
         let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
             .try_into()
             .unwrap();
-        let entry = match state.program_registry().get(&program_id) {
+        let entry = match wallet.program_registry().get(&program_id) {
             Some(entry) => entry,
             None => return -5,
         };
@@ -1968,29 +1987,25 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
             Ok(policy) => policy,
             Err(_) => return -5,
         };
-        let sequence = state.token_next_issuance_sequence(&program_id);
+        let sequence = wallet.token_next_issuance_sequence(&program_id);
         let remaining = match policy
             .max_supply
-            .checked_sub(state.token_issued_supply(&program_id))
+            .checked_sub(wallet.token_issued_supply(&program_id))
         {
             Some(remaining) => remaining,
-            None => return -5,
-        };
-        let next_height = match state.current_height().checked_add(1) {
-            Some(height) => height,
             None => return -5,
         };
         if depth != 32
             || manifest_k != circuit_k
             || issued_amount > remaining
-            || expiry_height < next_height
-            || expiry_height - next_height > MAX_EXPIRY_DISTANCE_BLOCKS
-            || state
+            || expiry_height < inclusion_height
+            || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
+            || wallet
                 .program_registry()
                 .active_function(
                     &program_id,
                     token_program::issuance_function_id(1).unwrap(),
-                    next_height,
+                    inclusion_height,
                 )
                 .is_err()
         {
@@ -2006,6 +2021,9 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
             .try_into()
             .unwrap();
+        if wallet.network_id() != address.network_id {
+            return -8;
+        }
         let issuer = match keys::MasterSeed::new(seed).derive(address.network_id) {
             Ok(issuer) => issuer,
             Err(_) => return -2,
@@ -2021,7 +2039,7 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
         let issuance = match wallet::build_token_issuance(
             &issuer,
             &address,
-            state.root(),
+            wallet.root(),
             program_id,
             sequence,
             issued_amount,
@@ -2040,8 +2058,8 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
             &issuance,
             32,
             circuit_k,
-            Some(state.program_registry()),
-            next_height,
+            Some(wallet.program_registry()),
+            inclusion_height,
         )
         .is_err()
         {

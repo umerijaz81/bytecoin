@@ -307,6 +307,42 @@ bool WalletState::create_onyx_program_deployment(Amount max_supply, const Binary
 #endif
 }
 
+bool WalletState::create_onyx_token_issuance(const std::array<uint8_t, 91> &recipient,
+    const std::array<uint8_t, 32> &program_id, Amount amount, Height inclusion_height,
+    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope, uint64_t *sequence) const {
+#ifdef onyx_USE_ZK
+	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || envelope == nullptr ||
+	    sequence == nullptr)
+		return false;
+	for (const auto &entry : payment_queue) {
+		if (entry.in_blockchain())
+			continue;
+		Transaction pending;
+		try {
+			seria::from_binary(pending, entry.binary_transaction);
+		} catch (const std::exception &) {
+			return false;
+		}
+		if (pending.version != m_currency.onyx_transaction_version ||
+		    pending.onyx_type != parameters::ONYX_TYPE_TOKEN_ISSUANCE)
+			continue;
+		zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+		if (!zk::Halo2ProofSystem::verify_token_issuance(pending.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &issuance))
+			return false;
+		if (issuance.program_id == program_id)
+			return false;
+	}
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+	return zk::Halo2ProofSystem::wallet_create_token_issuance(m_onyx_wallet_snapshot, seed,
+	    recipient, program_id, amount, inclusion_height, expiry_height, memo,
+	    parameters::ONYX_CIRCUIT_K, envelope, sequence);
+#else
+	return false;
+#endif
+}
+
 bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, Amount legacy_amount,
     Amount fee, uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image,
     Height expiry_height, const BinaryArray &memo, BinaryArray *unsigned_bridge,
@@ -650,7 +686,8 @@ bool WalletState::redo_block(
 		    m_wallet.get_onyx_seed() != Hash{}) {
 			BinaryArray scanned;
 			if (!zk::Halo2ProofSystem::wallet_scan(next_onyx_snapshot, onyx_seed, onyx_network,
-			        pb.transactions.at(tx_index).tx.onyx_type, pb.transactions.at(tx_index).tx.onyx_envelope,
+			        pb.transactions.at(tx_index).tx.onyx_type, height, parameters::ONYX_CIRCUIT_K,
+			        pb.transactions.at(tx_index).tx.onyx_envelope,
 			        &scanned, &next_onyx_summary))
 				return false;
 			next_onyx_snapshot = std::move(scanned);

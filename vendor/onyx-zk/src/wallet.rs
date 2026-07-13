@@ -1,5 +1,7 @@
 //! Deterministic Onyx wallet scanning and witness state.
 
+use std::collections::BTreeMap;
+
 use ff::FromUniformBytes;
 use group::{Curve, GroupEncoding};
 use halo2_proofs::pasta::Fp;
@@ -12,8 +14,10 @@ use crate::authorization::{
 use crate::bridge::{AuthorizedBridge, BridgePreimage};
 use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
+use crate::program::{ProgramEntry, ProgramRegistry};
 use crate::program_deployment::{
-    deployment_hash, AuthorizedProgramDeployment, PROGRAM_DEPLOYMENT_FUNCTION_ID,
+    deployment_hash, AuthorizedProgramDeployment, MAX_PROGRAM_ACTIVATION_DELAY,
+    PROGRAM_DEPLOYMENT_FUNCTION_ID,
 };
 use crate::proof::{
     create_bridge_proof, create_mixed_token_transfer_proof, create_multi_transfer_proof,
@@ -23,8 +27,9 @@ use crate::proof::{
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
 use crate::token_issuance::{sign_issuer_authorization, AuthorizedTokenIssuance};
 use crate::token_program::{
-    issuance_function_id, issuance_public_data_hash, mixed_transfer_function_id,
-    mixed_transfer_public_data_hash, standard_token_program, TOKEN_PROGRAM_BACKEND,
+    issuance_function_id, issuance_policy_from_entry, issuance_public_data_hash,
+    mixed_transfer_function_id, mixed_transfer_public_data_hash, standard_token_program,
+    TOKEN_PROGRAM_BACKEND,
 };
 use crate::transaction::{
     AuthorizedTransaction, ProgramCall, PublicOutput, PublicSpend, TransactionPreimage,
@@ -33,7 +38,8 @@ use crate::types::NATIVE_ASSET_ID;
 use crate::types::{write_varint, DecodeError, NotePlaintext, Reader};
 use crate::value_commitment_circuit::value_commitment_bytes;
 
-const WALLET_SNAPSHOT_VERSION: u8 = 1;
+const WALLET_SNAPSHOT_VERSION: u8 = 2;
+const LEGACY_WALLET_SNAPSHOT_VERSION: u8 = 1;
 const MAX_WALLET_LEAVES: usize = 1_000_000;
 const MAX_WALLET_NOTES: usize = 1_000_000;
 
@@ -334,6 +340,14 @@ pub struct WalletState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     network_id: [u8; 16],
     tree: WitnessTree<DEPTH>,
     notes: Vec<WalletNote>,
+    programs: ProgramRegistry,
+    issuance: BTreeMap<[u8; 32], WalletTokenIssuanceState>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct WalletTokenIssuanceState {
+    issued_supply: u64,
+    next_sequence: u64,
 }
 
 impl<const DEPTH: usize> WalletState<DEPTH> {
@@ -342,6 +356,8 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             network_id,
             tree: WitnessTree::default(),
             notes: Vec::new(),
+            programs: ProgramRegistry::default(),
+            issuance: BTreeMap::new(),
         }
     }
 
@@ -359,6 +375,117 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
 
     pub fn notes(&self) -> &[WalletNote] {
         &self.notes
+    }
+
+    pub fn program_registry(&self) -> &ProgramRegistry {
+        &self.programs
+    }
+
+    pub fn token_issued_supply(&self, program_id: &[u8; 32]) -> u64 {
+        self.issuance
+            .get(program_id)
+            .map(|state| state.issued_supply)
+            .unwrap_or(0)
+    }
+
+    pub fn token_next_issuance_sequence(&self, program_id: &[u8; 32]) -> u64 {
+        self.issuance
+            .get(program_id)
+            .map(|state| state.next_sequence)
+            .unwrap_or(0)
+    }
+
+    pub fn register_program(&mut self, entry: ProgramEntry) -> Result<(), WalletError> {
+        self.programs
+            .register(entry)
+            .map(|_| ())
+            .map_err(|_| WalletError::Transaction)
+    }
+
+    pub fn record_program_deployment(
+        &mut self,
+        deployment: &AuthorizedProgramDeployment,
+        block_height: u64,
+        circuit_k: u32,
+    ) -> Result<(), WalletError> {
+        let maximum_activation = block_height
+            .checked_add(MAX_PROGRAM_ACTIVATION_DELAY)
+            .ok_or(WalletError::Transaction)?;
+        if deployment.activation_height <= block_height
+            || deployment.activation_height > maximum_activation
+        {
+            return Err(WalletError::Transaction);
+        }
+        let entry = deployment
+            .program_entry::<DEPTH>(circuit_k)
+            .map_err(|_| WalletError::Transaction)?;
+        let program_id = entry.id().map_err(|_| WalletError::Transaction)?;
+        if deployment.funding.preimage.programs.len() != 1
+            || deployment.funding.preimage.programs[0].program_id != program_id
+        {
+            return Err(WalletError::Transaction);
+        }
+        self.register_program(entry)
+    }
+
+    pub fn record_token_issuance_envelope(
+        &mut self,
+        issuance: &AuthorizedTokenIssuance,
+        block_height: u64,
+    ) -> Result<(), WalletError> {
+        let transaction = &issuance.transaction.preimage;
+        if transaction.programs.len() != 1
+            || transaction.spends.len() != 0
+            || !(1..=2).contains(&transaction.outputs.len())
+            || transaction.fee != 0
+        {
+            return Err(WalletError::Transaction);
+        }
+        let call = &transaction.programs[0];
+        if call.function_id
+            != issuance_function_id(transaction.outputs.len()).ok_or(WalletError::Transaction)?
+            || call.public_data_hash
+                != issuance_public_data_hash(issuance.sequence, issuance.issued_amount)
+            || self
+                .programs
+                .active_function(&call.program_id, call.function_id, block_height)
+                .is_err()
+        {
+            return Err(WalletError::Transaction);
+        }
+        self.record_token_issuance(call.program_id, issuance.sequence, issuance.issued_amount)
+    }
+
+    pub fn record_token_issuance(
+        &mut self,
+        program_id: [u8; 32],
+        sequence: u64,
+        issued_amount: u64,
+    ) -> Result<(), WalletError> {
+        let entry = self
+            .programs
+            .get(&program_id)
+            .ok_or(WalletError::Transaction)?;
+        let (_, _, policy) =
+            issuance_policy_from_entry(entry).map_err(|_| WalletError::Transaction)?;
+        let current = self.issuance.get(&program_id).copied().unwrap_or_default();
+        if sequence != current.next_sequence || issued_amount == 0 {
+            return Err(WalletError::Transaction);
+        }
+        let issued_supply = current
+            .issued_supply
+            .checked_add(issued_amount)
+            .filter(|supply| *supply <= policy.max_supply)
+            .ok_or(WalletError::Transaction)?;
+        let next_sequence = sequence.checked_add(1).ok_or(WalletError::Transaction)?;
+        self.issuance.insert(
+            program_id,
+            WalletTokenIssuanceState {
+                issued_supply,
+                next_sequence,
+            },
+        );
+        Ok(())
     }
 
     pub fn unspent_balance(&self) -> Result<u64, WalletError> {
@@ -1041,12 +1168,22 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             write_varint(plaintext.len() as u64, &mut out);
             out.extend_from_slice(&plaintext);
         }
+        let programs = self.programs.encode();
+        write_varint(programs.len() as u64, &mut out);
+        out.extend_from_slice(&programs);
+        write_varint(self.issuance.len() as u64, &mut out);
+        for (program_id, issuance) in &self.issuance {
+            out.extend_from_slice(program_id);
+            write_varint(issuance.issued_supply, &mut out);
+            write_varint(issuance.next_sequence, &mut out);
+        }
         Ok(out)
     }
 
     pub fn decode_snapshot(input: &[u8]) -> Result<Self, WalletError> {
         let mut reader = Reader::new(input);
-        if reader.byte().map_err(WalletError::Note)? != WALLET_SNAPSHOT_VERSION
+        let version = reader.byte().map_err(WalletError::Note)?;
+        if (version != WALLET_SNAPSHOT_VERSION && version != LEGACY_WALLET_SNAPSHOT_VERSION)
             || usize::from(reader.byte().map_err(WalletError::Note)?) != DEPTH
         {
             return Err(WalletError::Snapshot);
@@ -1096,6 +1233,46 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
                 spent,
             });
         }
+        let (programs, issuance) = if version == WALLET_SNAPSHOT_VERSION {
+            let registry_len = bounded_count(
+                reader.varint().map_err(WalletError::Note)?,
+                crate::program::MAX_REGISTRY_BYTES,
+            )?;
+            let programs =
+                ProgramRegistry::decode(reader.take(registry_len).map_err(WalletError::Note)?)
+                    .map_err(|_| WalletError::Snapshot)?;
+            let issuance_count = bounded_count(
+                reader.varint().map_err(WalletError::Note)?,
+                crate::program::MAX_REGISTERED_PROGRAMS,
+            )?;
+            let mut issuance = BTreeMap::new();
+            let mut previous = None;
+            for _ in 0..issuance_count {
+                let program_id: [u8; 32] = reader.array().map_err(WalletError::Note)?;
+                if previous.is_some_and(|id| id >= program_id) {
+                    return Err(WalletError::Snapshot);
+                }
+                previous = Some(program_id);
+                let issued_supply = reader.varint().map_err(WalletError::Note)?;
+                let next_sequence = reader.varint().map_err(WalletError::Note)?;
+                let entry = programs.get(&program_id).ok_or(WalletError::Snapshot)?;
+                let (_, _, policy) =
+                    issuance_policy_from_entry(entry).map_err(|_| WalletError::Snapshot)?;
+                if issued_supply == 0 || issued_supply > policy.max_supply || next_sequence == 0 {
+                    return Err(WalletError::Snapshot);
+                }
+                issuance.insert(
+                    program_id,
+                    WalletTokenIssuanceState {
+                        issued_supply,
+                        next_sequence,
+                    },
+                );
+            }
+            (programs, issuance)
+        } else {
+            (ProgramRegistry::default(), BTreeMap::new())
+        };
         if !reader.is_empty() {
             return Err(WalletError::Snapshot);
         }
@@ -1103,6 +1280,8 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             network_id,
             tree,
             notes,
+            programs,
+            issuance,
         })
     }
 
@@ -1362,6 +1541,16 @@ mod tests {
             entry.id().unwrap(),
             deployment.funding.preimage.programs[0].program_id
         );
+        let mut tracked = wallet.clone();
+        tracked
+            .record_program_deployment(&deployment, 9, K)
+            .unwrap();
+        let restored =
+            WalletState::<DEPTH>::decode_snapshot(&tracked.encode_snapshot().unwrap()).unwrap();
+        assert!(restored
+            .program_registry()
+            .get(&deployment.funding.preimage.programs[0].program_id)
+            .is_some());
         assert_eq!(
             AuthorizedProgramDeployment::decode(&deployment.encode().unwrap()).unwrap(),
             deployment
@@ -1644,6 +1833,8 @@ mod tests {
                 [2u8; 32].as_ptr(),
                 network.as_ptr(),
                 0,
+                1,
+                20,
                 encoded_transaction.as_ptr(),
                 encoded_transaction.len(),
                 &mut ffi_snapshot_ptr,
@@ -1678,6 +1869,8 @@ mod tests {
                 viewing_bytes.as_ptr(),
                 viewing_bytes.len(),
                 0,
+                1,
+                20,
                 encoded_transaction.as_ptr(),
                 encoded_transaction.len(),
                 &mut ffi_snapshot_ptr,

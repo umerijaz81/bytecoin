@@ -76,7 +76,11 @@ Outputs and ledger updates commit atomically. The mempool permits at most one pe
 Program ID and rebuilds that index after reorganizations. Full and view-only scanners recover issuance
 outputs, while native status balances exclude them; exact `(Program ID, asset ID)` balance queries
 prevent cross-asset unit confusion. The wallet builder derives the sequence/cap from a consensus
-snapshot before proving.
+view reconstructed from accepted deployment and issuance envelopes before proving. Wallet snapshot
+version 2 persists the bounded canonical registry and issuance ledger alongside notes and witnesses,
+so walletd does not download or trust a daemon-supplied raw consensus snapshot. The
+`create_onyx_token_issuance` RPC also checks issuer ownership, activation, expiry, remaining cap, and
+pending same-program sequence conflicts.
 
 A program call becomes executable only after its audited function circuit supplies all of the
 following:

@@ -6,6 +6,9 @@ creates exactly one encrypted native-asset Onyx note. There is no implicit deshi
 ## Preconditions
 
 - Run an Onyx-enabled `walletd` and synchronized `bytecoind` on the same configured network.
+- Before Onyx activation, resynchronize wallets after upgrading so wallet snapshot version 2 can
+  reconstruct every accepted program deployment and issuance ledger entry. A legacy version-1
+  snapshot remains readable but has an empty public program view until replayed.
 - Select one unlocked legacy output and record its exact amount and global stack index.
 - Derive that output's secret key and canonical key image using the existing wallet or hardware
   signer. Never transmit the secret key.

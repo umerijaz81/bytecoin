@@ -207,6 +207,12 @@ sorted issuance ledger containing issued supply and next sequence for each progr
 Proof, issuer authorization, output appends, program-cost accounting, and ledger mutation are one
 atomic transition. Envelope type `3` is the only path that may increase a token program's supply.
 
+Wallet snapshot version `2` appends the canonical program registry and issuance ledger reconstructed
+from accepted type-2 and type-3 envelopes. Registry entries, activation, Program IDs, issuance calls,
+sequence, and cap are rechecked while scanning; block acceptance remains the source of cryptographic
+proof validity. Issuance proving consumes this local view and the wallet commitment root, avoiding an
+unauthenticated full-state download from the daemon.
+
 Mixed token transfers remain envelope type `0` and use the standard token backend. Eight registered
 function shapes compose a token lane `(1..=2 spends, 1..=2 outputs)` with a native lane `(1..=2
 spends, exactly one change output)`. The token lane proves zero-fee conservation with every note's

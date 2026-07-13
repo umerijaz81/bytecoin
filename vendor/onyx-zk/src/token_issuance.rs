@@ -248,6 +248,20 @@ mod tests {
         };
         let entry = standard_token_program::<DEPTH>(K, &policy.encode().unwrap(), 1, None).unwrap();
         let program_id = entry.id().unwrap();
+        let mut public_wallet = crate::wallet::WalletState::<DEPTH>::new(network);
+        public_wallet.register_program(entry.clone()).unwrap();
+        public_wallet
+            .record_token_issuance(program_id, 0, 25)
+            .unwrap();
+        let restored_public_wallet = crate::wallet::WalletState::<DEPTH>::decode_snapshot(
+            &public_wallet.encode_snapshot().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored_public_wallet.token_issued_supply(&program_id), 25);
+        assert_eq!(
+            restored_public_wallet.token_next_issuance_sequence(&program_id),
+            1
+        );
         let program = crate::types::pack_32(&program_id);
         let values = vec![60u64, 40];
         let randomness = vec![Fp::from(31), Fp::from(32)];
@@ -305,34 +319,15 @@ mod tests {
         )
         .unwrap();
         verify_token_issuance::<DEPTH, 1>(K, &wallet_built, state.program_registry(), 1).unwrap();
-        let wallet_encoded = wallet_built.encode().unwrap();
-        let mut wallet_ptr = std::ptr::null_mut();
-        let mut wallet_len = 0usize;
-        let mut wallet_balance = 0u64;
-        let mut wallet_notes = 0usize;
-        let mut wallet_root = [0u8; 32];
-        assert_eq!(
-            crate::onyx_wallet_scan(
-                std::ptr::null(),
-                0,
-                [81u8; 32].as_ptr(),
-                network.as_ptr(),
-                3,
-                wallet_encoded.as_ptr(),
-                wallet_encoded.len(),
-                &mut wallet_ptr,
-                &mut wallet_len,
-                &mut wallet_balance,
-                &mut wallet_notes,
-                wallet_root.as_mut_ptr(),
-            ),
-            1
-        );
-        let wallet_snapshot =
-            unsafe { std::slice::from_raw_parts(wallet_ptr, wallet_len) }.to_vec();
-        crate::onyx_free(wallet_ptr, wallet_len);
-        assert_eq!(wallet_balance, 0);
-        assert_eq!(wallet_notes, 1);
+        // Output recovery is independent of registry tracking; registry-aware end-to-end scanning
+        // is covered by the production-depth deployment/issuance wallet tests.
+        let mut scanning_wallet = crate::wallet::WalletState::<32>::new(network);
+        scanning_wallet
+            .scan_transfer(&keys.full_viewing_key().unwrap(), &wallet_built.transaction)
+            .unwrap();
+        let wallet_snapshot = scanning_wallet.encode_snapshot().unwrap();
+        assert_eq!(scanning_wallet.unspent_balance().unwrap(), 0);
+        assert_eq!(scanning_wallet.notes().len(), 1);
         let mut token_balance = 0u64;
         let mut token_notes = 0usize;
         assert_eq!(

@@ -139,13 +139,15 @@ int onyx_full_viewing_key(const uint8_t seed[32], const uint8_t network[16],
  * notes, mark spends, and return a canonical wallet snapshot. */
 int onyx_wallet_scan(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
-    const uint8_t expected_network[16], uint8_t envelope_type,
+    const uint8_t expected_network[16], uint8_t envelope_type, uint64_t block_height,
+    uint32_t circuit_k,
     const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out,
     uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
 int onyx_wallet_scan_viewing(
     const uint8_t *snapshot, size_t snapshot_len,
     const uint8_t *viewing_key, size_t viewing_key_len, uint8_t envelope_type,
+    uint64_t block_height, uint32_t circuit_k,
     const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out,
     uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
@@ -186,9 +188,9 @@ int onyx_wallet_create_program_deployment(
     uint64_t expiry_height, uint64_t fee, uint32_t circuit_k,
     uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
 int onyx_wallet_create_token_issuance(
-    const uint8_t *consensus_snapshot, size_t consensus_snapshot_len,
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
     const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],
-    uint64_t issued_amount, uint64_t expiry_height,
+    uint64_t issued_amount, uint64_t inclusion_height, uint64_t expiry_height,
     const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
     uint8_t **issuance_out, size_t *issuance_len_out, uint64_t *sequence_out);
 int onyx_wallet_create_transfer(
