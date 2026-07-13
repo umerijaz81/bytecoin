@@ -359,6 +359,31 @@ void ser_members(api::walletd::CreateOnyxTransaction::Response &v, ISeria &s) {
 	seria_kv("transaction_hash", v.transaction_hash, s);
 }
 
+void ser_members(api::walletd::CreateOnyxBridge::Request &v, ISeria &s) {
+	seria_kv("address", v.address, s);
+	seria_kv("legacy_amount", v.legacy_amount, s);
+	seria_kv("fee", v.fee, s);
+	seria_kv("legacy_stack_index", v.legacy_stack_index, s);
+	seria_kv("legacy_key_image", v.legacy_key_image, s);
+	seria_kv("expiry_height", v.expiry_height, s);
+	seria_kv("memo", v.memo, s);
+}
+
+void ser_members(api::walletd::CreateOnyxBridge::Response &v, ISeria &s) {
+	seria_kv("unsigned_bridge", v.unsigned_bridge, s);
+	seria_kv("ownership_sighash", v.ownership_sighash, s);
+}
+
+void ser_members(api::walletd::FinalizeOnyxBridge::Request &v, ISeria &s) {
+	seria_kv("unsigned_bridge", v.unsigned_bridge, s);
+	seria_kv("ownership_signature", v.ownership_signature, s);
+}
+
+void ser_members(api::walletd::FinalizeOnyxBridge::Response &v, ISeria &s) {
+	seria_kv("binary_transaction", v.binary_transaction, s);
+	seria_kv("transaction_hash", v.transaction_hash, s);
+}
+
 void ser_members(api::walletd::GetUnspents::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("height_or_depth", v.height_or_depth, s);

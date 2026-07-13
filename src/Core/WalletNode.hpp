@@ -46,6 +46,10 @@ public:
 	    api::walletd::GetOnyxStatus::Request &&, api::walletd::GetOnyxStatus::Response &);
 	bool on_create_onyx_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::CreateOnyxTransaction::Request &&, api::walletd::CreateOnyxTransaction::Response &);
+	bool on_create_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::walletd::CreateOnyxBridge::Request &&, api::walletd::CreateOnyxBridge::Response &);
+	bool on_finalize_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::walletd::FinalizeOnyxBridge::Request &&, api::walletd::FinalizeOnyxBridge::Response &);
 	bool on_get_transfers(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::GetTransfers::Request &&, api::walletd::GetTransfers::Response &);
 	bool on_create_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,

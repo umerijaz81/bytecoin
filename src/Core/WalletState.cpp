@@ -200,6 +200,32 @@ bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient,
 #endif
 }
 
+bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, Amount legacy_amount,
+    Amount fee, uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image,
+    Height expiry_height, const BinaryArray &memo, BinaryArray *unsigned_bridge,
+    std::array<uint8_t, 32> *ownership_sighash) const {
+#ifdef onyx_USE_ZK
+	if (m_wallet.get_onyx_seed() == Hash{} || unsigned_bridge == nullptr || ownership_sighash == nullptr)
+		return false;
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+	return zk::Halo2ProofSystem::wallet_create_bridge(seed, recipient, expiry_height, fee, legacy_amount,
+	    legacy_stack_index, legacy_key_image, memo, parameters::ONYX_CIRCUIT_K, unsigned_bridge,
+	    ownership_sighash);
+#else
+	return false;
+#endif
+}
+
+bool WalletState::finalize_onyx_bridge(const BinaryArray &unsigned_bridge,
+    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *envelope) const {
+#ifdef onyx_USE_ZK
+	return zk::Halo2ProofSystem::wallet_finalize_bridge(unsigned_bridge, ownership_signature, envelope);
+#else
+	return false;
+#endif
+}
+
 void WalletState::db_commit() {
 	if (m_wallet.is_amethyst()) {
 		m_db.put("$address_count", seria::to_binary(m_wallet.get_actual_records_count()), false);

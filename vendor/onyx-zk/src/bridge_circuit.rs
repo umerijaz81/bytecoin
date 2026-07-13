@@ -215,6 +215,7 @@ mod tests {
         };
         verify_bridge_proof(13, &bridge).unwrap();
         let encoded = bridge.encode().unwrap();
+        let initial_snapshot = crate::state::ShieldedState::<32>::new(100).encode_snapshot();
         let mut snapshot_ptr = std::ptr::null_mut();
         let mut snapshot_len = 0usize;
         let mut extracted_amount = 0u64;
@@ -225,8 +226,8 @@ mod tests {
         let mut extracted_fee = 0u64;
         assert_eq!(
             crate::onyx_verify_apply_bridge(
-                std::ptr::null(),
-                0,
+                initial_snapshot.as_ptr(),
+                initial_snapshot.len(),
                 100,
                 encoded.as_ptr(),
                 encoded.len(),
@@ -259,6 +260,36 @@ mod tests {
         assert_eq!(extracted_key_image, [7; 32]);
         assert_eq!(extracted_sighash, bridge.ownership_sighash().unwrap());
         assert_eq!(extracted_signature, [0; 64]);
+
+        // Reorg rollback restores the prior serialized state. Reapplying the
+        // same bridge to that exact snapshot must reproduce the same root and
+        // bytes; active-chain replay protection is the legacy key-image set.
+        let mut replay_ptr = std::ptr::null_mut();
+        let mut replay_len = 0usize;
+        assert_eq!(
+            crate::onyx_verify_apply_bridge(
+                initial_snapshot.as_ptr(),
+                initial_snapshot.len(),
+                100,
+                encoded.as_ptr(),
+                encoded.len(),
+                13,
+                [1u8; NETWORK_ID_BYTES].as_ptr(),
+                1,
+                &mut replay_ptr,
+                &mut replay_len,
+                &mut extracted_amount,
+                &mut extracted_index,
+                extracted_key_image.as_mut_ptr(),
+                extracted_sighash.as_mut_ptr(),
+                extracted_signature.as_mut_ptr(),
+                &mut extracted_fee,
+            ),
+            1
+        );
+        let replay = unsafe { std::slice::from_raw_parts(replay_ptr, replay_len) }.to_vec();
+        crate::onyx_free(replay_ptr, replay_len);
+        assert_eq!(replay, snapshot);
 
         let mut inflated = bridge;
         inflated.preimage.legacy_amount += 1;

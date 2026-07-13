@@ -57,6 +57,8 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 |--------|-------------|
 | `get_onyx_status` | Returns the wallet's canonical Onyx address, confirmed shielded balance, recovered-note count, and commitment-tree root. |
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
+| `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
+| `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
 
 Onyx transactions use the existing `send_transaction` method for durable payment-queue storage and
 network relay. Pending Onyx nullifiers are reserved while they remain in that queue; unconfirmed
@@ -117,6 +119,52 @@ then pass `binary_transaction` unchanged to `send_transaction`:
 Construction fails for malformed or foreign-network addresses, expired requests, insufficient
 confirmed funds, view-only wallets, or wallets that have not synchronized an Onyx state. Proof
 generation can take materially longer than legacy transaction construction.
+
+#### `create_onyx_bridge` and `finalize_onyx_bridge`
+
+Migration is deliberately split so a hardware or offline legacy signer can authorize ownership
+without exposing its spend key to `walletd`. `create_onyx_bridge` accepts a canonical Onyx address,
+the exact legacy output amount and global stack index, its 32-byte key image, fee, expiry, and memo.
+It returns `unsigned_bridge` plus the 32-byte `ownership_sighash`.
+
+Sign `ownership_sighash` using the selected legacy output's one-member CryptoNote ring signature.
+Pass the resulting 64-byte signature (128 hexadecimal characters) and the unchanged
+`unsigned_bridge` to `finalize_onyx_bridge`. Submit its `binary_transaction` with
+`send_transaction`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "bridge-create",
+  "method": "create_onyx_bridge",
+  "params": {
+    "address": "<182-character-onyx-address-hex>",
+    "legacy_amount": 5000000,
+    "fee": 1000,
+    "legacy_stack_index": 12345,
+    "legacy_key_image": "<64-character-key-image-hex>",
+    "expiry_height": 0,
+    "memo": "migration"
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "bridge-finalize",
+  "method": "finalize_onyx_bridge",
+  "params": {
+    "unsigned_bridge": "<unsigned_bridge-from-create-response>",
+    "ownership_signature": "<128-character-ring-signature-hex>"
+  }
+}
+```
+
+The bridge is one-way. Consensus verifies the proof, exact `legacy_amount = shielded_value + fee`
+conservation, referenced output and unlock status, key-image uniqueness, and ownership signature.
+A bridge cannot replay after its key image is consumed. A chain reorganization atomically restores
+both the key image and shielded-state snapshot.
 
 -----------------------------------------------------------------------------------------------------------------------
 
