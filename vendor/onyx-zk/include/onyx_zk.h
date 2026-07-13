@@ -51,6 +51,14 @@ int onyx_toy_verify(const uint8_t *vk, size_t vk_len,
 int onyx_verify_authorized_transfer(const uint8_t *encoded, size_t encoded_len,
                                     uint32_t merkle_depth, uint32_t circuit_k);
 
+/* Verify once and, only on success, extract the public state delta. Capacities are counts of
+ * 32-byte entries (not byte lengths). Returns -4 for insufficient output capacity. */
+int onyx_verify_and_extract_transfer(
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out, uint64_t *fee_out,
+    uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
+    uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
+
 /* Release a buffer previously returned by this library. */
 void onyx_free(uint8_t *ptr, size_t len);
 

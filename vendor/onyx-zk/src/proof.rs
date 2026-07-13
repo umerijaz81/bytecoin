@@ -176,7 +176,7 @@ pub fn create_multi_transfer_proof<
                 .field(),
         );
     }
-    let notes = witness
+    let mut notes = witness
         .output_notes
         .iter()
         .map(|note| {
@@ -184,6 +184,7 @@ pub fn create_multi_transfer_proof<
                 .hash(*note)
         })
         .collect::<Vec<_>>();
+    notes.push(witness.spends[0].input_note[1]);
     let mut authorization = witness
         .spends
         .iter()
@@ -266,12 +267,15 @@ pub fn verify_multi_transfer_proof<
                 .field(),
         );
     }
-    let notes = transaction
+    let mut notes = transaction
         .preimage
         .outputs
         .iter()
         .map(|output| output.commitment.field())
         .collect::<Vec<_>>();
+    notes.push(crate::types::network_field(
+        &transaction.preimage.network_id,
+    ));
     let mut authorization = Vec::with_capacity(SPENDS * 2);
     for spend in &transaction.preimage.spends {
         let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(&spend.randomized_key))
@@ -366,9 +370,10 @@ pub fn create_transfer_proof<const DEPTH: usize>(
     let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
     let public = [Fp::from(fee)];
     let membership = [anchor.field(), nullifier.field()];
-    let notes = [
+    let notes = vec![
         PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
             .hash(witness.output_note),
+        witness.input_note[1],
     ];
     let randomized_coordinates = witness.randomized_key.coordinates();
     if bool::from(randomized_coordinates.is_none()) {
@@ -431,7 +436,10 @@ pub fn verify_transfer_proof<const DEPTH: usize>(
     let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
     let public = [Fp::from(transaction.preimage.fee)];
     let membership = [transaction.preimage.anchor.field(), nullifier.field()];
-    let notes = [transaction.preimage.outputs[0].commitment.field()];
+    let notes = vec![
+        transaction.preimage.outputs[0].commitment.field(),
+        crate::types::network_field(&transaction.preimage.network_id),
+    ];
     let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
         &transaction.preimage.spends[0].randomized_key,
     ))
@@ -512,6 +520,7 @@ mod tests {
         let authority_coordinates = authority_key.coordinates().unwrap();
         let mut input_note = std::array::from_fn(|index| Fp::from(index as u64 + 40));
         input_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(30);
+        input_note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
         input_note[4] = crate::types::native_asset_fields()[0];
         input_note[5] = crate::types::native_asset_fields()[1];
         input_note[10] = *authority_coordinates.x();
@@ -521,6 +530,7 @@ mod tests {
                 .hash(input_note);
         let mut output_note = std::array::from_fn(|index| Fp::from(index as u64 + 80));
         output_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(25);
+        output_note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
         output_note[4] = crate::types::native_asset_fields()[0];
         output_note[5] = crate::types::native_asset_fields()[1];
         let output_commitment =
@@ -617,7 +627,45 @@ mod tests {
             spend_signatures,
             binding_signature,
         };
-        assert!(verify_authorized_transfer::<DEPTH>(K, &transaction).is_ok());
+        let encoded = transaction.encode().unwrap();
+        let mut extracted_network = [0u8; NETWORK_ID_BYTES];
+        let mut extracted_anchor = [0u8; 32];
+        let mut extracted_expiry = 0u64;
+        let mut extracted_fee = 0u64;
+        let mut extracted_nullifiers = [0u8; 32];
+        let mut extracted_nullifier_count = 0usize;
+        let mut extracted_commitments = [0u8; 32];
+        let mut extracted_commitment_count = 0usize;
+        assert_eq!(
+            crate::onyx_verify_and_extract_transfer(
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                extracted_network.as_mut_ptr(),
+                extracted_anchor.as_mut_ptr(),
+                &mut extracted_expiry,
+                &mut extracted_fee,
+                extracted_nullifiers.as_mut_ptr(),
+                1,
+                &mut extracted_nullifier_count,
+                extracted_commitments.as_mut_ptr(),
+                1,
+                &mut extracted_commitment_count,
+            ),
+            1
+        );
+        assert_eq!(extracted_network, [1; NETWORK_ID_BYTES]);
+        assert_eq!(extracted_anchor, anchor.bytes());
+        assert_eq!(extracted_expiry, 100);
+        assert_eq!(extracted_fee, 5);
+        assert_eq!(extracted_nullifier_count, 1);
+        assert_eq!(extracted_nullifiers, nullifier);
+        assert_eq!(extracted_commitment_count, 1);
+        assert_eq!(
+            extracted_commitments,
+            CanonicalField::from_field(output_commitment).bytes()
+        );
 
         let mut mismatched_transaction = transaction.clone();
         mismatched_transaction.proof = mismatched_proof;
@@ -639,6 +687,13 @@ mod tests {
             crate::value_commitment_circuit::value_commitment_bytes(25, Fp::from(103));
         assert_eq!(
             verify_transfer_proof::<DEPTH>(K, &substituted_commitment),
+            Err(ProofError::VerificationFailed)
+        );
+
+        let mut cross_network = transaction.clone();
+        cross_network.preimage.network_id = [2; NETWORK_ID_BYTES];
+        assert_eq!(
+            verify_transfer_proof::<DEPTH>(K, &cross_network),
             Err(ProofError::VerificationFailed)
         );
 
@@ -666,6 +721,7 @@ mod tests {
         ];
         for (note, value) in input_notes.iter_mut().zip([30u64, 20]) {
             note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
+            note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
             note[4] = crate::types::native_asset_fields()[0];
             note[5] = crate::types::native_asset_fields()[1];
             note[10] = *authority_coordinates.x();
@@ -700,6 +756,7 @@ mod tests {
         output_notes[0][crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(25);
         output_notes[1][crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(20);
         for note in &mut output_notes {
+            note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
             note[4] = crate::types::native_asset_fields()[0];
             note[5] = crate::types::native_asset_fields()[1];
         }

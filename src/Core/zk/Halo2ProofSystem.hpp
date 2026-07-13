@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 #include "IProofSystem.hpp"
 
 namespace cn {
@@ -20,6 +21,14 @@ namespace zk {
 // lands in O4; until then verify() targets the toy circuit.
 class Halo2ProofSystem : public IProofSystem {
 public:
+	struct VerifiedTransferDelta {
+		std::array<uint8_t, 16> network{};
+		std::array<uint8_t, 32> anchor{};
+		uint64_t expiry_height = 0;
+		uint64_t fee = 0;
+		std::vector<std::array<uint8_t, 32>> nullifiers;
+		std::vector<std::array<uint8_t, 32>> commitments;
+	};
 	const char *backend_id() const override;
 
 	// O0: maps to the toy-circuit verifier. args.public_inputs must be the 32-byte public field
@@ -42,6 +51,8 @@ public:
 	// constants; malformed, unsupported, and invalid envelopes all fail closed.
 	static bool verify_authorized_transfer(
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k);
+	static bool verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
+	    uint32_t circuit_k, VerifiedTransferDelta *delta);
 };
 
 }  // namespace zk

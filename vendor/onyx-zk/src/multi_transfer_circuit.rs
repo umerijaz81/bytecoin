@@ -143,6 +143,18 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
             &config.values,
             layouter.namespace(|| "all native values"),
         )?;
+        let network = layouter.assign_region(
+            || "transaction network",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "network",
+                    config.notes.instance,
+                    OUTPUTS,
+                    config.notes.state[0],
+                    0,
+                )
+            },
+        )?;
 
         for (index, spend) in self.spends.iter().enumerate() {
             let authority = synthesize_spend_authority(
@@ -158,6 +170,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 layouter.namespace(|| format!("spend {index} note")),
                 &spend.note,
                 Some(&values.input_cells[index]),
+                Some(&network),
                 Some((&authority.x, &authority.y)),
                 true,
             )?;
@@ -197,6 +210,7 @@ impl<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize> Circuit<Fp>
                 layouter.namespace(|| format!("output {index} note")),
                 note,
                 Some(&values.output_cells[index]),
+                Some(&network),
                 None,
                 true,
             )?;
@@ -222,6 +236,7 @@ mod tests {
     fn note(seed: u64, value: u64) -> [Fp; NOTE_COMMITMENT_INPUTS] {
         let mut note = std::array::from_fn(|i| Fp::from(seed + i as u64));
         note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
+        note[1] = Fp::from(9);
         note[4] = crate::types::native_asset_fields()[0];
         note[5] = crate::types::native_asset_fields()[1];
         note
@@ -324,7 +339,11 @@ mod tests {
         let instances = vec![
             vec![Fp::from(5)],
             vec![root, nullifiers[0], nullifiers[1]],
-            output_commitments,
+            {
+                let mut commitments = output_commitments;
+                commitments.push(Fp::from(9));
+                commitments
+            },
             randomized_public,
         ];
         MockProver::run(16, &circuit, instances.clone())

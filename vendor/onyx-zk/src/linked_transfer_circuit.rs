@@ -105,6 +105,18 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             &config.values,
             layouter.namespace(|| "native values"),
         )?;
+        let network = layouter.assign_region(
+            || "transaction network",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "network",
+                    config.notes.instance,
+                    1,
+                    config.notes.state[0],
+                    0,
+                )
+            },
+        )?;
         let authority = synthesize_spend_authority(
             &self.authorization,
             &config.authorization,
@@ -138,6 +150,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             layouter.namespace(|| "input note"),
             &self.input_note,
             Some(&values.input_cells[0]),
+            Some(&network),
             Some((&authority.x, &authority.y)),
             true,
         )?;
@@ -146,6 +159,7 @@ impl<const DEPTH: usize> Circuit<Fp> for LinkedTransferCircuit<DEPTH> {
             layouter.namespace(|| "output note"),
             &self.output_note,
             Some(&values.output_cells[0]),
+            Some(&network),
             None,
             true,
         )?;
@@ -180,6 +194,7 @@ mod tests {
             Fp::from(seed)
         });
         inputs[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
+        inputs[1] = Fp::from(9);
         inputs[4] = crate::types::native_asset_fields()[0];
         inputs[5] = crate::types::native_asset_fields()[1];
         inputs
@@ -257,7 +272,7 @@ mod tests {
         let instances = vec![
             vec![Fp::from(5)],
             vec![root, nullifier],
-            vec![output_commitment],
+            vec![output_commitment, Fp::from(9)],
             vec![
                 *randomized_coordinates.x(),
                 *randomized_coordinates.y(),

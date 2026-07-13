@@ -3,6 +3,7 @@
 
 #include "Halo2ProofSystem.hpp"
 #include <algorithm>
+#include <utility>
 #include "onyx_zk.h"  // vendored C ABI (vendor/onyx-zk/include), on the include path when ONYX_ZK=ON
 
 namespace cn {
@@ -35,6 +36,31 @@ bool Halo2ProofSystem::verify_authorized_transfer(
 		return false;
 	return onyx_verify_authorized_transfer(
 	           encoded.data(), encoded.size(), merkle_depth, circuit_k) == 1;
+}
+
+bool Halo2ProofSystem::verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
+    uint32_t circuit_k, VerifiedTransferDelta *delta) {
+	if (encoded.empty() || delta == nullptr)
+		return false;
+	std::array<uint8_t, 16 * 32> nullifiers{};
+	std::array<uint8_t, 16 * 32> commitments{};
+	size_t nullifier_count = 0;
+	size_t commitment_count = 0;
+	VerifiedTransferDelta result;
+	const int rc = onyx_verify_and_extract_transfer(encoded.data(), encoded.size(), merkle_depth, circuit_k,
+	    result.network.data(), result.anchor.data(), &result.expiry_height, &result.fee,
+	    nullifiers.data(), 16, &nullifier_count, commitments.data(), 16, &commitment_count);
+	if (rc != 1 || nullifier_count > 16 || commitment_count > 16)
+		return false;
+	result.nullifiers.resize(nullifier_count);
+	result.commitments.resize(commitment_count);
+	for (size_t i = 0; i < nullifier_count; ++i)
+		std::copy(nullifiers.begin() + i * 32, nullifiers.begin() + (i + 1) * 32, result.nullifiers[i].begin());
+	for (size_t i = 0; i < commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.commitments[i].begin());
+	*delta = std::move(result);
+	return true;
 }
 
 bool Halo2ProofSystem::toy_prove(

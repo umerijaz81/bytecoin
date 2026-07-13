@@ -68,6 +68,7 @@ impl Circuit<Fp> for NoteCommitmentCircuit {
             &self.inputs,
             None,
             None,
+            None,
             false,
         )?;
         layouter.constrain_instance(commitment.cell(), config.instance, 0)
@@ -79,6 +80,7 @@ pub(crate) fn synthesize_note_commitment(
     mut layouter: impl Layouter<Fp>,
     inputs: &[Option<Fp>; NOTE_COMMITMENT_INPUTS],
     external_value: Option<&AssignedCell<Fp, Fp>>,
+    external_network: Option<&AssignedCell<Fp, Fp>>,
     external_authority: Option<(&AssignedCell<Fp, Fp>, &AssignedCell<Fp, Fp>)>,
     enforce_native_asset: bool,
 ) -> Result<AssignedCell<Fp, Fp>, Error> {
@@ -87,7 +89,14 @@ pub(crate) fn synthesize_note_commitment(
         |mut region| {
             let mut cells = Vec::with_capacity(NOTE_COMMITMENT_INPUTS);
             for (index, input) in inputs.iter().enumerate() {
-                let cell = if index == NOTE_VALUE_INPUT_INDEX {
+                let cell = if index == 1 && external_network.is_some() {
+                    external_network.unwrap().copy_advice(
+                        || "linked transaction network",
+                        &mut region,
+                        config.state[0],
+                        index,
+                    )?
+                } else if index == NOTE_VALUE_INPUT_INDEX {
                     if let Some(value) = external_value {
                         value.copy_advice(
                             || "linked note value",

@@ -52,6 +52,38 @@ fn ffi_i32(f: impl FnOnce() -> i32) -> i32 {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(ERR_PANIC)
 }
 
+fn verify_transfer_dispatch(
+    transaction: &transaction::AuthorizedTransaction,
+    merkle_depth: u32,
+    circuit_k: u32,
+) -> i32 {
+    if !(10..=20).contains(&circuit_k) {
+        return -3;
+    }
+    let shape = (
+        merkle_depth,
+        transaction.preimage.spends.len(),
+        transaction.preimage.outputs.len(),
+    );
+    let result = match shape {
+        (2, 1, 1) => proof::verify_authorized_multi_transfer::<2, 1, 1>(circuit_k, transaction),
+        (2, 2, 2) => proof::verify_authorized_multi_transfer::<2, 2, 2>(circuit_k, transaction),
+        (4, 1, 1) if transaction.backend_id == proof::EXPERIMENTAL_TRANSFER_BACKEND => {
+            proof::verify_authorized_transfer::<4>(circuit_k, transaction)
+        }
+        (4, 1, 1) => proof::verify_authorized_multi_transfer::<4, 1, 1>(circuit_k, transaction),
+        (4, 2, 2) => proof::verify_authorized_multi_transfer::<4, 2, 2>(circuit_k, transaction),
+        (32, 1, 1) => proof::verify_authorized_multi_transfer::<32, 1, 1>(circuit_k, transaction),
+        (32, 2, 2) => proof::verify_authorized_multi_transfer::<32, 2, 2>(circuit_k, transaction),
+        _ => return -3,
+    };
+    if result.is_ok() {
+        1
+    } else {
+        0
+    }
+}
+
 /// Verify a canonical authorized Onyx transfer envelope.
 ///
 /// This bounded integration surface deliberately supports only audited circuit-family shapes.
@@ -76,40 +108,90 @@ pub extern "C" fn onyx_verify_authorized_transfer(
             Ok(transaction) => transaction,
             Err(_) => return -2,
         };
-        let shape = (
-            merkle_depth,
-            transaction.preimage.spends.len(),
-            transaction.preimage.outputs.len(),
-        );
-        let result = match shape {
-            (2, 1, 1) => {
-                proof::verify_authorized_multi_transfer::<2, 1, 1>(circuit_k, &transaction)
-            }
-            (2, 2, 2) => {
-                proof::verify_authorized_multi_transfer::<2, 2, 2>(circuit_k, &transaction)
-            }
-            (4, 1, 1) if transaction.backend_id == proof::EXPERIMENTAL_TRANSFER_BACKEND => {
-                proof::verify_authorized_transfer::<4>(circuit_k, &transaction)
-            }
-            (4, 1, 1) => {
-                proof::verify_authorized_multi_transfer::<4, 1, 1>(circuit_k, &transaction)
-            }
-            (4, 2, 2) => {
-                proof::verify_authorized_multi_transfer::<4, 2, 2>(circuit_k, &transaction)
-            }
-            (32, 1, 1) => {
-                proof::verify_authorized_multi_transfer::<32, 1, 1>(circuit_k, &transaction)
-            }
-            (32, 2, 2) => {
-                proof::verify_authorized_multi_transfer::<32, 2, 2>(circuit_k, &transaction)
-            }
-            _ => return -3,
-        };
-        if result.is_ok() {
-            1
-        } else {
-            0
+        verify_transfer_dispatch(&transaction, merkle_depth, circuit_k)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_verify_and_extract_transfer(
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    fee_out: *mut u64,
+    nullifiers_out: *mut u8,
+    nullifier_capacity: usize,
+    nullifier_count_out: *mut usize,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || fee_out.is_null()
+            || nullifiers_out.is_null()
+            || nullifier_count_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+        {
+            return -1;
         }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
+        }
+        let bytes = unsafe { slice::from_raw_parts(encoded, encoded_len) };
+        let transaction = match transaction::AuthorizedTransaction::decode(bytes) {
+            Ok(transaction) => transaction,
+            Err(_) => return -2,
+        };
+        if nullifier_capacity < transaction.preimage.spends.len()
+            || commitment_capacity < transaction.preimage.outputs.len()
+        {
+            return -4;
+        }
+        let verified = verify_transfer_dispatch(&transaction, merkle_depth, circuit_k);
+        if verified != 1 {
+            return verified;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                transaction.preimage.network_id.as_ptr(),
+                network_out,
+                16,
+            );
+            std::ptr::copy_nonoverlapping(
+                transaction.preimage.anchor.bytes().as_ptr(),
+                anchor_out,
+                32,
+            );
+            *expiry_height_out = transaction.preimage.expiry_height;
+            *fee_out = transaction.preimage.fee;
+            *nullifier_count_out = transaction.preimage.spends.len();
+            *commitment_count_out = transaction.preimage.outputs.len();
+            for (index, spend) in transaction.preimage.spends.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    spend.nullifier.0.as_ptr(),
+                    nullifiers_out.add(index * 32),
+                    32,
+                );
+            }
+            for (index, output) in transaction.preimage.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+        }
+        1
     })
 }
 

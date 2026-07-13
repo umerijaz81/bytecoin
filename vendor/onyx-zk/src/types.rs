@@ -163,6 +163,10 @@ pub(crate) fn native_asset_fields() -> [Fp; 2] {
     pack_32(&NATIVE_ASSET_ID)
 }
 
+pub(crate) fn network_field(network_id: &[u8; NETWORK_ID_BYTES]) -> Fp {
+    pack_short(network_id)
+}
+
 fn pack_short(bytes: &[u8]) -> Fp {
     assert!(bytes.len() <= 31);
     let mut representation = [0u8; 32];
