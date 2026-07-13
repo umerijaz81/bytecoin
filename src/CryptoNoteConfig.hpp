@@ -57,6 +57,8 @@ const uint8_t TRANSACTION_VERSION_ONYX  = 6;
 const size_t ONYX_MAX_ENVELOPE_SIZE     = 384 * 1024;
 const uint32_t ONYX_MERKLE_DEPTH        = 32;
 const uint32_t ONYX_CIRCUIT_K           = 20;
+const uint64_t ONYX_ANCHOR_WINDOW_BLOCKS = 100;
+const uint64_t ONYX_MAX_EXPIRY_DISTANCE  = 100;
 
 const size_t MINIMUM_ANONYMITY_AMETHYST = 3;
 // Jade raises the floor to a ring of 16 (15 decoys) AND, unlike Amethyst, this minimum is

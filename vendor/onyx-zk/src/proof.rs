@@ -536,8 +536,15 @@ mod tests {
         let output_commitment =
             PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<NOTE_COMMITMENT_INPUTS>, 3, 2>::init()
                 .hash(output_note);
-        let siblings = vec![Fp::from(11), Fp::from(12), Fp::from(13), Fp::from(14)];
-        let position = 5u64;
+        // Anchor this proof at the canonical empty tree so the consensus snapshot FFI can apply
+        // the exact same authorized envelope as its first state transition.
+        let mut empty = hash2(Fp::from(1), Fp::zero());
+        let mut siblings = Vec::with_capacity(DEPTH);
+        for _ in 0..DEPTH {
+            siblings.push(empty);
+            empty = hash2(Fp::from(2), hash2(empty, empty));
+        }
+        let position = 0u64;
         let mut root = hash2(Fp::from(1), commitment);
         for (level, sibling) in siblings.iter().enumerate() {
             let pair = if ((position >> level) & 1) == 0 {
@@ -665,6 +672,87 @@ mod tests {
         assert_eq!(
             extracted_commitments,
             CanonicalField::from_field(output_commitment).bytes()
+        );
+
+        // Seed the state with the note being spent. This models its creation in a prior block and
+        // gives the verifier an authentic canonical snapshot whose root is the proof anchor.
+        let mut prestate = crate::state::ShieldedState::<DEPTH>::new(10);
+        let mut funding = transaction.preimage.clone();
+        funding.anchor = prestate.root();
+        funding.spends[0].nullifier = Nullifier([9; 32]);
+        funding.outputs[0].commitment = CanonicalField::from_field(commitment);
+        prestate.apply_transaction(&funding, 0).unwrap();
+        assert_eq!(prestate.root(), anchor);
+        let previous_snapshot = prestate.encode_snapshot();
+
+        let mut snapshot_ptr = std::ptr::null_mut();
+        let mut snapshot_len = 0usize;
+        let mut applied_fee = 0u64;
+        assert_eq!(
+            crate::onyx_verify_apply_transfer(
+                previous_snapshot.as_ptr(),
+                previous_snapshot.len(),
+                10,
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                [1u8; NETWORK_ID_BYTES].as_ptr(),
+                1,
+                &mut snapshot_ptr,
+                &mut snapshot_len,
+                &mut applied_fee,
+            ),
+            1
+        );
+        assert!(!snapshot_ptr.is_null());
+        assert!(snapshot_len > 0);
+        assert_eq!(applied_fee, 5);
+        let snapshot = unsafe { std::slice::from_raw_parts(snapshot_ptr, snapshot_len) }.to_vec();
+        crate::onyx_free(snapshot_ptr, snapshot_len);
+        let restored = crate::state::ShieldedState::<DEPTH>::decode_snapshot(&snapshot).unwrap();
+        assert!(restored.is_spent(&Nullifier(nullifier)));
+        assert_eq!(restored.leaf_count(), 2);
+        assert_ne!(restored.root(), anchor);
+
+        let mut rejected_ptr = std::ptr::null_mut();
+        let mut rejected_len = 0usize;
+        let mut rejected_fee = 0u64;
+        assert_eq!(
+            crate::onyx_verify_apply_transfer(
+                std::ptr::null(),
+                0,
+                10,
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                [2u8; NETWORK_ID_BYTES].as_ptr(),
+                1,
+                &mut rejected_ptr,
+                &mut rejected_len,
+                &mut rejected_fee,
+            ),
+            -5
+        );
+        assert!(rejected_ptr.is_null());
+        assert_eq!(rejected_len, 0);
+        assert_eq!(
+            crate::onyx_verify_apply_transfer(
+                std::ptr::null(),
+                0,
+                10,
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                [1u8; NETWORK_ID_BYTES].as_ptr(),
+                101,
+                &mut rejected_ptr,
+                &mut rejected_len,
+                &mut rejected_fee,
+            ),
+            -5
         );
 
         let mut mismatched_transaction = transaction.clone();

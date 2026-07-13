@@ -8,6 +8,9 @@
 #include "common/StringTools.hpp"
 #include "common/Varint.hpp"
 #include "seria/ISeria.hpp"
+#ifdef onyx_USE_ZK
+#include "zk/Halo2ProofSystem.hpp"
+#endif
 
 using namespace cn;
 
@@ -173,6 +176,16 @@ size_t cn::get_tx_key_outputs_count(const TransactionPrefix &tx) {
 }
 
 bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
+#ifdef onyx_USE_ZK
+	if (tx.version == parameters::TRANSACTION_VERSION_ONYX) {
+		zk::Halo2ProofSystem::VerifiedTransferDelta delta;
+		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(
+		        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &delta))
+			return false;
+		*fee = delta.fee;
+		return true;
+	}
+#endif
 	uint64_t amount_in  = get_tx_sum_inputs(tx);
 	uint64_t amount_out = get_tx_sum_outputs(tx);
 

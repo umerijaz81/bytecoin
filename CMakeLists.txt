@@ -190,11 +190,11 @@ if(ONYX_ZK)
     add_dependencies(onyx_zk onyx_zk_build)
     include_directories(${ONYX_ZK_DIR}/include)
     add_definitions(-Donyx_USE_ZK=1)
-    # C++ adapter + the --zk test, compiled into the tests target only when ONYX_ZK is ON.
-    set(ONYX_ZK_SRC
+    # C++ adapter is part of consensus when enabled; the test harness adds only its test source.
+    set(ONYX_ZK_CORE_SRC
         src/Core/zk/IProofSystem.hpp
-        src/Core/zk/Halo2ProofSystem.hpp src/Core/zk/Halo2ProofSystem.cpp
-        tests/zk/test_zk.hpp tests/zk/test_zk.cpp)
+        src/Core/zk/Halo2ProofSystem.hpp src/Core/zk/Halo2ProofSystem.cpp)
+    set(ONYX_ZK_TEST_SRC tests/zk/test_zk.hpp tests/zk/test_zk.cpp)
     message(STATUS "Onyx ZK backend: ENABLED (cargo at ${CARGO_EXECUTABLE})")
 endif()
 # ----------------------------------------------------------------------------------------------
@@ -213,6 +213,7 @@ set(SOURCE_FILES
     src/CryptoNoteConfig.hpp
     src/rpc_api.hpp
     src/version.hpp
+    ${ONYX_ZK_CORE_SRC}
 )
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
@@ -223,6 +224,13 @@ if(APPLE)
 endif()
 add_library(bytecoin-core ${SOURCE_FILES})
 target_link_libraries(bytecoin-core bytecoin-crypto ${HID_LIBRARY})
+if(ONYX_ZK)
+    add_dependencies(bytecoin-core onyx_zk_build)
+    target_link_libraries(bytecoin-core onyx_zk)
+    if(NOT WIN32)
+        target_link_libraries(bytecoin-core m)
+    endif()
+endif()
 
 link_libraries(bytecoin-crypto bytecoin-core)
 if(NOT WIN32)
@@ -248,11 +256,14 @@ add_executable(tests src/main_tests.cpp tests/io.hpp tests/Random.hpp
         tests/json/test_json.cpp tests/json/test_json.hpp
         tests/wallet_state/test_wallet_state.cpp tests/wallet_state/test_wallet_state.hpp
         tests/wallet_file/test_wallet_file.cpp tests/wallet_file/test_wallet_file.hpp tests/crypto/benchmarks.cpp tests/crypto/benchmarks.hpp
-        ${ONYX_ZK_SRC})
+        ${ONYX_ZK_TEST_SRC})
 if(ONYX_ZK)
-    # Link the Rust staticlib; -lm in addition to the dl/pthread already added via link_libraries.
+    # Link the Rust staticlib (bytecoin-core also carries it for consensus callers).
     add_dependencies(tests onyx_zk_build)
-    target_link_libraries(tests onyx_zk m)
+    target_link_libraries(tests onyx_zk)
+    if(NOT WIN32)
+        target_link_libraries(tests m)
+    endif()
 endif()
 endif()
 

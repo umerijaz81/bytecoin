@@ -63,6 +63,34 @@ bool Halo2ProofSystem::verify_and_extract_transfer(const BinaryArray &encoded, u
 	return true;
 }
 
+bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
+    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+    BinaryArray *next_snapshot, uint64_t *fee) {
+	if (encoded.empty() || next_snapshot == nullptr || fee == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len   = 0;
+	uint64_t next_fee = 0;
+	const int rc      = onyx_verify_apply_transfer(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(),
+	    anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, circuit_k, expected_network.data(),
+	    block_height, &next_ptr, &next_len, &next_fee);
+	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	*fee = next_fee;
+	return true;
+}
+
 bool Halo2ProofSystem::toy_prove(
     uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out) {
 	uint8_t *proof_ptr = nullptr;

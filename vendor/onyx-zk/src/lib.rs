@@ -46,6 +46,8 @@ const MAX_HASH_INPUT: usize = 4 * 1024;
 const MAX_PROOF_BYTES: usize = 192 * 1024;
 const MAX_VK_BYTES: usize = 1024 * 1024;
 const MAX_AUTHORIZED_TRANSACTION_BYTES: usize = 384 * 1024;
+const MAX_STATE_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
+const MAX_EXPIRY_DISTANCE_BLOCKS: u64 = 100;
 const ERR_PANIC: i32 = -127;
 
 fn ffi_i32(f: impl FnOnce() -> i32) -> i32 {
@@ -190,6 +192,127 @@ pub extern "C" fn onyx_verify_and_extract_transfer(
                     32,
                 );
             }
+        }
+        1
+    })
+}
+
+fn apply_transfer_to_snapshot<const DEPTH: usize>(
+    snapshot: &[u8],
+    anchor_window_blocks: u64,
+    transaction: &transaction::AuthorizedTransaction,
+    block_height: u64,
+) -> Result<Vec<u8>, ()> {
+    let mut state = if snapshot.is_empty() {
+        if anchor_window_blocks == 0 {
+            return Err(());
+        }
+        state::ShieldedState::<DEPTH>::new(anchor_window_blocks)
+    } else {
+        state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?
+    };
+    state
+        .apply_transaction(&transaction.preimage, block_height)
+        .map_err(|_| ())?;
+    Ok(state.encode_snapshot())
+}
+
+/// Verify an authorized transfer and atomically advance a canonical shielded-state snapshot.
+/// An empty input snapshot initializes state using `anchor_window_blocks`; subsequent calls decode
+/// the window from the snapshot. Return values extend the verifier convention with -5 for a
+/// network/expiry/state transition violation and -6 for an oversized resulting snapshot.
+#[no_mangle]
+pub extern "C" fn onyx_verify_apply_transfer(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    anchor_window_blocks: u64,
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+    expected_network: *const u8,
+    block_height: u64,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+    fee_out: *mut u64,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || expected_network.is_null()
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+            || fee_out.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || (snapshot.is_null() && snapshot_len != 0)
+        {
+            return -1;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+            *fee_out = 0;
+        }
+        let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(transaction) => transaction,
+            Err(_) => return -2,
+        };
+        let network = unsafe { slice::from_raw_parts(expected_network, 16) };
+        if transaction.preimage.network_id.as_slice() != network
+            || block_height > transaction.preimage.expiry_height
+            || transaction.preimage.expiry_height - block_height > MAX_EXPIRY_DISTANCE_BLOCKS
+        {
+            return -5;
+        }
+        let verified = verify_transfer_dispatch(&transaction, merkle_depth, circuit_k);
+        if verified != 1 {
+            return verified;
+        }
+        let snapshot_bytes = if snapshot_len == 0 {
+            &[][..]
+        } else {
+            unsafe { slice::from_raw_parts(snapshot, snapshot_len) }
+        };
+        let next = match merkle_depth {
+            2 => apply_transfer_to_snapshot::<2>(
+                snapshot_bytes,
+                anchor_window_blocks,
+                &transaction,
+                block_height,
+            ),
+            4 => apply_transfer_to_snapshot::<4>(
+                snapshot_bytes,
+                anchor_window_blocks,
+                &transaction,
+                block_height,
+            ),
+            32 => apply_transfer_to_snapshot::<32>(
+                snapshot_bytes,
+                anchor_window_blocks,
+                &transaction,
+                block_height,
+            ),
+            _ => return -3,
+        };
+        let next = match next {
+            Ok(next) => next,
+            Err(_) => return -5,
+        };
+        if next.len() > MAX_STATE_SNAPSHOT_BYTES {
+            return -6;
+        }
+        let fee = transaction.preimage.fee;
+        let (ptr, len) = into_raw(next);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+            *fee_out = fee;
         }
         1
     })
@@ -496,12 +619,10 @@ fn toy_verify_ffi_impl(
     }
 }
 
-fn into_raw(mut v: Vec<u8>) -> (*mut u8, usize) {
-    v.shrink_to_fit();
-    let ptr = v.as_mut_ptr();
-    let len = v.len();
-    std::mem::forget(v);
-    (ptr, len)
+fn into_raw(v: Vec<u8>) -> (*mut u8, usize) {
+    let boxed = v.into_boxed_slice();
+    let len = boxed.len();
+    (Box::into_raw(boxed) as *mut u8, len)
 }
 
 #[no_mangle]
@@ -510,8 +631,9 @@ pub extern "C" fn onyx_free(ptr: *mut u8, len: usize) {
         return;
     }
     unsafe {
-        // Reconstruct with capacity == len (we shrank_to_fit in into_raw) so Vec frees correctly.
-        drop(Vec::from_raw_parts(ptr, len, len));
+        // Returned buffers are boxed slices, so pointer + length fully recover the allocation
+        // layout without relying on an unobservable Vec capacity.
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
     }
 }
 

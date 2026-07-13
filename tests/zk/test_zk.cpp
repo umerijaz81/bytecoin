@@ -86,6 +86,13 @@ void test_zk() {
 		    "malformed authorized transfer must fail");
 		invariant(!Halo2ProofSystem::verify_authorized_transfer(malformed, 32, 21),
 		    "unsupported circuit K must fail");
+		BinaryArray next_snapshot;
+		uint64_t fee = 0;
+		std::array<uint8_t, 16> network{};
+		invariant(!Halo2ProofSystem::verify_apply_transfer(BinaryArray{}, 100, malformed, 32, 20,
+		              network, 1, &next_snapshot, &fee),
+		    "malformed state transition must fail");
+		invariant(next_snapshot.empty() && fee == 0, "failed state transition modified outputs");
 		std::cout << "  [zk] authorized-transfer boundary rejects malformed input" << std::endl;
 	}
 

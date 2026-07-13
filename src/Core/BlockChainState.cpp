@@ -15,12 +15,17 @@
 #include "platform/Time.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
+#ifdef onyx_USE_ZK
+#include "zk/Halo2ProofSystem.hpp"
+#endif
 
 static const std::string KEYIMAGE_PREFIX            = "i";
 static const std::string AMOUNT_OUTPUT_PREFIX       = "a";  // amount:si -> g_index
 static const std::string OUTPUT_PREFIX              = "o";  // global_index -> OutputIndexData
 static const std::string BLOCK_STACK_INDICES_PREFIX = "b";
 static const std::string BLOCK_STACK_INDICES_SUFFIX = "g";
+static const std::string ONYX_STATE_KEY              = "Z";
+static const std::string ONYX_UNDO_PREFIX            = "z";
 
 static const std::string DIN_PREFIX = "D";
 
@@ -40,7 +45,7 @@ void ser_members(IBlockChainState::OutputIndexData &v, ISeria &s) {
 	seria_kv("spent", v.spent, s);
 	seria_kv("is_amethyst", v.is_amethyst, s);
 	seria_kv("dins", v.dins, s);
-}
+	}
 }  // namespace seria
 
 BlockChainState::PoolTransaction::PoolTransaction(const Transaction &tx, const BinaryArray &binary_tx, Amount fee,
@@ -99,18 +104,34 @@ bool BlockChainState::DeltaState::read_amount_output(Amount amount, size_t stack
 	return m_parent_state->read_amount_output(amount, stack_index, unp);
 }
 
+bool BlockChainState::DeltaState::read_onyx_snapshot(BinaryArray *snapshot) const {
+	if (!m_onyx_snapshot_changed)
+		return m_parent_state->read_onyx_snapshot(snapshot);
+	*snapshot = m_onyx_snapshot;
+	return !snapshot->empty();
+}
+
+void BlockChainState::DeltaState::set_onyx_snapshot(const BinaryArray &snapshot) {
+	m_onyx_snapshot         = snapshot;
+	m_onyx_snapshot_changed = true;
+}
+
 void BlockChainState::DeltaState::apply(IBlockChainState *parent_state) const {
 	for (auto &&ki : m_keyimages)
 		parent_state->store_keyimage(ki.first, ki.second);
 	for (auto &&amp : m_ordered_global_amounts)
 		parent_state->push_amount_output(
 		    amp.amount, amp.unlock_block_or_timestamp, m_block_height, amp.public_key, amp.is_amethyst);
+	if (m_onyx_snapshot_changed)
+		parent_state->set_onyx_snapshot(m_onyx_snapshot);
 }
 
 void BlockChainState::DeltaState::clear(Height new_block_height) {
 	m_block_height = new_block_height;
 	m_keyimages.clear();
 	m_global_amounts.clear();
+	m_onyx_snapshot.clear();
+	m_onyx_snapshot_changed = false;
 }
 
 // returns reward for coinbase transaction or fee for non-coinbase one
@@ -145,9 +166,15 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 			throw ConsensusError("Onyx envelope contains legacy transaction fields");
 		if (tx.onyx_envelope.empty() || tx.onyx_envelope.size() > parameters::ONYX_MAX_ENVELOPE_SIZE)
 			throw ConsensusError("Onyx envelope size out of bounds");
-		// Fail closed until fee/nullifier/output extraction is atomically connected to DeltaState.
-		// UPGRADE_HEIGHT_ONYX remains an unreachable placeholder while this gate exists.
-		throw ConsensusError("Onyx consensus state integration is not active");
+#ifdef onyx_USE_ZK
+		zk::Halo2ProofSystem::VerifiedTransferDelta verified;
+		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &verified))
+			throw ConsensusError("Invalid Onyx authorized transfer");
+		return verified.fee;
+#else
+		throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
+#endif
 	}
 	if (block_major_version >= currency.amethyst_block_version && !extra::is_valid(tx.extra))
 		throw ConsensusError("Extra has wrong format");
@@ -685,6 +712,7 @@ void BlockChainState::on_reorganization(
 		PoolTransMap old_memory_state_tx;
 		std::swap(old_memory_state_tx, m_memory_state_tx);
 		m_memory_state_ki_tx.clear();
+		m_memory_state_onyx_nf_tx.clear();
 		m_memory_state_fee_tx.clear();
 		m_memory_state_total_size = 0;
 		for (auto &&msf : old_memory_state_tx) {
@@ -733,9 +761,28 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		m_archive.add(Archive::TRANSACTION, binary_tx, tid, source_address);
 		return false;  // AddTransactionResult::ALREADY_IN_POOL;
 	}
-	const size_t my_size         = binary_tx.size();
-	const Amount my_fee          = cn::get_tx_fee(tx);
+	const size_t my_size = binary_tx.size();
+	// Validate against the block miners can build next before using the fee for pool ordering. Onyx
+	// fees live in the opaque authorized envelope and cannot be recovered by legacy get_tx_fee().
+	const uint8_t next_block_major_version =
+	    m_currency.get_block_major_version_for_height(get_tip_height() + 1);
+	const Amount my_fee = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
+	    m_config.paranoid_checks || check_sigs, true);
 	const Amount my_fee_per_byte = my_fee / my_size;
+#ifdef onyx_USE_ZK
+	zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
+	if (tx.version == m_currency.onyx_transaction_version) {
+		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta))
+			throw ConsensusError("Invalid Onyx authorized transfer");
+		for (const auto &nullifier : onyx_delta.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return false;
+	}
+#else
+	if (tx.version == m_currency.onyx_transaction_version)
+		throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
+#endif
 	Hash minimal_tid;
 	Amount minimal_fee = minimum_pool_fee_per_byte(false, &minimal_tid);
 	// Invariant is if 1 byte of cheapest transaction fits, then all transaction fits
@@ -769,17 +816,11 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	// The pool contains transactions for the block that miners can build next. This matters at a
 	// hard-fork boundary: validating against the current tip would apply the old rules one block
 	// too long and reject transactions using the newly-active format.
-	const uint8_t next_block_major_version =
-	    m_currency.get_block_major_version_for_height(get_tip_height() + 1);
-	const Amount my_fee3 = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
-	    m_config.paranoid_checks || check_sigs, true);
 	DeltaState memory_state(get_tip_height() + 1, get_tip().timestamp, get_tip().timestamp_median, this);
 	BlockStackIndexes stack_indexes;
 	Hash newest_referenced_bid;
 	redo_transaction(next_block_major_version, false, tx, &memory_state, &stack_indexes, &newest_referenced_bid,
 	    m_config.paranoid_checks || check_sigs);
-	if (my_fee != my_fee3)
-		m_log(logging::ERROR) << "Inconsistent fees " << my_fee << ", " << my_fee3 << " in transaction " << tid;
 	// Only good transactions are recorded in tx_first_seen, because they require
 	// space there
 	//	update_first_seen_timestamp(tid, unlock_timestamp);
@@ -807,6 +848,11 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		all_inserted = false;
 	if (!m_memory_state_fee_tx.insert(std::make_pair(my_fee_per_byte, tid)).second)
 		all_inserted = false;
+#ifdef onyx_USE_ZK
+	for (const auto &nullifier : onyx_delta.nullifiers)
+		if (!m_memory_state_onyx_nf_tx.insert(std::make_pair(nullifier, tid)).second)
+			all_inserted = false;
+#endif
 	// insert all before throw
 	invariant(all_inserted, "memory_state_fee_tx empty");
 	m_memory_state_total_size += my_size;
@@ -873,6 +919,17 @@ void BlockChainState::remove_from_pool(Hash tid) {
 				all_erased = false;
 		}
 	}
+#ifdef onyx_USE_ZK
+	if (tx.version == m_currency.onyx_transaction_version) {
+		zk::Halo2ProofSystem::VerifiedTransferDelta delta;
+		invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
+		              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &delta),
+		    "stored Onyx pool transaction failed verification");
+		for (const auto &nullifier : delta.nullifiers)
+			if (m_memory_state_onyx_nf_tx.erase(nullifier) != 1)
+				all_erased = false;
+	}
+#endif
 	const size_t my_size         = tit->second.binary_tx.size();
 	const Amount my_fee_per_byte = tit->second.fee_per_byte();
 	if (m_memory_state_fee_tx.erase(std::make_pair(my_fee_per_byte, tid)) != 1)
@@ -967,6 +1024,26 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 	auto &my_indexes = stack_indexes->back();
 	my_indexes.reserve(transaction.outputs.size());
 
+	if (transaction.version == m_currency.onyx_transaction_version) {
+#ifdef onyx_USE_ZK
+		BinaryArray snapshot;
+		tx_delta.read_onyx_snapshot(&snapshot);
+		BinaryArray next_snapshot;
+		uint64_t fee = 0;
+		std::array<uint8_t, 16> network{};
+		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+		if (!zk::Halo2ProofSystem::verify_apply_transfer(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
+		        transaction.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K,
+		        network, delta_state->get_block_height(), &next_snapshot, &fee))
+			throw ConsensusError("Onyx state transition rejected");
+		tx_delta.set_onyx_snapshot(next_snapshot);
+		tx_delta.apply(delta_state);
+		return;
+#else
+		throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
+#endif
+	}
+
 	for (size_t out_index = 0; out_index != transaction.outputs.size(); ++out_index) {
 		const auto &output = transaction.outputs[out_index];
 		if (const auto *out = boost::get<OutputKey>(&output)) {
@@ -1034,9 +1111,12 @@ void BlockChainState::redo_block(const Hash &bhash, const Block &block, const ap
 	if (check_sigs) {
 		m_ring_checker.start_batch();
 		// block.header.base_transaction has no signatures
-		for (const auto &tx : block.transactions)
+		for (const auto &tx : block.transactions) {
+			if (tx.version == m_currency.onyx_transaction_version)
+				continue;  // The Halo2 verifier and authorization signatures are checked in the state transition.
 			m_ring_checker.add_work(fill_ring_check_args(
 			    tx, block.header.major_version, info.height, info.timestamp, info.timestamp_median));
+		}
 	}
 	redo_block(block, info, &delta, &stack_indexes);
 	if (check_sigs) {
@@ -1044,9 +1124,32 @@ void BlockChainState::redo_block(const Hash &bhash, const Block &block, const ap
 		if (!errors.empty())
 			throw errors.front();  // We report first error only
 	}
+	if (delta.onyx_snapshot_changed()) {
+		BinaryArray previous_snapshot;
+		read_onyx_snapshot(&previous_snapshot);
+		auto undo_key = ONYX_UNDO_PREFIX + DB::to_binary_key(bhash.data, sizeof(bhash.data));
+		m_db.put(undo_key, previous_snapshot, true);
+	}
 	delta.apply(this);  // Will remove from pool by key_image
 	for (auto tit = block.transactions.begin(); tit != block.transactions.end(); ++tit) {
 		const auto tid = block.header.transaction_hashes.at(tit - block.transactions.begin());
+		if (tit->version == m_currency.onyx_transaction_version) {
+#ifdef onyx_USE_ZK
+			zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
+			invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tit->onyx_envelope,
+			              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta),
+			    "accepted Onyx block transaction failed verification");
+			std::set<Hash> conflicting_pool_transactions;
+			for (const auto &nullifier : onyx_delta.nullifiers) {
+				auto conflict = m_memory_state_onyx_nf_tx.find(nullifier);
+				if (conflict != m_memory_state_onyx_nf_tx.end())
+					conflicting_pool_transactions.insert(conflict->second);
+			}
+			for (const auto &conflict : conflicting_pool_transactions)
+				remove_from_pool(conflict);
+#endif
+			remove_from_pool(tid);
+		}
 		for (size_t input_index = 0; input_index != tit->inputs.size(); ++input_index) {
 			const auto &input = tit->inputs[input_index];
 			if (const auto *in = boost::get<InputKey>(&input))
@@ -1085,6 +1188,13 @@ void BlockChainState::undo_block(const Hash &bhash, const Block &block, Height h
 		undo_transaction(this, height, *tit);
 	}
 	undo_transaction(this, height, block.header.base_transaction);
+
+	auto onyx_undo_key = ONYX_UNDO_PREFIX + DB::to_binary_key(bhash.data, sizeof(bhash.data));
+	BinaryArray previous_onyx_snapshot;
+	if (m_db.get(onyx_undo_key, previous_onyx_snapshot)) {
+		set_onyx_snapshot(previous_onyx_snapshot);
+		m_db.del(onyx_undo_key, true);
+	}
 
 	auto key =
 	    BLOCK_STACK_INDICES_PREFIX + DB::to_binary_key(bhash.data, sizeof(bhash.data)) + BLOCK_STACK_INDICES_SUFFIX;
@@ -1218,6 +1328,17 @@ bool BlockChainState::read_keyimage(const KeyImage &key_image, Height *height) c
 		return false;
 	seria::from_binary(*height, rb);
 	return true;
+}
+
+bool BlockChainState::read_onyx_snapshot(BinaryArray *snapshot) const {
+	return m_db.get(ONYX_STATE_KEY, *snapshot);
+}
+
+void BlockChainState::set_onyx_snapshot(const BinaryArray &snapshot) {
+	if (snapshot.empty())
+		m_db.del(ONYX_STATE_KEY, false);
+	else
+		m_db.put(ONYX_STATE_KEY, snapshot, false);
 }
 
 size_t BlockChainState::push_amount_output(

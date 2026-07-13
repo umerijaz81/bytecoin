@@ -53,6 +53,10 @@ public:
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k);
 	static bool verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
 	    uint32_t circuit_k, VerifiedTransferDelta *delta);
+	static bool verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+	    BinaryArray *next_snapshot, uint64_t *fee);
 };
 
 }  // namespace zk

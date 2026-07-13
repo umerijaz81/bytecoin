@@ -59,6 +59,15 @@ int onyx_verify_and_extract_transfer(
     uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
     uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
 
+/* Verify an authorized transfer, enforce network and expiry, and atomically advance the canonical
+ * shielded-state snapshot. Pass NULL/0 for the first snapshot and a nonzero anchor window. The
+ * returned snapshot must be released with onyx_free. -5 denotes a state-policy violation. */
+int onyx_verify_apply_transfer(
+    const uint8_t *snapshot, size_t snapshot_len, uint64_t anchor_window_blocks,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t expected_network[16], uint64_t block_height,
+    uint8_t **snapshot_out, size_t *snapshot_len_out, uint64_t *fee_out);
+
 /* Release a buffer previously returned by this library. */
 void onyx_free(uint8_t *ptr, size_t len);
 
