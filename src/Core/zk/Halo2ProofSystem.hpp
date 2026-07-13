@@ -37,6 +37,10 @@ public:
 		std::array<uint8_t, 32> ownership_sighash{};
 		std::array<uint8_t, 64> ownership_signature{};
 	};
+	struct VerifiedProgramDeployment {
+		VerifiedTransferDelta funding;
+		std::array<uint8_t, 32> program_id{};
+	};
 	struct WalletScanResult {
 		uint64_t balance = 0;
 		size_t note_count = 0;
@@ -79,6 +83,12 @@ public:
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
 	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
 	    BinaryArray *next_snapshot, uint64_t *fee);
+	static bool verify_program_deployment(const BinaryArray &encoded, uint32_t merkle_depth,
+	    uint32_t circuit_k, VerifiedProgramDeployment *deployment);
+	static bool verify_apply_program_deployment(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+	    BinaryArray *next_snapshot, uint64_t *fee, std::array<uint8_t, 32> *program_id);
 	static bool verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
 	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);

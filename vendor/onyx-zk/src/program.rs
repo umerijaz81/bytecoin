@@ -76,7 +76,7 @@ impl ProgramEntry {
         }
         if self
             .deactivation_height
-            .is_some_and(|height| height <= self.activation_height)
+            .is_some_and(|height| height <= self.activation_height || height == u64::MAX)
         {
             return Err(ProgramError::InvalidActivation);
         }

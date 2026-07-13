@@ -182,6 +182,13 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 				throw ConsensusError("Invalid Onyx bridge proof");
 			return verified.fee;
 		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+			zk::Halo2ProofSystem::VerifiedProgramDeployment verified;
+			if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &verified))
+				throw ConsensusError("Invalid Onyx program deployment");
+			return verified.funding.fee;
+		}
 		throw ConsensusError("Unknown Onyx envelope type");
 #else
 		throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
@@ -724,6 +731,7 @@ void BlockChainState::on_reorganization(
 		std::swap(old_memory_state_tx, m_memory_state_tx);
 		m_memory_state_ki_tx.clear();
 		m_memory_state_onyx_nf_tx.clear();
+		m_memory_state_onyx_program_tx.clear();
 		m_memory_state_fee_tx.clear();
 		m_memory_state_total_size = 0;
 		for (auto &&msf : old_memory_state_tx) {
@@ -783,6 +791,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	const Amount my_fee_per_byte = my_fee / my_size;
 #ifdef onyx_USE_ZK
 	zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
+	std::array<uint8_t, 32> onyx_program_id{};
+	bool has_onyx_program_id = false;
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
 		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta))
@@ -801,6 +811,34 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		for (const auto &nullifier : onyx_delta.nullifiers)
 			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
 				return false;
+	}
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+		zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
+		if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &deployment))
+			throw ConsensusError("Invalid Onyx program deployment");
+		onyx_delta = deployment.funding;
+		onyx_program_id = deployment.program_id;
+		has_onyx_program_id = true;
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		BinaryArray dry_run_snapshot;
+		std::array<uint8_t, 16> network{};
+		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+		uint64_t dry_run_fee = 0;
+		std::array<uint8_t, 32> dry_run_program{};
+		if (!zk::Halo2ProofSystem::verify_apply_program_deployment(snapshot,
+		        parameters::ONYX_ANCHOR_WINDOW_BLOCKS, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH,
+		        parameters::ONYX_CIRCUIT_K, network, next_block_height, &dry_run_snapshot, &dry_run_fee,
+		        &dry_run_program) ||
+		    dry_run_fee != onyx_delta.fee || dry_run_program != deployment.program_id)
+			throw ConsensusError("Onyx program deployment rejected against current state");
+		for (const auto &nullifier : onyx_delta.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return false;
+		if (m_memory_state_onyx_program_tx.count(onyx_program_id) != 0)
+			return false;
 	}
 #else
 	if (tx.version == m_currency.onyx_transaction_version)
@@ -875,6 +913,9 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	for (const auto &nullifier : onyx_delta.nullifiers)
 		if (!m_memory_state_onyx_nf_tx.insert(std::make_pair(nullifier, tid)).second)
 			all_inserted = false;
+	if (has_onyx_program_id &&
+	    !m_memory_state_onyx_program_tx.insert(std::make_pair(onyx_program_id, tid)).second)
+		all_inserted = false;
 #endif
 	// insert all before throw
 	invariant(all_inserted, "memory_state_fee_tx empty");
@@ -951,6 +992,18 @@ void BlockChainState::remove_from_pool(Hash tid) {
 		for (const auto &nullifier : delta.nullifiers)
 			if (m_memory_state_onyx_nf_tx.erase(nullifier) != 1)
 				all_erased = false;
+	}
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+		zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
+		invariant(zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
+		              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &deployment),
+		    "stored Onyx program deployment failed verification");
+		for (const auto &nullifier : deployment.funding.nullifiers)
+			if (m_memory_state_onyx_nf_tx.erase(nullifier) != 1)
+				all_erased = false;
+		if (m_memory_state_onyx_program_tx.erase(deployment.program_id) != 1)
+			all_erased = false;
 	}
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
@@ -1069,6 +1122,14 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 			        transaction.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K,
 			        network, delta_state->get_block_height(), &next_snapshot, &fee))
 				throw ConsensusError("Onyx state transition rejected");
+		} else if (transaction.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+			uint64_t fee = 0;
+			std::array<uint8_t, 32> program_id{};
+			if (!zk::Halo2ProofSystem::verify_apply_program_deployment(snapshot,
+			        parameters::ONYX_ANCHOR_WINDOW_BLOCKS, transaction.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, network,
+			        delta_state->get_block_height(), &next_snapshot, &fee, &program_id))
+				throw ConsensusError("Onyx program deployment state transition rejected");
 		} else if (transaction.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 			zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
 			if (!zk::Halo2ProofSystem::verify_apply_bridge(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
@@ -1218,12 +1279,24 @@ void BlockChainState::redo_block(const Hash &bhash, const Block &block, const ap
 		const auto tid = block.header.transaction_hashes.at(tit - block.transactions.begin());
 		if (tit->version == m_currency.onyx_transaction_version) {
 #ifdef onyx_USE_ZK
-			if (tit->onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+			if (tit->onyx_type == parameters::ONYX_TYPE_TRANSFER ||
+			    tit->onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
 				zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
-				invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tit->onyx_envelope,
-				              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta),
-				    "accepted Onyx block transaction failed verification");
 				std::set<Hash> conflicting_pool_transactions;
+				if (tit->onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+					invariant(zk::Halo2ProofSystem::verify_and_extract_transfer(tit->onyx_envelope,
+					              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &onyx_delta),
+					    "accepted Onyx block transaction failed verification");
+				} else {
+					zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
+					invariant(zk::Halo2ProofSystem::verify_program_deployment(tit->onyx_envelope,
+					              parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &deployment),
+					    "accepted Onyx program deployment failed verification");
+					onyx_delta = deployment.funding;
+					auto program_conflict = m_memory_state_onyx_program_tx.find(deployment.program_id);
+					if (program_conflict != m_memory_state_onyx_program_tx.end())
+						conflicting_pool_transactions.insert(program_conflict->second);
+				}
 				for (const auto &nullifier : onyx_delta.nullifiers) {
 					auto conflict = m_memory_state_onyx_nf_tx.find(nullifier);
 					if (conflict != m_memory_state_onyx_nf_tx.end())

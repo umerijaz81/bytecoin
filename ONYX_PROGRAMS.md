@@ -39,6 +39,21 @@ entry and enforces both per-transaction and cumulative per-block verification-co
 changing nullifiers or the commitment tree. Mempool admission dry-runs the transition against the
 current snapshot, preventing state-invalid or unregistered calls from being retained.
 
+## Consensus deployment
+
+Envelope type `2` deploys the compiled standard private-fungible-token family. The deployment contains
+the canonical manifest, activation and optional deactivation heights, and an authorized native funding
+transfer. That transfer must pay at least `100000` atomic units and contain exactly one reserved call
+(`function_id = 0xffffffff`). The call binds the manifest, network, activation window, and recomputed
+Program ID; changing any of them invalidates the spend and binding signatures.
+
+The deployment must activate between the following block and 100,000 blocks after inclusion. Consensus
+verifies the native Halo2 funding proof, consumes its nullifiers, appends its change commitments, charges
+the fee, accounts 5,000,000 verification-cost units, and registers the program in one cloned snapshot.
+Any failure commits none of those effects. Duplicate Program IDs are rejected both by state and by a
+dedicated mempool conflict index, which is rebuilt on reorganization. Seed and view-only wallet scanners
+scan the embedded funding transfer so change recovery remains identical to an ordinary native transfer.
+
 A program call becomes executable only after its audited function circuit supplies all of the
 following:
 
@@ -49,6 +64,6 @@ following:
 5. verification cost within the entry and block limits;
 
 Only the standard token-transfer functions currently satisfy these consensus execution gates. Every
-other call continues to fail closed. Consensus deployment/activation transactions, private issuance,
-mixed-fee bundles, wallet construction, SDK vectors, and independent audit coverage remain required
-before the fungible-token phase is deployable or eligible for production activation.
+other call continues to fail closed. Private issuance, mixed-fee token bundles, wallet deployment and
+issuance construction, SDK vectors, and independent audit coverage remain required before the
+fungible-token phase is eligible for production activation.

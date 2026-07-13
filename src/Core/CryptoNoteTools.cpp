@@ -193,6 +193,14 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 			*fee = delta.fee;
 			return true;
 		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+			zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
+			if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &deployment))
+				return false;
+			*fee = deployment.funding.fee;
+			return true;
+		}
 		return false;
 	}
 #endif

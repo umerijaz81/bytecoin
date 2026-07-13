@@ -91,6 +91,72 @@ bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64
 	return true;
 }
 
+bool Halo2ProofSystem::verify_program_deployment(const BinaryArray &encoded, uint32_t merkle_depth,
+    uint32_t circuit_k, VerifiedProgramDeployment *deployment) {
+	if (encoded.empty() || deployment == nullptr)
+		return false;
+	std::array<uint8_t, 16> network{};
+	std::array<uint8_t, 32> anchor{};
+	std::array<uint8_t, 32> program_id{};
+	uint64_t expiry_height = 0;
+	uint64_t fee           = 0;
+	std::array<uint8_t, 32 * 16> nullifiers{};
+	std::array<uint8_t, 32 * 16> commitments{};
+	size_t nullifier_count  = 0;
+	size_t commitment_count = 0;
+	const int rc = onyx_verify_program_deployment(encoded.data(), encoded.size(), merkle_depth, circuit_k,
+	    network.data(), anchor.data(), &expiry_height, &fee, program_id.data(), nullifiers.data(), 16,
+	    &nullifier_count, commitments.data(), 16, &commitment_count);
+	if (rc != 1 || nullifier_count > 16 || commitment_count > 16)
+		return false;
+	VerifiedProgramDeployment result;
+	result.funding.network       = network;
+	result.funding.anchor        = anchor;
+	result.funding.expiry_height = expiry_height;
+	result.funding.fee           = fee;
+	result.program_id            = program_id;
+	result.funding.nullifiers.resize(nullifier_count);
+	result.funding.commitments.resize(commitment_count);
+	for (size_t i = 0; i != nullifier_count; ++i)
+		std::copy(nullifiers.begin() + i * 32, nullifiers.begin() + (i + 1) * 32,
+		    result.funding.nullifiers[i].begin());
+	for (size_t i = 0; i != commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.funding.commitments[i].begin());
+	*deployment = std::move(result);
+	return true;
+}
+
+bool Halo2ProofSystem::verify_apply_program_deployment(const BinaryArray &snapshot,
+    uint64_t anchor_window_blocks, const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+    BinaryArray *next_snapshot, uint64_t *fee, std::array<uint8_t, 32> *program_id) {
+	if (encoded.empty() || next_snapshot == nullptr || fee == nullptr || program_id == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len   = 0;
+	uint64_t next_fee = 0;
+	std::array<uint8_t, 32> next_program{};
+	const int rc = onyx_verify_apply_program_deployment(snapshot.empty() ? nullptr : snapshot.data(),
+	    snapshot.size(), anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, circuit_k,
+	    expected_network.data(), block_height, &next_ptr, &next_len, &next_fee, next_program.data());
+	if (rc != 1 || next_ptr == nullptr || next_len == 0) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	*fee        = next_fee;
+	*program_id = next_program;
+	return true;
+}
+
 bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta) {

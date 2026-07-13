@@ -38,6 +38,8 @@ Consensus invariants:
 | Key derivation | `bytecoin.onyx.v6.keys` |
 | Note encryption | `bytecoin.onyx.v6.note-encryption` |
 | Program id | `bytecoin.onyx.v6.program` |
+| Program deployment statement | `bytecoin.onyx.v6.program-deployment` |
+| Program deployment id | `bytecoin.onyx.v6.program-deployment-id` |
 
 The native asset identifier is
 `SHA-256("bytecoin.onyx.v6.native-asset") = 7d3423482b6e8a242fc0e5a2f6a54b36cf4f0342a953ea93ec7025cd7c955be3`.
@@ -48,7 +50,7 @@ No domain constant may be reused for another purpose.
 
 - Merkle depth: 32.
 - Retained anchors: 100 blocks, including intermediate transaction roots.
-- Maximum transaction bytes: 256 KiB; proof: 192 KiB.
+- Maximum Onyx envelope bytes: 384 KiB; proof: 192 KiB.
 - Maximum spends: 16; outputs: 16; distinct programs: 8.
 - Maximum encrypted note payload: 4 KiB per output.
 - Maximum expiry distance: 100 blocks.
@@ -166,6 +168,20 @@ conserved; native fee is zero; and the sole public-data hash is the canonical em
 The authorization transcript binds that ordered call and proof. Stateless verification checks the
 compiled standard circuit, while state application additionally requires the exact descriptor,
 schema, activation window, and cost from the registry before mutating consensus state.
+
+The compiled standard family is registered by Onyx envelope type `2`. Its canonical deployment
+object contains version `1`, a bounded nonempty token manifest, activation and optional deactivation
+heights, and an authorized native funding transaction. The funding transaction pays at least 100,000
+atomic units and carries exactly one reserved program call (`function_id = 0xffffffff`) binding the
+network, manifest, activation window, and deterministic Program ID. Its native proof is verified over
+the funding statement without the reserved call, while spend and binding signatures cover the complete
+statement including that call. Activation must be in `[inclusion_height + 1,
+inclusion_height + 100000]`; `u64::MAX` is reserved as the canonical absent-deactivation encoding.
+
+Application consumes funding nullifiers, appends funding outputs, charges the fee, adds 5,000,000 to
+the block's cumulative program cost, and inserts the immutable registry entry atomically. Duplicate
+Program IDs, insufficient fees, inactive windows, unknown circuit shapes, state replay, or aggregate
+cost overflow reject the entire transition.
 
 Planned audited programs after fungible-token deployment are NFT, vesting, multisignature custody,
 and atomic swap.

@@ -317,6 +317,26 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.programs.rollback(delta);
     }
 
+    pub fn apply_program_deployment(
+        &mut self,
+        funding: &TransactionPreimage,
+        entry: ProgramEntry,
+        deployment_cost: u64,
+        block_height: u64,
+    ) -> Result<(), StateError> {
+        if !funding.programs.is_empty() || deployment_cost > MAX_TRANSACTION_PROGRAM_COST {
+            return Err(StateError::InvalidProgram);
+        }
+        let next_block_program_cost =
+            self.next_block_program_cost(block_height, deployment_cost)?;
+        let mut next = self.clone();
+        next.apply_transfer(funding, block_height)?;
+        next.current_block_program_cost = next_block_program_cost;
+        next.register_program(entry)?;
+        *self = next;
+        Ok(())
+    }
+
     pub fn apply_transfer(
         &mut self,
         transaction: &TransactionPreimage,
@@ -396,16 +416,8 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         if block_height < self.current_height {
             return Err(StateError::HeightRegression);
         }
-        let next_block_program_cost = if block_height == self.current_height {
-            self.current_block_program_cost
-                .checked_add(transaction_program_cost)
-                .ok_or(StateError::ProgramCostLimit)?
-        } else {
-            transaction_program_cost
-        };
-        if next_block_program_cost > MAX_BLOCK_PROGRAM_COST {
-            return Err(StateError::ProgramCostLimit);
-        }
+        let next_block_program_cost =
+            self.next_block_program_cost(block_height, transaction_program_cost)?;
 
         let previous_tree = self.tree.clone();
         let previous_anchors = self.anchors.clone();
@@ -450,6 +462,28 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             previous_circulating_supply,
             previous_block_program_cost,
         })
+    }
+
+    fn next_block_program_cost(
+        &self,
+        block_height: u64,
+        additional_cost: u64,
+    ) -> Result<u64, StateError> {
+        if block_height < self.current_height {
+            return Err(StateError::HeightRegression);
+        }
+        let next = if block_height == self.current_height {
+            self.current_block_program_cost
+                .checked_add(additional_cost)
+                .ok_or(StateError::ProgramCostLimit)?
+        } else {
+            additional_cost
+        };
+        if next > MAX_BLOCK_PROGRAM_COST {
+            Err(StateError::ProgramCostLimit)
+        } else {
+            Ok(next)
+        }
     }
 
     pub fn rollback(&mut self, delta: ShieldedStateDelta<DEPTH>) {
