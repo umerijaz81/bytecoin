@@ -140,7 +140,7 @@ bool Halo2ProofSystem::state_supply_audit(const BinaryArray &snapshot, SupplyAud
 	SupplyAudit result;
 	if (onyx_state_supply_audit(snapshot.data(), snapshot.size(), &result.total_bridged,
 	        &result.total_fees, &result.circulating_supply, &result.commitment_count,
-	        result.commitment_root.data()) != 1)
+	        &result.program_count, result.commitment_root.data()) != 1)
 		return false;
 	*audit = result;
 	return true;

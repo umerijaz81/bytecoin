@@ -10,12 +10,15 @@ use ff::PrimeField;
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, P128Pow5T3};
 use halo2_proofs::pasta::Fp;
 
+use crate::program::{ProgramDelta, ProgramEntry, ProgramRegistry};
 use crate::transaction::TransactionPreimage;
 use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
-const SNAPSHOT_VERSION: u8 = 2;
+const SNAPSHOT_VERSION: u8 = 3;
+const ACCOUNTING_SNAPSHOT_VERSION: u8 = 2;
 const LEGACY_SNAPSHOT_VERSION: u8 = 1;
+const MAX_TRANSACTION_PROGRAM_COST: u64 = 10_000_000;
 const MAX_SNAPSHOT_NULLIFIERS: usize = 1_000_000;
 const MAX_SNAPSHOT_ANCHORS: usize = 1_000_000;
 
@@ -53,6 +56,7 @@ pub enum StateError {
     HeightRegression,
     SupplyOverflow,
     SupplyUnderflow,
+    InvalidProgram,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +72,7 @@ pub enum SnapshotError {
     DuplicateNullifier,
     InvalidAnchorHistory,
     InvalidSupply,
+    InvalidRegistry,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -224,6 +229,7 @@ pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     total_bridged: u64,
     total_fees: u64,
     circulating_supply: u64,
+    programs: ProgramRegistry,
 }
 
 #[derive(Clone, Copy)]
@@ -258,6 +264,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             total_bridged: 0,
             total_fees: 0,
             circulating_supply: 0,
+            programs: ProgramRegistry::default(),
         }
     }
 
@@ -279,6 +286,20 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
 
     pub fn circulating_supply(&self) -> u64 {
         self.circulating_supply
+    }
+
+    pub fn program_count(&self) -> usize {
+        self.programs.len()
+    }
+
+    pub fn register_program(&mut self, entry: ProgramEntry) -> Result<ProgramDelta, StateError> {
+        self.programs
+            .register(entry)
+            .map_err(|_| StateError::InvalidProgram)
+    }
+
+    pub fn rollback_program(&mut self, delta: ProgramDelta) {
+        self.programs.rollback(delta);
     }
 
     pub fn apply_transfer(
@@ -346,6 +367,13 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         transaction
             .encode()
             .map_err(|_| StateError::InvalidTransaction)?;
+        self.programs
+            .validate_calls(
+                &transaction.programs,
+                block_height,
+                MAX_TRANSACTION_PROGRAM_COST,
+            )
+            .map_err(|_| StateError::InvalidProgram)?;
         if !self.knows_anchor(transaction.anchor) {
             return Err(StateError::UnknownAnchor);
         }
@@ -447,6 +475,9 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         for nullifier in nullifiers {
             out.extend_from_slice(&nullifier.0);
         }
+        let programs = self.programs.encode();
+        write_varint(programs.len() as u64, &mut out);
+        out.extend_from_slice(&programs);
         out
     }
 
@@ -456,7 +487,10 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         }
         let mut reader = Reader::new(input);
         let version = reader.byte()?;
-        if version != SNAPSHOT_VERSION && version != LEGACY_SNAPSHOT_VERSION {
+        if version != SNAPSHOT_VERSION
+            && version != ACCOUNTING_SNAPSHOT_VERSION
+            && version != LEGACY_SNAPSHOT_VERSION
+        {
             return Err(SnapshotError::WrongVersion);
         }
         if usize::from(reader.byte()?) != DEPTH {
@@ -491,17 +525,18 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         }
 
         let current_height = reader.varint()?;
-        let (total_bridged, total_fees, circulating_supply) = if version == SNAPSHOT_VERSION {
-            let total_bridged = reader.varint()?;
-            let total_fees = reader.varint()?;
-            let circulating_supply = reader.varint()?;
-            if total_bridged.checked_sub(total_fees) != Some(circulating_supply) {
-                return Err(SnapshotError::InvalidSupply);
-            }
-            (total_bridged, total_fees, circulating_supply)
-        } else {
-            (0, 0, 0)
-        };
+        let (total_bridged, total_fees, circulating_supply) =
+            if version >= ACCOUNTING_SNAPSHOT_VERSION {
+                let total_bridged = reader.varint()?;
+                let total_fees = reader.varint()?;
+                let circulating_supply = reader.varint()?;
+                if total_bridged.checked_sub(total_fees) != Some(circulating_supply) {
+                    return Err(SnapshotError::InvalidSupply);
+                }
+                (total_bridged, total_fees, circulating_supply)
+            } else {
+                (0, 0, 0)
+            };
         let anchor_window_blocks = reader.varint()?;
         if anchor_window_blocks == 0 {
             return Err(SnapshotError::InvalidAnchorHistory);
@@ -551,6 +586,17 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         if version == LEGACY_SNAPSHOT_VERSION && (leaf_count != 0 || !values.is_empty()) {
             return Err(SnapshotError::InvalidSupply);
         }
+        let programs = if version == SNAPSHOT_VERSION {
+            let length = bounded_snapshot_count(
+                reader.varint()?,
+                crate::program::MAX_REGISTRY_BYTES,
+                SnapshotError::InvalidRegistry,
+            )?;
+            ProgramRegistry::decode(reader.take(length)?)
+                .map_err(|_| SnapshotError::InvalidRegistry)?
+        } else {
+            ProgramRegistry::default()
+        };
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData.into());
         }
@@ -563,6 +609,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             total_bridged,
             total_fees,
             circulating_supply,
+            programs,
         })
     }
 }
@@ -863,6 +910,7 @@ mod tests {
         let mut legacy = ShieldedState::<4>::new(3).encode_snapshot();
         legacy[0] = LEGACY_SNAPSHOT_VERSION;
         legacy.drain(6..9);
+        legacy.truncate(legacy.len() - 3);
         let migrated = ShieldedState::<4>::decode_snapshot(&legacy).unwrap();
         assert_eq!(
             (
@@ -871,6 +919,20 @@ mod tests {
                 migrated.circulating_supply()
             ),
             (0, 0, 0)
+        );
+
+        let mut accounting_v2 = state.encode_snapshot();
+        accounting_v2[0] = ACCOUNTING_SNAPSHOT_VERSION;
+        accounting_v2.truncate(accounting_v2.len() - 3);
+        let migrated_v2 = ShieldedState::<4>::decode_snapshot(&accounting_v2).unwrap();
+        assert_eq!(
+            (
+                migrated_v2.total_bridged(),
+                migrated_v2.total_fees(),
+                migrated_v2.circulating_supply(),
+                migrated_v2.program_count()
+            ),
+            (30, 5, 25, 0)
         );
 
         state.rollback(bridge_delta);
@@ -882,6 +944,59 @@ mod tests {
             ),
             (0, 0, 0)
         );
+    }
+
+    #[test]
+    fn program_registry_is_snapshot_bound_and_calls_fail_closed() {
+        use crate::program::{ProgramEntry, ProgramFunction};
+        use crate::transaction::ProgramCall;
+
+        let entry = ProgramEntry {
+            manifest: b"onyx.test.registry/v1".to_vec(),
+            backend: "halo2-ipa-pasta".to_owned(),
+            activation_height: 10,
+            deactivation_height: Some(20),
+            functions: vec![ProgramFunction {
+                function_id: 7,
+                verifying_key: vec![1, 2, 3],
+                public_input_schema_hash: [4; 32],
+                max_cost: 50,
+            }],
+        };
+        let program_id = entry.id().unwrap();
+        let mut state = ShieldedState::<4>::new(3);
+        let registry_delta = state.register_program(entry).unwrap();
+        assert_eq!(state.program_count(), 1);
+        let snapshot = state.encode_snapshot();
+        assert_eq!(
+            ShieldedState::<4>::decode_snapshot(&snapshot)
+                .unwrap()
+                .program_count(),
+            1
+        );
+
+        let mut unknown = transaction(state.root(), 1, 40);
+        unknown.programs.push(ProgramCall {
+            program_id: [9; 32],
+            function_id: 7,
+            public_data_hash: [5; 32],
+        });
+        assert_eq!(
+            state.apply_transaction(&unknown, 10).err(),
+            Some(StateError::InvalidProgram)
+        );
+        assert_eq!(state.leaf_count(), 0);
+
+        let mut registered = transaction(state.root(), 1, 40);
+        registered.programs.push(ProgramCall {
+            program_id,
+            function_id: 7,
+            public_data_hash: [5; 32],
+        });
+        let tx_delta = state.apply_transaction(&registered, 10).unwrap();
+        state.rollback(tx_delta);
+        state.rollback_program(registry_delta);
+        assert_eq!(state.program_count(), 0);
     }
 
     #[test]

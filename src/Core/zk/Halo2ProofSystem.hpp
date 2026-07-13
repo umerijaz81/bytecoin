@@ -47,6 +47,7 @@ public:
 		uint64_t total_fees = 0;
 		uint64_t circulating_supply = 0;
 		uint64_t commitment_count = 0;
+		uint64_t program_count = 0;
 		std::array<uint8_t, 32> commitment_root{};
 	};
 	const char *backend_id() const override;

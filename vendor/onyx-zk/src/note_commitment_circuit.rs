@@ -114,6 +114,13 @@ pub(crate) fn synthesize_note_commitment(
                             || input.map_or(Value::unknown(), Value::known),
                         )?
                     }
+                } else if enforce_native_asset && (index == 2 || index == 3) {
+                    region.assign_advice_from_constant(
+                        || "native program identifier",
+                        config.state[0],
+                        index,
+                        Fp::zero(),
+                    )?
                 } else if enforce_native_asset && (index == 4 || index == 5) {
                     region.assign_advice_from_constant(
                         || "native asset identifier",

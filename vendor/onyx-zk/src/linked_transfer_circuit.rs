@@ -197,6 +197,8 @@ mod tests {
         });
         inputs[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
         inputs[1] = Fp::from(9);
+        inputs[2] = Fp::zero();
+        inputs[3] = Fp::zero();
         inputs[4] = crate::types::native_asset_fields()[0];
         inputs[5] = crate::types::native_asset_fields()[1];
         inputs
@@ -299,9 +301,18 @@ mod tests {
 
         let mut foreign_output_note = output_note;
         foreign_output_note[4] += Fp::one();
-        let mut wrong_output = instances;
+        let mut wrong_output = instances.clone();
         wrong_output[2][0] = commitment(foreign_output_note);
         assert!(MockProver::run(15, &circuit, wrong_output)
+            .unwrap()
+            .verify()
+            .is_err());
+
+        let mut programmed_output_note = output_note;
+        programmed_output_note[2] = Fp::one();
+        let mut wrong_program = instances.clone();
+        wrong_program[2][0] = commitment(programmed_output_note);
+        assert!(MockProver::run(15, &circuit, wrong_program)
             .unwrap()
             .verify()
             .is_err());

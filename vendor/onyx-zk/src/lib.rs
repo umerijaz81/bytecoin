@@ -34,6 +34,7 @@ pub mod linked_transfer_circuit;
 pub mod membership_circuit;
 pub mod multi_transfer_circuit;
 pub mod note_commitment_circuit;
+pub mod program;
 pub mod proof;
 pub mod spend_auth_circuit;
 pub mod state;
@@ -468,6 +469,7 @@ pub extern "C" fn onyx_state_supply_audit(
     total_fees_out: *mut u64,
     circulating_supply_out: *mut u64,
     leaf_count_out: *mut u64,
+    program_count_out: *mut u64,
     root_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
@@ -478,6 +480,7 @@ pub extern "C" fn onyx_state_supply_audit(
             || total_fees_out.is_null()
             || circulating_supply_out.is_null()
             || leaf_count_out.is_null()
+            || program_count_out.is_null()
             || root_out.is_null()
         {
             return -1;
@@ -493,6 +496,7 @@ pub extern "C" fn onyx_state_supply_audit(
             *total_fees_out = state.total_fees();
             *circulating_supply_out = state.circulating_supply();
             *leaf_count_out = state.leaf_count();
+            *program_count_out = state.program_count() as u64;
             std::ptr::copy_nonoverlapping(state.root().bytes().as_ptr(), root_out, 32);
         }
         1

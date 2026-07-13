@@ -194,6 +194,11 @@ Nodes expose these values, the commitment count/root, and block height through
 snapshot upgrades directly; a nonempty version-1 snapshot has no trustworthy historical counters
 and must be rebuilt by deterministic chain replay.
 
+Version-3 snapshots append the canonical program/verifying-key registry. Version-2 accounting
+snapshots migrate with an empty registry. Native transfer and bridge circuits constrain note program
+ids to the zero/native program and reject nonempty program-call lists until a registered,
+function-specific proof verifier is available.
+
 ## 10. Phase gates
 
 | Phase | Exit gate |

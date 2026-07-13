@@ -417,6 +417,7 @@ bool Node::on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_r
 	response.total_fees = audit.total_fees;
 	response.circulating_supply = audit.circulating_supply;
 	response.commitment_count = audit.commitment_count;
+	response.program_count = audit.program_count;
 	std::copy(audit.commitment_root.begin(), audit.commitment_root.end(), response.commitment_root.data);
 	return true;
 #else

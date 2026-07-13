@@ -239,6 +239,8 @@ mod tests {
         let mut note = std::array::from_fn(|i| Fp::from(seed + i as u64));
         note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
         note[1] = Fp::from(9);
+        note[2] = Fp::zero();
+        note[3] = Fp::zero();
         note[4] = crate::types::native_asset_fields()[0];
         note[5] = crate::types::native_asset_fields()[1];
         note

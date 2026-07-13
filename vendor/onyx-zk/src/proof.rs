@@ -351,6 +351,7 @@ pub fn verify_multi_transfer_proof<
     if transaction.backend_id != multi_transfer_backend_id(SPENDS, OUTPUTS)
         || transaction.preimage.spends.len() != SPENDS
         || transaction.preimage.outputs.len() != OUTPUTS
+        || !transaction.preimage.programs.is_empty()
         || transaction.proof.len() > MAX_PROOF_BYTES
     {
         return Err(ProofError::InvalidShape);
@@ -445,6 +446,9 @@ pub fn verify_authorized_multi_transfer<
     k: u32,
     transaction: &AuthorizedTransaction,
 ) -> Result<(), ProofError> {
+    if !transaction.preimage.programs.is_empty() {
+        return Err(ProofError::InvalidShape);
+    }
     verify_authorized_transaction(transaction)?;
     verify_multi_transfer_proof::<DEPTH, SPENDS, OUTPUTS>(k, transaction)
 }
@@ -528,6 +532,9 @@ pub fn verify_transfer_proof<const DEPTH: usize>(
     k: u32,
     transaction: &AuthorizedTransaction,
 ) -> Result<(), ProofError> {
+    if !transaction.preimage.programs.is_empty() {
+        return Err(ProofError::InvalidShape);
+    }
     if transaction.backend_id != EXPERIMENTAL_TRANSFER_BACKEND
         || transaction.preimage.spends.len() != 1
         || transaction.preimage.outputs.len() != 1
@@ -600,6 +607,9 @@ pub fn verify_authorized_transfer<const DEPTH: usize>(
     k: u32,
     transaction: &AuthorizedTransaction,
 ) -> Result<(), ProofError> {
+    if !transaction.preimage.programs.is_empty() {
+        return Err(ProofError::InvalidShape);
+    }
     verify_authorized_transaction(transaction)?;
     verify_transfer_proof::<DEPTH>(k, transaction)
 }
@@ -645,6 +655,8 @@ mod tests {
         let mut input_note = std::array::from_fn(|index| Fp::from(index as u64 + 40));
         input_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(30);
         input_note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
+        input_note[2] = Fp::zero();
+        input_note[3] = Fp::zero();
         input_note[4] = crate::types::native_asset_fields()[0];
         input_note[5] = crate::types::native_asset_fields()[1];
         input_note[10] = *authority_coordinates.x();
@@ -656,6 +668,8 @@ mod tests {
         let mut output_note = std::array::from_fn(|index| Fp::from(index as u64 + 80));
         output_note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(25);
         output_note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
+        output_note[2] = Fp::zero();
+        output_note[3] = Fp::zero();
         output_note[4] = crate::types::native_asset_fields()[0];
         output_note[5] = crate::types::native_asset_fields()[1];
         output_note[13] = Fp::from(102);
@@ -760,6 +774,19 @@ mod tests {
             spend_signatures,
             binding_signature,
         };
+        let mut unsupported_program = transaction.clone();
+        unsupported_program
+            .preimage
+            .programs
+            .push(crate::transaction::ProgramCall {
+                program_id: [9; 32],
+                function_id: 1,
+                public_data_hash: [8; 32],
+            });
+        assert!(matches!(
+            verify_authorized_multi_transfer::<DEPTH, 1, 1>(K, &unsupported_program),
+            Err(ProofError::InvalidShape)
+        ));
         let encoded = transaction.encode().unwrap();
         let mut extracted_network = [0u8; NETWORK_ID_BYTES];
         let mut extracted_anchor = [0u8; 32];
@@ -944,6 +971,8 @@ mod tests {
         for (index, (note, value)) in input_notes.iter_mut().zip([30u64, 20]).enumerate() {
             note[crate::note_commitment_circuit::NOTE_VALUE_INPUT_INDEX] = Fp::from(value);
             note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
+            note[2] = Fp::zero();
+            note[3] = Fp::zero();
             note[4] = crate::types::native_asset_fields()[0];
             note[5] = crate::types::native_asset_fields()[1];
             note[10] = *authority_coordinates.x();
@@ -982,6 +1011,8 @@ mod tests {
         output_notes[1][13] = Fp::from(121);
         for note in &mut output_notes {
             note[1] = crate::types::network_field(&[1; NETWORK_ID_BYTES]);
+            note[2] = Fp::zero();
+            note[3] = Fp::zero();
             note[4] = crate::types::native_asset_fields()[0];
             note[5] = crate::types::native_asset_fields()[1];
         }

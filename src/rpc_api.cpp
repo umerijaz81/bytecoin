@@ -480,6 +480,7 @@ void ser_members(api::cnd::GetOnyxSupplyAudit::Response &v, ISeria &s) {
 	seria_kv("total_fees", v.total_fees, s);
 	seria_kv("circulating_supply", v.circulating_supply, s);
 	seria_kv("commitment_count", v.commitment_count, s);
+	seria_kv("program_count", v.program_count, s);
 	seria_kv("commitment_root", v.commitment_root, s);
 	seria_kv("block_height", v.block_height, s);
 }
