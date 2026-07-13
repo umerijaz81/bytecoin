@@ -51,6 +51,38 @@ pub enum WalletBuildError {
     InsufficientFunds,
 }
 
+fn select_note_indices(
+    notes: &[WalletNote],
+    required: u64,
+) -> Result<Vec<usize>, WalletBuildError> {
+    let unspent = notes
+        .iter()
+        .enumerate()
+        .filter(|(_, note)| !note.spent)
+        .collect::<Vec<_>>();
+    if let Some((index, _)) = unspent
+        .iter()
+        .copied()
+        .find(|(_, note)| note.plaintext.value >= required)
+    {
+        return Ok(vec![index]);
+    }
+    for first in 0..unspent.len() {
+        for second in (first + 1)..unspent.len() {
+            let value = unspent[first]
+                .1
+                .plaintext
+                .value
+                .checked_add(unspent[second].1.plaintext.value)
+                .ok_or(WalletBuildError::InvalidValue)?;
+            if value >= required {
+                return Ok(vec![unspent[first].0, unspent[second].0]);
+            }
+        }
+    }
+    Err(WalletBuildError::InsufficientFunds)
+}
+
 pub fn build_bridge(
     sender: &KeyBundle,
     recipient: &RecipientAddress,
@@ -211,18 +243,23 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             .checked_add(fee)
             .filter(|value| amount != 0 && *value != 0)
             .ok_or(WalletBuildError::InvalidValue)?;
-        let (note_index, input) = self
-            .notes
+        let selected_indices = select_note_indices(&self.notes, required)?;
+        let selected = selected_indices
             .iter()
-            .enumerate()
-            .find(|(_, note)| !note.spent && note.plaintext.value >= required)
-            .ok_or(WalletBuildError::InsufficientFunds)?;
-        if input.plaintext.network_id != recipient.network_id
-            || recipient.network_id != self.network_id
+            .map(|index| &self.notes[*index])
+            .collect::<Vec<_>>();
+        if recipient.network_id != self.network_id
+            || selected
+                .iter()
+                .any(|note| note.plaintext.network_id != recipient.network_id)
         {
             return Err(WalletBuildError::InvalidRecipient);
         }
-        let change = input.plaintext.value - required;
+        let input_value = selected.iter().try_fold(0u64, |sum, note| {
+            sum.checked_add(note.plaintext.value)
+                .ok_or(WalletBuildError::InvalidValue)
+        })?;
+        let change = input_value - required;
         let mut recipients = vec![(recipient.clone(), amount, memo)];
         if change != 0 {
             recipients.push((
@@ -272,36 +309,47 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             });
         }
 
-        let input_randomness = input.plaintext.randomness.field();
-        let input_commitment_bytes =
-            value_commitment_bytes(input.plaintext.value, input_randomness);
-        let input_commitment =
-            Option::<pallas::Point>::from(pallas::Point::from_bytes(&input_commitment_bytes))
-                .ok_or(WalletBuildError::Crypto)?
-                .to_affine();
-        let nullifier = input
-            .plaintext
-            .nullifier(keys.nullifier_key(), input.position);
+        let input_randomness = selected
+            .iter()
+            .map(|note| note.plaintext.randomness.field())
+            .collect::<Vec<_>>();
+        let input_commitments = selected
+            .iter()
+            .zip(&input_randomness)
+            .map(|(note, randomness)| {
+                let bytes = value_commitment_bytes(note.plaintext.value, *randomness);
+                let point = Option::<pallas::Point>::from(pallas::Point::from_bytes(&bytes))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+                Ok((bytes, point))
+            })
+            .collect::<Result<Vec<_>, WalletBuildError>>()?;
+        let nullifiers = selected
+            .iter()
+            .map(|note| {
+                note.plaintext
+                    .nullifier(keys.nullifier_key(), note.position)
+            })
+            .collect::<Vec<_>>();
         let mut preimage = TransactionPreimage {
             network_id: self.network_id,
             anchor: self.root(),
             expiry_height,
             fee,
-            spends: vec![PublicSpend {
-                nullifier,
-                value_commitment: input_commitment_bytes,
-                randomized_key: [0; 32],
-            }],
+            spends: nullifiers
+                .iter()
+                .zip(&input_commitments)
+                .map(|(nullifier, (value_commitment, _))| PublicSpend {
+                    nullifier: *nullifier,
+                    value_commitment: *value_commitment,
+                    randomized_key: [0; 32],
+                })
+                .collect(),
             outputs,
             programs: vec![],
         };
         let prepared =
             prepare_same_owner_spends(keys, &mut preimage).map_err(|_| WalletBuildError::Crypto)?;
-        let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
-            &preimage.spends[0].randomized_key,
-        ))
-        .ok_or(WalletBuildError::Crypto)?
-        .to_affine();
         let binding = preimage
             .encryption_binding()
             .map_err(|_| WalletBuildError::Crypto)?;
@@ -314,37 +362,54 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             preimage.outputs[index].outgoing_ciphertext = encrypted.outgoing_ciphertext;
         }
 
-        let path = self
-            .witness(note_index)
-            .map_err(|_| WalletBuildError::Crypto)?;
-        let authority = Option::<pallas::Point>::from(pallas::Point::from_bytes(
-            &input.plaintext.spend_authority_key,
-        ))
-        .ok_or(WalletBuildError::Crypto)?
-        .to_affine();
+        let spends = selected
+            .iter()
+            .zip(&selected_indices)
+            .zip(&input_randomness)
+            .zip(&input_commitments)
+            .enumerate()
+            .map(
+                |(spend_index, (((input, note_index), randomness), (_, commitment)))| {
+                    let path = self
+                        .witness(*note_index)
+                        .map_err(|_| WalletBuildError::Crypto)?;
+                    let authority = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+                        &input.plaintext.spend_authority_key,
+                    ))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+                    let randomized_key = Option::<pallas::Point>::from(pallas::Point::from_bytes(
+                        &preimage.spends[spend_index].randomized_key,
+                    ))
+                    .ok_or(WalletBuildError::Crypto)?
+                    .to_affine();
+                    Ok(MultiSpendWitness {
+                        commitment: input.commitment.field(),
+                        input_note: input
+                            .plaintext
+                            .commitment_inputs()
+                            .map_err(|_| WalletBuildError::Crypto)?,
+                        authority_key: authority,
+                        authorization_randomizer: prepared.randomizers()[spend_index],
+                        randomized_key,
+                        siblings: path
+                            .siblings
+                            .iter()
+                            .map(|sibling| sibling.field())
+                            .collect(),
+                        position: path.position,
+                        nullifier_key: keys.nullifier_key().field(),
+                        rho: input.plaintext.rho.field(),
+                        value_randomness: *randomness,
+                        value_commitment: *commitment,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, WalletBuildError>>()?;
         let witness = MultiTransferWitness::<DEPTH> {
-            input_values: vec![input.plaintext.value],
+            input_values: selected.iter().map(|note| note.plaintext.value).collect(),
             output_values: recipients.iter().map(|recipient| recipient.1).collect(),
-            spends: vec![MultiSpendWitness {
-                commitment: input.commitment.field(),
-                input_note: input
-                    .plaintext
-                    .commitment_inputs()
-                    .map_err(|_| WalletBuildError::Crypto)?,
-                authority_key: authority,
-                authorization_randomizer: prepared.randomizers()[0],
-                randomized_key,
-                siblings: path
-                    .siblings
-                    .iter()
-                    .map(|sibling| sibling.field())
-                    .collect(),
-                position: path.position,
-                nullifier_key: keys.nullifier_key().field(),
-                rho: input.plaintext.rho.field(),
-                value_randomness: input_randomness,
-                value_commitment: input_commitment,
-            }],
+            spends,
             output_notes: output_notes
                 .iter()
                 .map(|note| {
@@ -355,22 +420,39 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             output_value_randomness: output_randomness.clone(),
             output_value_commitments: output_commitments,
         };
-        let backend_id = multi_transfer_backend_id(1, recipients.len());
-        let nullifiers = [nullifier.0];
-        let proof = match recipients.len() {
-            1 => create_multi_transfer_proof::<DEPTH, 1, 1>(
+        let backend_id = multi_transfer_backend_id(selected.len(), recipients.len());
+        let nullifier_bytes = nullifiers
+            .iter()
+            .map(|nullifier| nullifier.0)
+            .collect::<Vec<_>>();
+        let proof = match (selected.len(), recipients.len()) {
+            (1, 1) => create_multi_transfer_proof::<DEPTH, 1, 1>(
                 circuit_k,
                 &witness,
                 fee,
                 self.root(),
-                &nullifiers,
+                &nullifier_bytes,
             ),
-            2 => create_multi_transfer_proof::<DEPTH, 1, 2>(
+            (1, 2) => create_multi_transfer_proof::<DEPTH, 1, 2>(
                 circuit_k,
                 &witness,
                 fee,
                 self.root(),
-                &nullifiers,
+                &nullifier_bytes,
+            ),
+            (2, 1) => create_multi_transfer_proof::<DEPTH, 2, 1>(
+                circuit_k,
+                &witness,
+                fee,
+                self.root(),
+                &nullifier_bytes,
+            ),
+            (2, 2) => create_multi_transfer_proof::<DEPTH, 2, 2>(
+                circuit_k,
+                &witness,
+                fee,
+                self.root(),
+                &nullifier_bytes,
             ),
             _ => return Err(WalletBuildError::Crypto),
         }
@@ -381,7 +463,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             &preimage,
             &backend_id,
             &proof,
-            &[input_randomness],
+            &input_randomness,
             &output_randomness,
         )
         .map_err(|_| WalletBuildError::Crypto)?;
@@ -571,6 +653,98 @@ mod tests {
     use crate::value_commitment_circuit::value_commitment_bytes;
 
     use super::*;
+
+    fn funded_wallet<const DEPTH: usize>(
+        keys: &KeyBundle,
+        network: [u8; NETWORK_ID_BYTES],
+        values: &[u64],
+    ) -> WalletState<DEPTH> {
+        let address = keys.address(0).unwrap();
+        let mut wallet = WalletState::<DEPTH>::new(network);
+        for (index, value) in values.iter().enumerate() {
+            let note = NotePlaintext {
+                network_id: network,
+                program_id: [0; 32],
+                asset_id: NATIVE_ASSET_ID,
+                value: *value,
+                diversifier: address.diversifier,
+                transmission_key: address.transmission_key,
+                spend_authority_key: address.spend_authority_key,
+                rho: CanonicalField::from_field(Fp::from(100 + index as u64)),
+                randomness: CanonicalField::from_field(Fp::from(200 + index as u64)),
+                memo: vec![],
+            };
+            let commitment = note.commitment().unwrap();
+            let position = wallet.tree.append(commitment).unwrap();
+            wallet.notes.push(WalletNote {
+                commitment,
+                position,
+                plaintext: note,
+                spent: false,
+            });
+        }
+        wallet
+    }
+
+    #[test]
+    fn builder_combines_two_notes_for_exact_and_change_payments() {
+        const DEPTH: usize = 2;
+        const K: u32 = 16;
+        let network = [8; NETWORK_ID_BYTES];
+        let sender = MasterSeed::new([21; 32]).derive(network).unwrap();
+        let recipient_keys = MasterSeed::new([22; 32]).derive(network).unwrap();
+        let recipient = recipient_keys.address(0).unwrap();
+
+        let exact_wallet = funded_wallet::<DEPTH>(&sender, network, &[10, 12]);
+        let exact = exact_wallet
+            .build_transfer(&sender, &recipient, 20, 2, 50, vec![], K)
+            .unwrap();
+        assert_eq!(
+            (exact.preimage.spends.len(), exact.preimage.outputs.len()),
+            (2, 1)
+        );
+        crate::proof::verify_authorized_multi_transfer::<DEPTH, 2, 1>(K, &exact).unwrap();
+
+        let change_wallet = funded_wallet::<DEPTH>(&sender, network, &[10, 15]);
+        let change = change_wallet
+            .build_transfer(&sender, &recipient, 20, 2, 50, vec![], K)
+            .unwrap();
+        assert_eq!(
+            (change.preimage.spends.len(), change.preimage.outputs.len()),
+            (2, 2)
+        );
+        crate::proof::verify_authorized_multi_transfer::<DEPTH, 2, 2>(K, &change).unwrap();
+
+        let mut recipient_wallet = WalletState::<DEPTH>::new(network);
+        recipient_wallet
+            .scan_transfer(&recipient_keys.full_viewing_key().unwrap(), &change)
+            .unwrap();
+        assert_eq!(recipient_wallet.unspent_balance().unwrap(), 20);
+        let mut sender_wallet = WalletState::<DEPTH>::new(network);
+        sender_wallet
+            .scan_transfer(&sender.full_viewing_key().unwrap(), &change)
+            .unwrap();
+        assert_eq!(sender_wallet.unspent_balance().unwrap(), 3);
+    }
+
+    #[test]
+    fn selector_prefers_one_note_then_first_sufficient_pair() {
+        let network = [7; NETWORK_ID_BYTES];
+        let keys = MasterSeed::new([23; 32]).derive(network).unwrap();
+        let wallet = funded_wallet::<2>(&keys, network, &[4, 4, 6, 12]);
+        assert_eq!(select_note_indices(wallet.notes(), 10).unwrap(), vec![3]);
+        assert_eq!(select_note_indices(wallet.notes(), 13).unwrap(), vec![0, 3]);
+
+        let pair_wallet = funded_wallet::<2>(&keys, network, &[4, 4, 6]);
+        assert_eq!(
+            select_note_indices(pair_wallet.notes(), 10).unwrap(),
+            vec![0, 2]
+        );
+        assert!(matches!(
+            select_note_indices(pair_wallet.notes(), 11),
+            Err(WalletBuildError::InsufficientFunds)
+        ));
+    }
 
     #[test]
     fn scanner_tracks_all_leaves_recovers_notes_witnesses_and_spends() {
