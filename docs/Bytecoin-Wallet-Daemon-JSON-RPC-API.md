@@ -56,6 +56,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | Method | Description |
 |--------|-------------|
 | `get_onyx_status` | Returns the wallet's canonical Onyx address, confirmed shielded balance, recovered-note count, and commitment-tree root. |
+| `get_onyx_asset_balance` | Returns the confirmed balance and unspent-note count for one exact Onyx program/asset pair. |
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
@@ -78,6 +79,27 @@ This method takes an empty parameter object. The response fields are:
 ```json
 {"jsonrpc":"2.0","id":"status","method":"get_onyx_status","params":{}}
 ```
+
+#### `get_onyx_asset_balance`
+
+Both `program_id` and `asset_id` are required canonical 32-byte lowercase hexadecimal identifiers.
+Standard private fungible tokens use their Program ID for both fields. Native Bytecoin uses the
+all-zero Program ID and its protocol-native asset identifier. Exact pair matching prevents balances
+from different private assets from being combined.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"token-balance",
+  "method":"get_onyx_asset_balance",
+  "params":{
+    "program_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "asset_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+The response contains `balance` and `unspent_note_count`.
 
 #### `create_onyx_transaction`
 

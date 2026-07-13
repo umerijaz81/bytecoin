@@ -27,6 +27,8 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
     {api::walletd::GetViewKeyPair::method(), json_rpc::make_member_method(&WalletNode::on_get_view_key)},
     {api::walletd::GetBalance::method(), json_rpc::make_member_method(&WalletNode::on_get_balance)},
     {api::walletd::GetOnyxStatus::method(), json_rpc::make_member_method(&WalletNode::on_get_onyx_status)},
+    {api::walletd::GetOnyxAssetBalance::method(),
+        json_rpc::make_member_method(&WalletNode::on_get_onyx_asset_balance)},
     {api::walletd::CreateOnyxTransaction::method(),
         json_rpc::make_member_method(&WalletNode::on_create_onyx_transaction)},
     {api::walletd::CreateOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_create_onyx_bridge)},
@@ -378,6 +380,21 @@ bool WalletNode::on_get_onyx_status(http::Client *, http::RequestBody &&, json_r
 	response.note_count = get_wallet_state().get_onyx_note_count();
 	std::copy(get_wallet_state().get_onyx_root().begin(), get_wallet_state().get_onyx_root().end(),
 	    response.commitment_root.data);
+	return true;
+}
+
+bool WalletNode::on_get_onyx_asset_balance(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::walletd::GetOnyxAssetBalance::Request &&request,
+    api::walletd::GetOnyxAssetBalance::Response &response) {
+	check_wallet_open();
+	std::array<uint8_t, 32> program_id{};
+	std::array<uint8_t, 32> asset_id{};
+	if (!common::from_hex(request.program_id, program_id.data(), program_id.size()) ||
+	    !common::from_hex(request.asset_id, asset_id.data(), asset_id.size()))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx program or asset identifier");
+	if (!get_wallet_state().get_onyx_asset_balance(
+	        program_id, asset_id, &response.balance, &response.unspent_note_count))
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Onyx wallet state is unavailable");
 	return true;
 }
 

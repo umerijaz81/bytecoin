@@ -165,6 +165,22 @@ void WalletState::reload_onyx_wallet_state() {
 #endif
 }
 
+bool WalletState::get_onyx_asset_balance(const std::array<uint8_t, 32> &program_id,
+    const std::array<uint8_t, 32> &asset_id, uint64_t *balance, size_t *unspent_note_count) const {
+#ifdef onyx_USE_ZK
+	if (m_onyx_wallet_snapshot.empty() || balance == nullptr || unspent_note_count == nullptr)
+		return false;
+	zk::Halo2ProofSystem::WalletAssetBalance result;
+	if (!zk::Halo2ProofSystem::wallet_asset_balance(m_onyx_wallet_snapshot, program_id, asset_id, &result))
+		return false;
+	*balance = result.balance;
+	*unspent_note_count = result.unspent_note_count;
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
     Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const {
 #ifdef onyx_USE_ZK

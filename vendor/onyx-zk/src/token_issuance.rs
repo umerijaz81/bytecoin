@@ -328,9 +328,25 @@ mod tests {
             ),
             1
         );
+        let wallet_snapshot =
+            unsafe { std::slice::from_raw_parts(wallet_ptr, wallet_len) }.to_vec();
         crate::onyx_free(wallet_ptr, wallet_len);
-        assert_eq!(wallet_balance, 25);
+        assert_eq!(wallet_balance, 0);
         assert_eq!(wallet_notes, 1);
+        let mut token_balance = 0u64;
+        let mut token_notes = 0usize;
+        assert_eq!(
+            crate::onyx_wallet_asset_balance(
+                wallet_snapshot.as_ptr(),
+                wallet_snapshot.len(),
+                program_id.as_ptr(),
+                program_id.as_ptr(),
+                &mut token_balance,
+                &mut token_notes,
+            ),
+            1
+        );
+        assert_eq!((token_balance, token_notes), (25, 1));
         let preimage = TransactionPreimage {
             network_id: network,
             anchor: state.root(),

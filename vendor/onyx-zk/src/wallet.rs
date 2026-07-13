@@ -334,13 +334,36 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
     }
 
     pub fn unspent_balance(&self) -> Result<u64, WalletError> {
+        self.unspent_asset_balance(&[0; 32], &NATIVE_ASSET_ID)
+    }
+
+    pub fn unspent_asset_balance(
+        &self,
+        program_id: &[u8; 32],
+        asset_id: &[u8; 32],
+    ) -> Result<u64, WalletError> {
         self.notes
             .iter()
-            .filter(|note| !note.spent)
+            .filter(|note| {
+                !note.spent
+                    && &note.plaintext.program_id == program_id
+                    && &note.plaintext.asset_id == asset_id
+            })
             .try_fold(0u64, |sum, note| {
                 sum.checked_add(note.plaintext.value)
                     .ok_or(WalletError::Snapshot)
             })
+    }
+
+    pub fn unspent_asset_note_count(&self, program_id: &[u8; 32], asset_id: &[u8; 32]) -> usize {
+        self.notes
+            .iter()
+            .filter(|note| {
+                !note.spent
+                    && &note.plaintext.program_id == program_id
+                    && &note.plaintext.asset_id == asset_id
+            })
+            .count()
     }
 
     pub fn witness(&self, note_index: usize) -> Result<MerklePath, WalletError> {

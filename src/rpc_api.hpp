@@ -389,6 +389,18 @@ struct GetOnyxStatus {
 	};
 };
 
+struct GetOnyxAssetBalance {
+	static std::string method() { return "get_onyx_asset_balance"; }
+	struct Request {
+		std::string program_id;  // canonical 32-byte hex identifier
+		std::string asset_id;    // canonical 32-byte hex identifier
+	};
+	struct Response {
+		Amount balance = 0;
+		size_t unspent_note_count = 0;
+	};
+};
+
 struct CreateOnyxTransaction {
 	static std::string method() { return "create_onyx_transaction"; }
 	struct Request {
@@ -1039,6 +1051,8 @@ void ser_members(cn::api::walletd::CreateAddresses::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetBalance::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxStatus::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::GetOnyxStatus::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxAssetBalance::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::GetOnyxAssetBalance::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTransaction::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTransaction::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxBridge::Request &v, ISeria &s);

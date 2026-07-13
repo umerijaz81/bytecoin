@@ -346,6 +346,16 @@ void ser_members(api::walletd::GetOnyxStatus::Response &v, ISeria &s) {
 	seria_kv("commitment_root", v.commitment_root, s);
 }
 
+void ser_members(api::walletd::GetOnyxAssetBalance::Request &v, ISeria &s) {
+	seria_kv("program_id", v.program_id, s);
+	seria_kv("asset_id", v.asset_id, s);
+}
+
+void ser_members(api::walletd::GetOnyxAssetBalance::Response &v, ISeria &s) {
+	seria_kv("balance", v.balance, s);
+	seria_kv("unspent_note_count", v.unspent_note_count, s);
+}
+
 void ser_members(api::walletd::CreateOnyxTransaction::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("amount", v.amount, s);

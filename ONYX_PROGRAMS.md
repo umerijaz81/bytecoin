@@ -74,7 +74,9 @@ Application requires the active registered issuance function, exact next sequenc
 valid issuer/proof/binding signatures, and checked cumulative supply at or below the immutable cap.
 Outputs and ledger updates commit atomically. The mempool permits at most one pending issuance per
 Program ID and rebuilds that index after reorganizations. Full and view-only scanners recover issuance
-outputs, and the wallet builder derives the sequence/cap from a consensus snapshot before proving.
+outputs, while native status balances exclude them; exact `(Program ID, asset ID)` balance queries
+prevent cross-asset unit confusion. The wallet builder derives the sequence/cap from a consensus
+snapshot before proving.
 
 A program call becomes executable only after its audited function circuit supplies all of the
 following:

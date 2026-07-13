@@ -55,6 +55,10 @@ public:
 		size_t note_count = 0;
 		std::array<uint8_t, 32> root{};
 	};
+	struct WalletAssetBalance {
+		uint64_t balance = 0;
+		size_t unspent_note_count = 0;
+	};
 	struct SupplyAudit {
 		uint64_t total_bridged = 0;
 		uint64_t total_fees = 0;
@@ -121,6 +125,9 @@ public:
 	static bool wallet_reserve_spends(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, const BinaryArray &encoded, BinaryArray *next_snapshot);
 	static bool wallet_summary(const BinaryArray &snapshot, WalletScanResult *result);
+	static bool wallet_asset_balance(const BinaryArray &snapshot,
+	    const std::array<uint8_t, 32> &program_id, const std::array<uint8_t, 32> &asset_id,
+	    WalletAssetBalance *result);
 	static bool wallet_create_bridge(const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
 	    uint64_t legacy_amount, uint64_t legacy_stack_index,

@@ -156,6 +156,11 @@ int onyx_wallet_reserve_spends(
     uint8_t **snapshot_out, size_t *snapshot_len_out);
 int onyx_wallet_summary(const uint8_t *snapshot, size_t snapshot_len,
                         uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
+/* Return the confirmed unspent balance for one exact (program id, asset id) pair. */
+int onyx_wallet_asset_balance(
+    const uint8_t *snapshot, size_t snapshot_len,
+    const uint8_t program_id[32], const uint8_t asset_id[32],
+    uint64_t *balance_out, size_t *unspent_note_count_out);
 
 /* Build a proved/encrypted bridge with a zero ownership signature, returning the 32-byte message
  * the legacy wallet must sign. Finalize by injecting the resulting 64-byte CryptoNote signature. */

@@ -335,6 +335,19 @@ bool Halo2ProofSystem::wallet_summary(const BinaryArray &snapshot, WalletScanRes
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_asset_balance(const BinaryArray &snapshot,
+    const std::array<uint8_t, 32> &program_id, const std::array<uint8_t, 32> &asset_id,
+    WalletAssetBalance *result) {
+	if (snapshot.empty() || result == nullptr)
+		return false;
+	WalletAssetBalance balance;
+	if (onyx_wallet_asset_balance(snapshot.data(), snapshot.size(), program_id.data(), asset_id.data(),
+	        &balance.balance, &balance.unspent_note_count) != 1)
+		return false;
+	*result = balance;
+	return true;
+}
+
 bool Halo2ProofSystem::wallet_reserve_spends(const BinaryArray &snapshot,
     const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 16> &network,
     const BinaryArray &encoded, BinaryArray *next_snapshot) {

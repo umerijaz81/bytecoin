@@ -87,6 +87,8 @@ public:
 	uint64_t get_onyx_balance() const { return m_onyx_balance; }
 	size_t get_onyx_note_count() const { return m_onyx_note_count; }
 	const std::array<uint8_t, 32> &get_onyx_root() const { return m_onyx_root; }
+	bool get_onyx_asset_balance(const std::array<uint8_t, 32> &program_id,
+	    const std::array<uint8_t, 32> &asset_id, uint64_t *balance, size_t *unspent_note_count) const;
 	bool create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const;
 	bool create_onyx_bridge(const std::array<uint8_t, 91> &recipient, Amount legacy_amount, Amount fee,

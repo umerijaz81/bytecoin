@@ -1579,6 +1579,54 @@ pub extern "C" fn onyx_wallet_summary(
 }
 
 #[no_mangle]
+pub extern "C" fn onyx_wallet_asset_balance(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    program_id: *const u8,
+    asset_id: *const u8,
+    balance_out: *mut u64,
+    unspent_note_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || program_id.is_null()
+            || asset_id.is_null()
+            || balance_out.is_null()
+            || unspent_note_count_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *balance_out = 0;
+            *unspent_note_count_out = 0;
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
+            .try_into()
+            .expect("fixed program id length");
+        let asset_id: [u8; 32] = unsafe { slice::from_raw_parts(asset_id, 32) }
+            .try_into()
+            .expect("fixed asset id length");
+        let balance = match wallet.unspent_asset_balance(&program_id, &asset_id) {
+            Ok(balance) => balance,
+            Err(_) => return -2,
+        };
+        unsafe {
+            *balance_out = balance;
+            *unspent_note_count_out = wallet.unspent_asset_note_count(&program_id, &asset_id);
+        }
+        1
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_wallet_create_bridge(
     seed: *const u8,
     recipient: *const u8,
