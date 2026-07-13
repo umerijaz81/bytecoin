@@ -10,6 +10,7 @@
 #include "p2p/LevinProtocol.hpp"
 #include "p2p/P2pProtocolDefinitions.hpp"
 #include "p2p/P2pProtocolTypes.hpp"
+#include "p2p/Socks5.hpp"
 #include "platform/PathTools.hpp"
 #ifdef onyx_USE_ZK
 #include "onyx_zk.h"
@@ -52,6 +53,18 @@ void address_parse(const cn::BinaryArray &msg) {
 	uint64_t tag = 0;
 	common::BinaryArray data;
 	sideeffect(common::base58::decode_addr(common::as_string(msg), &tag, &data));
+}
+
+void socks5_parse(const cn::BinaryArray &msg) {
+	try {
+		if (msg.size() == 2)
+			cn::p2p::Socks5::validate_method(msg);
+		const size_t expected = cn::p2p::Socks5::connect_reply_size(msg);
+		if (msg.size() == expected)
+			cn::p2p::Socks5::validate_connect_reply(msg);
+		sideeffect(true);
+	} catch (const std::exception &) {
+	}
 }
 
 #ifdef onyx_USE_ZK
@@ -138,6 +151,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 		break;
 	case 15:
 		levin_parse<cn::p2p::StemTransaction::Notify>(msg);
+		break;
+	case 16:
+		socks5_parse(msg);
 		break;
 	case 128:
 		binary_parse<cn::BlockTemplate>(msg);

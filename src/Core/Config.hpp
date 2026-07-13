@@ -102,6 +102,8 @@ public:
 	Timestamp dandelion_embargo_min_seconds                = 10;
 	Timestamp dandelion_embargo_max_seconds                = 30;
 	uint8_t dandelion_fluff_probability_percent            = 10;
+	bool p2p_proxy_enabled                                  = false;
+	NetworkAddress p2p_proxy;
 
 	size_t rpc_sync_blocks_max_count;
 	size_t rpc_sync_blocks_max_size;

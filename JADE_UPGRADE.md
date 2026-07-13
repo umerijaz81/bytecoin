@@ -87,8 +87,10 @@ re-architecting.
   outbound peer per epoch, per-hop probabilistic fluff, a hop limit, randomized embargo timers and
   immediate loop/disconnect recovery. V4 peers retain diffusion compatibility. The default is on;
   `--disable-dandelion` opts out. See `docs/Dandelion-Relay.md` for the state machine and limitations.
-- **Tor/I2P:** optional SOCKS5 outbound proxy in `src/platform/Network.*` connect path
-  (`--p2p-proxy`); document running over Tor. Verify on a two-node regtest.
+- **Tor/I2P proxy (implemented, validation pending):** `--p2p-proxy=<ip:port>` routes every outbound
+  P2P connection through a no-auth SOCKS5 proxy with numeric targets, no direct fallback and a bounded
+  handshake. Remaining: Tor/I2P integration tests, hidden-service peer identities and independent
+  DNS/direct-leak validation. See `docs/SOCKS5-Proxy.md`.
 
 ## Build / test (this environment)
 

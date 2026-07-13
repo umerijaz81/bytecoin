@@ -58,7 +58,6 @@ public:
 	virtual void send(BinaryArray &&body);  // We want to make sure to update stats when calling with a base class
 	void send_shutdown();
 	void disconnect(const std::string &ban_reason);  // empty for no ban
-	bool test_connect(const NetworkAddress &addr);   // for single connects without p2p
 	bool is_connected() const;
 	virtual ~P2PClient() = default;
 	P2PProtocol *get_protocol() const { return m_protocol.get(); }
@@ -66,17 +65,25 @@ public:
 
 private:
 	void advance_state(bool called_from_runloop);
+	bool connect(const NetworkAddress &target, const NetworkAddress *proxy);
 	void on_socket_disconnect();
 	void write();
 	void read(bool called_from_runloop);
 
 	bool read_next_request(BinaryArray &header, BinaryArray &body);
 	void process_requests();
+	bool advance_socks5();
 
 	friend class P2P;
 	std::unique_ptr<P2PProtocol> m_protocol;
 	NetworkAddress address;
 	platform::TCPSocket sock;
+	platform::Timer socks5_timer;
+	enum class Socks5State { READY, GREETING_WRITE, GREETING_READ, CONNECT_WRITE, CONNECT_READ };
+	Socks5State socks5_state = Socks5State::READY;
+	BinaryArray socks5_output;
+	size_t socks5_output_offset = 0;
+	BinaryArray socks5_input;
 
 	const bool incoming;
 	D_handler d_handler;

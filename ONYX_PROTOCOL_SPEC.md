@@ -295,9 +295,10 @@ predates both the wallet and the shielded tree.
 
 The first O6 component is implemented as a negotiated P2P v5 Dandelion++ relay with epoch-stable
 outbound selection, probabilistic diffusion, bounded hops, randomized embargo, loop/disconnect
-recovery and v4 fallback. This is not completion of O6: proxy transport, peer scoring, adversarial
-simulation, RandomX/backend transition work, reproducible releases and operational testnet evidence
-remain required.
+recovery and v4 fallback. O6 also includes fail-closed outbound SOCKS5 routing with numeric targets
+and bounded no-auth negotiation. This is not completion of O6: hidden-service peer identities,
+Tor/I2P leak/integration testing, peer scoring, adversarial simulation, RandomX/backend transition
+work, reproducible releases and operational testnet evidence remain required.
 
 ## 11. Required tests
 

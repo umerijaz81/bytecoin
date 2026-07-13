@@ -13,6 +13,7 @@
 #include "crypto/crypto.hpp"
 #include "p2p/P2pProtocolDefinitions.hpp"
 #include "p2p/Dandelion.hpp"
+#include "p2p/Socks5.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
 #include "seria/KVBinaryInputStream.hpp"
@@ -204,6 +205,38 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		              p2p::DandelionPolicy::embargo_seconds(30, 10, 20) == 30,
 		    "Dandelion embargo bounds are not inclusive or normalized");
 		std::cout << "  [jade] Dandelion v5 stem descriptor round-trip ok" << std::endl;
+	}
+
+	// 9. SOCKS5 framing sends numeric peer addresses through the proxy and rejects unsafe replies.
+	{
+		NetworkAddress target;
+		target.ip = common::BinaryArray{1, 2, 3, 4};
+		target.port = 8080;
+		invariant(p2p::Socks5::greeting() == common::BinaryArray({5, 1, 0}),
+		    "SOCKS5 no-auth greeting changed unexpectedly");
+		invariant(p2p::Socks5::connect_ipv4(target) ==
+		              common::BinaryArray({5, 1, 0, 1, 1, 2, 3, 4, 0x1f, 0x90}),
+		    "SOCKS5 numeric target request is not canonical");
+		p2p::Socks5::validate_method(common::BinaryArray{5, 0});
+		const common::BinaryArray ipv4_reply{5, 0, 0, 1, 127, 0, 0, 1, 0x23, 0x28};
+		invariant(p2p::Socks5::connect_reply_size(ipv4_reply) == ipv4_reply.size(),
+		    "SOCKS5 IPv4 reply length is wrong");
+		p2p::Socks5::validate_connect_reply(ipv4_reply);
+		bool rejected = false;
+		try {
+			p2p::Socks5::validate_method(common::BinaryArray{5, 0xff});
+		} catch (const std::runtime_error &) {
+			rejected = true;
+		}
+		invariant(rejected, "SOCKS5 authentication rejection was accepted");
+		rejected = false;
+		try {
+			p2p::Socks5::connect_reply_size(common::BinaryArray{5, 5, 0, 1});
+		} catch (const std::runtime_error &) {
+			rejected = true;
+		}
+		invariant(rejected, "SOCKS5 destination rejection was accepted");
+		std::cout << "  [jade] SOCKS5 numeric-target framing and rejection checks ok" << std::endl;
 	}
 
 	std::cout << "  test_jade_consensus: OK" << std::endl;

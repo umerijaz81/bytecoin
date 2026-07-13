@@ -35,7 +35,9 @@ unreachable until the release gates below are independently satisfied.
    embargo/fluff recovery, hop limits, disconnect recovery, legacy-peer fallback and parser/policy
    coverage. Remaining: peer scoring, multi-node adversarial topology simulation, fuzz soak and
    independent network-privacy review.
-2. Explicit SOCKS5/Tor/I2P-capable outbound transport with DNS-leak prevention and integration tests.
+2. Fail-closed no-auth SOCKS5 outbound transport is implemented with numeric proxy/peer addresses,
+   bounded negotiation and no local destination lookup. Remaining: Tor/I2P integration tests,
+   hidden-service address support, leak testing and independent review.
 3. A separately reviewed RandomX fork transition with deterministic vectors for node and miner,
    activation/reorg tests and multi-architecture benchmarks.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation

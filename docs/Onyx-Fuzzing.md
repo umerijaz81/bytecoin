@@ -9,7 +9,7 @@ build-fuzz/fuzzer corpus/ -artifact_prefix=artifacts/
 ```
 
 Each input starts with a one-byte selector followed by the bytes passed to the target parser. Restored
-selectors `0..15` cover Levin handshake, sync, relay, stem-relay and object messages; `128..137` cover consensus
+selectors `0..16` cover Levin handshake, sync, relay, stem-relay, SOCKS5 and object messages; `128..137` cover consensus
 binary objects including transactions and blocks; `200` covers JSON; and `201` covers addresses.
 
 Onyx-enabled builds additionally expose:

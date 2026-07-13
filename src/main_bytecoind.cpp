@@ -39,6 +39,7 @@ Options:
   --export-blocks=<folder-path>          Perform hot export of blockchain into specified folder as blocks.bin and blockindexes.bin, then exit. This overwrites existing files.
   --archive                              Work as an archive node [default: off].
   --disable-dandelion                    Disable Dandelion++ stem relay and diffuse transactions immediately.
+  --p2p-proxy=<ip:port>                  Route all outbound P2P connections through a no-auth SOCKS5 proxy.
   --paranoid-checks                      Perform consensus checks for blocks in checkpoints range (very slow sync))";
 
 int main(int argc, const char *argv[]) try {

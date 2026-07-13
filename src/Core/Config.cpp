@@ -77,6 +77,14 @@ Config::Config(common::CommandLine &cmd)
 	archive_omit_source_addresses = !cmd.get_bool("--archive-keep-source-addresses");
 	wallet_sync_privacy           = cmd.get_bool("--wallet-sync-privacy");
 	dandelion_enabled             = !cmd.get_bool("--disable-dandelion");
+	if (const char *pa = cmd.get("--p2p-proxy")) {
+		std::vector<NetworkAddress> proxy;
+		parse_peer_and_add_to_container(pa, proxy, "--p2p-proxy");
+		p2p_proxy = proxy.front();
+		if (p2p_proxy.port == 0)
+			throw ConfigError("Command line option --p2p-proxy port must be nonzero");
+		p2p_proxy_enabled = true;
+	}
 	if (net == "test") {
 		network_id.data[0] += 1;
 		p2p_bind_port += 1000;

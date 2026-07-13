@@ -8,6 +8,7 @@
 #include <map>
 #include "Core/Config.hpp"
 #include "PeerDB.hpp"
+#include "Socks5.hpp"
 #include "common/Invariant.hpp"
 #include "crypto/crypto.hpp"
 #include "platform/Time.hpp"
@@ -26,6 +27,7 @@ void P2PProtocol::update_my_port(uint16_t port) { return m_client->update_my_por
 P2PClient::P2PClient(bool incoming, D_handler &&d_handler)
     : sock([this](bool canread, bool canwrite) { advance_state(true); },
           std::bind(&P2PClient::on_socket_disconnect, this))
+    , socks5_timer([this]() { disconnect(std::string{}); })
     , incoming(incoming)
     , d_handler(std::move(d_handler))
     , buffer(RECOMMENDED_BUFFER_SIZE) {}
@@ -38,11 +40,76 @@ void P2PClient::set_protocol(std::unique_ptr<P2PProtocol> &&protocol) {
 	if (protocol_switch)
 		std::cout << "P2PClient::set_protocol protocol switch" << std::endl;
 	m_protocol = std::move(protocol);
-	if (m_protocol)
+	if (m_protocol && socks5_state == Socks5State::READY)
 		m_protocol->on_connect();
 }
 
+bool P2PClient::connect(const NetworkAddress &target, const NetworkAddress *proxy) {
+	address              = target;
+	socks5_output_offset = 0;
+	socks5_input.clear();
+	if (proxy == nullptr) {
+		socks5_timer.cancel();
+		socks5_state = Socks5State::READY;
+		socks5_output.clear();
+		return sock.connect(common::ip_address_to_string(target.ip), target.port);
+	}
+	socks5_state  = Socks5State::GREETING_WRITE;
+	socks5_output = p2p::Socks5::greeting();
+	socks5_timer.once(30);
+	const bool started = sock.connect(common::ip_address_to_string(proxy->ip), proxy->port);
+	if (!started)
+		socks5_timer.cancel();
+	return started;
+}
+
+bool P2PClient::advance_socks5() {
+	while (socks5_state != Socks5State::READY) {
+		if (socks5_state == Socks5State::GREETING_WRITE || socks5_state == Socks5State::CONNECT_WRITE) {
+			const size_t written = sock.write_some(
+			    socks5_output.data() + socks5_output_offset, socks5_output.size() - socks5_output_offset);
+			socks5_output_offset += written;
+			if (socks5_output_offset != socks5_output.size())
+				return false;
+			socks5_output.clear();
+			socks5_output_offset = 0;
+			socks5_input.clear();
+			socks5_state = socks5_state == Socks5State::GREETING_WRITE ? Socks5State::GREETING_READ
+			                                                              : Socks5State::CONNECT_READ;
+			continue;
+		}
+
+		size_t expected = 2;
+		if (socks5_state == Socks5State::CONNECT_READ)
+			expected = p2p::Socks5::connect_reply_size(socks5_input);
+		if (socks5_input.size() < expected) {
+			uint8_t bytes[32];
+			const size_t count = sock.read_some(bytes, std::min(expected - socks5_input.size(), sizeof(bytes)));
+			socks5_input.insert(socks5_input.end(), bytes, bytes + count);
+			if (socks5_input.size() < expected)
+				return false;
+		}
+		if (socks5_state == Socks5State::GREETING_READ) {
+			p2p::Socks5::validate_method(socks5_input);
+			socks5_output = p2p::Socks5::connect_ipv4(address);
+			socks5_input.clear();
+			socks5_state = Socks5State::CONNECT_WRITE;
+			continue;
+		}
+		expected = p2p::Socks5::connect_reply_size(socks5_input);
+		if (socks5_input.size() < expected)
+			continue;
+		p2p::Socks5::validate_connect_reply(socks5_input);
+		socks5_input.clear();
+		socks5_state = Socks5State::READY;
+		socks5_timer.cancel();
+	}
+	return true;
+}
+
 void P2PClient::write() {
+	if (socks5_state != Socks5State::READY)
+		return;
 	while (!responses.empty()) {
 		responses.front().copy_to(sock);
 		if (!responses.front().empty())
@@ -110,6 +177,7 @@ void P2PClient::send_shutdown() {
 }
 
 void P2PClient::disconnect(const std::string &ban_reason) {
+	socks5_timer.cancel();
 	buffer.clear();
 	receiving_body        = false;
 	request               = BinaryArray();
@@ -123,26 +191,28 @@ void P2PClient::disconnect(const std::string &ban_reason) {
 	d_handler(ban_reason);
 }
 
-bool P2PClient::test_connect(const NetworkAddress &addr) {
-	if (incoming)
-		return false;
-	if (!sock.connect(common::ip_address_to_string(addr.ip), addr.port))
-		return false;
-	address = addr;
-	return true;
-}
-
 bool P2PClient::is_connected() const { return sock.is_open(); }
 
 void P2PClient::advance_state(bool called_from_runloop) {
 	try {
+		if (socks5_state != Socks5State::READY) {
+			if (!advance_socks5())
+				return;
+			if (m_protocol)
+				m_protocol->on_connect();
+		}
+		if (!m_protocol)
+			return;
 		write();
 		if (responses.size() > 1)
 			return;  // keep outward queue busy with (one) response
 		// TODO - keep track of total number of bytes to send, read new data when that number is low enough
 		read(called_from_runloop);
 	} catch (const std::exception &ex) {
-		disconnect("advance_state exception ex=" + common::what(ex));
+		if (socks5_state != Socks5State::READY)
+			disconnect(std::string{});  // A local proxy failure must not ban the destination peer.
+		else
+			disconnect("advance_state exception ex=" + common::what(ex));
 	}
 }
 
@@ -208,10 +278,10 @@ bool P2P::connect_one(const NetworkAddress &address) {
 		next_client[incoming]->d_handler =
 		    std::bind(&P2P::on_client_disconnected, this, next_client[incoming].get(), _1);
 	}
-	if (!next_client[incoming]->sock.connect(common::ip_address_to_string(address.ip), address.port)) {
+	const NetworkAddress *proxy = m_config.p2p_proxy_enabled ? &m_config.p2p_proxy : nullptr;
+	if (!next_client[incoming]->connect(address, proxy)) {
 		return false;
 	}
-	next_client[incoming]->address = address;
 	P2PClient *who                 = next_client[incoming].get();
 	clients[incoming][who]         = std::move(next_client[incoming]);
 	m_log(logging::DEBUGGING) << "Connecting to=" << common::ip_address_and_port_to_string(address.ip, address.port);
@@ -279,6 +349,9 @@ P2P::P2P(logging::ILogger &log, const Config &config, PeerDB &peers, client_fact
 		m_log(logging::WARNING) << " failed to create listening socket, what=" << common::what(ex)
 		                        << ", working with outbound connections only";
 	}
+	if (config.p2p_proxy_enabled)
+		m_log(logging::INFO) << "Outbound P2P SOCKS5 proxy " << config.p2p_proxy
+		                     << " enabled; direct fallback disabled";
 	connect_all();
 	accept_all();
 }

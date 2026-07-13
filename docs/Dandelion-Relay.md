@@ -24,10 +24,10 @@ continue to interoperate through the existing transaction diffusion message.
 ## Security boundary
 
 Dandelion++ raises the cost of simple first-spy source correlation. It does not hide node IP addresses,
-defeat a sufficiently dense Sybil observer, or replace Tor/I2P. The current implementation still needs
+defeat a sufficiently dense Sybil observer, or replace Tor/I2P. Outbound P2P can be routed through a
+SOCKS5 proxy with `--p2p-proxy`; see `docs/SOCKS5-Proxy.md`. The current implementation still needs
 adversarial multi-node topology tests, long-running sanitizer fuzzing, testnet soak, peer-scoring
-policy and independent review before release. Proxy transport must separately prevent DNS and direct-
-connection leaks before operators can treat it as an anonymous-transport boundary.
+policy and independent review before release.
 
 The protocol constants are intentionally conservative defaults, not consensus rules. Changing them
 does not change transaction validity, but wire-version changes must remain negotiated to preserve
