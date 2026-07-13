@@ -11,6 +11,7 @@
 #include "common/ConsoleTools.hpp"
 #include "common/Varint.hpp"
 #include "crypto/crypto.hpp"
+#include "crypto/RandomX.hpp"
 #include "http/Agent.hpp"
 #include "http/JsonRpc.hpp"
 #include "platform/Network.hpp"
@@ -90,6 +91,7 @@ public:
 	platform::Timer submit_retry;
 
 	crypto::CryptoNightContext crypto_context;
+	crypto::RandomXContext randomx_context;
 	BlockTemplate block{};
 	api::cnd::GetBlockTemplate::Response block_response;
 	api::cnd::GetCurrencyId::Response currencyid_response;
@@ -148,7 +150,12 @@ public:
 			auto body_proxy  = get_body_proxy_from_template(block);
 			pow_hashing_data = get_block_pow_hashing_data(block, body_proxy, currencyid_response.currency_id_blob);
 		}
-		Hash hash = crypto_context.cn_slow_hash(pow_hashing_data.data(), pow_hashing_data.size());
+		Hash hash;
+		if (block_response.pow_algorithm == "randomx-v2")
+			hash = randomx_context.hash(
+			    block_response.pow_seed_hash, pow_hashing_data.data(), pow_hashing_data.size());
+		else
+			hash = crypto_context.cn_slow_hash(pow_hashing_data.data(), pow_hashing_data.size());
 		if (check_hash(hash, difficulty)) {
 			common::console::set_text_color(common::console::BrightGreen);
 			std::cout << "Miner found block !!!, will send ASAP" << std::endl;
@@ -253,6 +260,12 @@ public:
 			    api::cnd::GetBlockTemplate::Response resp;
 			    json_rpc::Error err_resp;
 			    if (json_rpc::parse_response(response.body, resp, err_resp)) {
+				    if (resp.pow_algorithm != "cryptonight" && resp.pow_algorithm != "randomx-v2") {
+					    std::cout << "Unsupported proof-of-work algorithm '" << resp.pow_algorithm
+					              << "' (will retry in 10 sec)" << std::endl;
+					    getwork_retry.once(10);
+					    return;
+				    }
 				    if (!mining_config.cm)
 					    for (size_t i = 0; i != mining_config.boast.size(); ++i)
 						    resp.blocktemplate_blob.at(resp.reserved_offset + i) = mining_config.boast[i];
@@ -267,7 +280,8 @@ public:
 					    nonce = 0;
 				    }
 				    std::cout << "Miner received getblocktemplate difficulty=" << difficulty
-				              << " top_block_hash=" << resp.top_block_hash << " #tx=" << block.transaction_hashes.size()
+				              << " algorithm=" << resp.pow_algorithm << " top_block_hash=" << resp.top_block_hash
+				              << " #tx=" << block.transaction_hashes.size()
 				              << std::endl;
 				    for (const auto &ha : block.transaction_hashes)
 					    std::cout << "tx=" << ha << std::endl;

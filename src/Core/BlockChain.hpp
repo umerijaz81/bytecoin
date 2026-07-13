@@ -83,6 +83,7 @@ public:
 
 	void for_each_reversed_tip_segment(const api::BlockHeader &prev_info, Height window, bool add_genesis,
 	    std::function<void(const api::BlockHeader &header)> &&fun) const;
+	Hash get_ancestor_hash(const api::BlockHeader &prev_info, Height height) const;
 
 	bool get_chain(Height height, Hash *bid) const;
 	bool in_chain(Height height, Hash bid) const;

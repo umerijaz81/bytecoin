@@ -744,6 +744,8 @@ void ser_members(api::cnd::GetBlockTemplate::Response &v, ISeria &s) {
 	seria_kv("top_block_hash", v.top_block_hash, s);
 	seria_kv("transaction_pool_version", v.transaction_pool_version, s);
 	seria_kv("previous_block_hash", v.previous_block_hash, s);
+	seria_kv_optional("pow_algorithm", v.pow_algorithm, s);
+	seria_kv_optional("pow_seed_hash", v.pow_seed_hash, s);
 	seria_kv("cm_prehash", v.cm_prehash, s);
 	seria_kv("cm_path", v.cm_path, s);
 }

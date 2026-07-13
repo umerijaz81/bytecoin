@@ -80,6 +80,7 @@ Currency::Currency(const Config &config)
     , jade_transaction_version(TRANSACTION_VERSION_JADE)
     , onyx_block_version(BLOCK_VERSION_ONYX)
     , onyx_transaction_version(TRANSACTION_VERSION_ONYX)
+    , randomx_switch_height(RANDOMX_SWITCH_HEIGHT)
     , upgrade_vote_minor(9)
     , upgrade_desired_major(4)
     , upgrade_voting_window(UPGRADE_VOTING_WINDOW)
@@ -158,6 +159,16 @@ Currency::Currency(const Config &config)
 }
 
 Height Currency::upgrade_votes_required() const { return upgrade_voting_window * UPGRADE_VOTING_PERCENT / 100; }
+
+bool Currency::uses_randomx(uint8_t block_major_version, Height height) const {
+	return block_major_version >= jade_block_version && height >= randomx_switch_height;
+}
+
+Height Currency::randomx_seed_height(Height height) const {
+	if (height <= RANDOMX_SEED_LAG)
+		return 0;
+	return ((height - RANDOMX_SEED_LAG) / RANDOMX_SEED_EPOCH) * RANDOMX_SEED_EPOCH;
+}
 
 Height Currency::timestamp_check_window(uint8_t block_major_version) const {
 	if (block_major_version >= amethyst_block_version)

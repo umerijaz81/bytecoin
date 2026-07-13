@@ -20,6 +20,7 @@
 #include "../tests/crypto/benchmarks.hpp"
 #include "../tests/crypto/test_crypto.hpp"
 #include "../tests/hash/test_hash.hpp"
+#include "../tests/hash/test_randomx.hpp"
 #include "../tests/json/test_json.hpp"
 
 #ifndef __EMSCRIPTEN__
@@ -104,6 +105,7 @@ int main(int argc, const char *argv[]) {
 	all["--bip32"]     = test_bip32;
 	all["--benchmark"] = std::bind(benchmark_crypto_ops, 10000, std::ref(std::cout));
 	all["--hash"]      = std::bind(test_hashes, test_folder + "/hash");
+	all["--randomx"]   = test_randomx;
 #ifndef __EMSCRIPTEN__
 	all["--blockchain"]   = std::bind(test_blockchain, std::ref(cmd));
 	all["--jade"]         = std::bind(test_jade_consensus, std::ref(cmd));

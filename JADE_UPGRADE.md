@@ -66,13 +66,12 @@ re-architecting.
   double-spend); laptop-class verification-cost benchmark.
 
 ### Phase 5 — RandomX PoW (laptop mineability)
-- **Vendor:** upstream `tevador/RandomX` under `vendor/` (CMake `SRC_CRYPTO` glob auto-includes
-  crypto sources, `CMakeLists.txt`).
-- **Seam:** the single PoW entry `CryptoNightContext::cn_slow_hash` (`src/crypto/hash.hpp`) called
-  at `BlockChainState.cpp` PoW check; dispatch on `block.header.major_version` /
-  `RANDOMX_SWITCH_HEIGHT` so pre-fork blocks keep CryptoNight. Update `src/main_miner.cpp` and the
-  PoW-hashing-data path (`Currency.cpp`, `CryptoNote.cpp`). Keep PoW output ≥256-bit (Grover-safe).
-- **Test:** testnet mine+verify above the switch height; pre-switch blocks still validate.
+- **Implemented, activation pending:** upstream RandomX v2.0.1 is pinned under `vendor/randomx` and
+  selected only at the dormant Jade/height boundary. Node and miner share the canonical hashing blob,
+  explicit RPC algorithm/seed fields and a 2,048-block epoch with a 64-block ancestor delay. Side-chain
+  validation derives the seed from that branch. See `docs/RandomX-Transition.md`.
+- **Remaining:** independent consensus review, full-memory multi-thread miner work, multi-architecture
+  vectors, epoch-boundary reorg tests, benchmarks and public testnet activation/soak.
 
 ### Phase 6 — Post-quantum crypto-agility (addresses Q-1)
 - **Seam:** the version/scheme dispatch at `ser_members(TransactionSignatures)`

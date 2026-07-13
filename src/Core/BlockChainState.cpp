@@ -452,7 +452,13 @@ void BlockChainState::check_consensus(
 	Hash pow_hash = pb.pow_hash;
 	if (pow_hash == Hash{}) {  // We did not calculate this long hash in parallel
 		auto ba  = m_currency.get_block_pow_hashing_data(block.header, pb.body_proxy);
-		pow_hash = m_hash_crypto_context.cn_slow_hash(ba.data(), ba.size());
+		if (m_currency.uses_randomx(block.header.major_version, info->height)) {
+			const Height seed_height = m_currency.randomx_seed_height(info->height);
+			const Hash seed = get_ancestor_hash(prev_info, seed_height);
+			pow_hash = m_randomx_context.hash(seed, ba.data(), ba.size());
+		} else {
+			pow_hash = m_hash_crypto_context.cn_slow_hash(ba.data(), ba.size());
+		}
 	}
 	if (!check_hash(pow_hash, info->difficulty)) {
 		auto prehash = get_block_header_prehash(block.header, pb.body_proxy);

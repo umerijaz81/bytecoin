@@ -239,5 +239,20 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		std::cout << "  [jade] SOCKS5 numeric-target framing and rejection checks ok" << std::endl;
 	}
 
+	// 10. RandomX seed epochs are deterministic and always lag the block being validated.
+	{
+		invariant(currency.uses_randomx(currency.jade_block_version, currency.randomx_switch_height),
+		    "RandomX is not active at its versioned switch height");
+		invariant(!currency.uses_randomx(currency.amethyst_block_version, currency.randomx_switch_height),
+		    "RandomX activated for a legacy block version");
+		invariant(currency.randomx_seed_height(63) == 0 && currency.randomx_seed_height(64) == 0 &&
+		              currency.randomx_seed_height(2111) == 0 && currency.randomx_seed_height(2112) == 2048,
+		    "RandomX 2048-block seed epoch or 64-block lag changed");
+		const Height activation_seed = currency.randomx_seed_height(currency.randomx_switch_height);
+		invariant(activation_seed < currency.randomx_switch_height,
+		    "RandomX activation seed is not an ancestor");
+		std::cout << "  [jade] RandomX activation and delayed seed-height rules ok" << std::endl;
+	}
+
 	std::cout << "  test_jade_consensus: OK" << std::endl;
 }

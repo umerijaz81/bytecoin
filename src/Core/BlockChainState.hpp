@@ -6,6 +6,7 @@
 #include <set>
 #include <unordered_map>
 #include "BlockChain.hpp"
+#include "crypto/RandomX.hpp"
 #include "Multicore.hpp"
 #include "crypto/hash.hpp"
 
@@ -162,6 +163,7 @@ private:
 
 	const size_t m_max_pool_size;
 	mutable crypto::CryptoNightContext m_hash_crypto_context;
+	mutable crypto::RandomXContext m_randomx_context;
 	mutable std::unordered_map<Amount, size_t> m_next_stack_index;
 	// Read from db on first use, write on modification
 

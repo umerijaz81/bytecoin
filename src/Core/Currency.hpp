@@ -71,6 +71,9 @@ public:
 	uint8_t jade_transaction_version;
 	uint8_t onyx_block_version;
 	uint8_t onyx_transaction_version;
+	Height randomx_switch_height;
+	bool uses_randomx(uint8_t block_major_version, Height height) const;
+	Height randomx_seed_height(Height height) const;
 
 	// upgrade voting threshold must not be reached before or at last sw checkpoint!
 	uint8_t upgrade_vote_minor;

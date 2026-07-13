@@ -58,6 +58,8 @@ endif()
     endif()
 endif()
 include_directories(vendor)
+include_directories(vendor/randomx/src)
+add_subdirectory(vendor/randomx EXCLUDE_FROM_ALL)
 set(SRC_NO_WARNINGS vendor/sqlite/sqlite3.c)
 set(SRC_DB src/platform/DBsqlite3.cpp src/platform/DBsqlite3.hpp src/platform/DBmemory.cpp src/platform/DBmemory.hpp)
 if(USE_SQLITE)
@@ -223,7 +225,7 @@ if(APPLE)
     link_libraries(-dead_strip  "-framework Foundation")
 endif()
 add_library(bytecoin-core ${SOURCE_FILES})
-target_link_libraries(bytecoin-core bytecoin-crypto ${HID_LIBRARY})
+target_link_libraries(bytecoin-core bytecoin-crypto randomx ${HID_LIBRARY})
 if(ONYX_ZK)
     add_dependencies(bytecoin-core onyx_zk_build)
     target_link_libraries(bytecoin-core onyx_zk)
@@ -253,6 +255,7 @@ add_executable(tests src/main_tests.cpp tests/io.hpp tests/Random.hpp
         tests/blockchain/test_jade_consensus.cpp tests/blockchain/test_jade_consensus.hpp
         tests/crypto/test_crypto.cpp tests/crypto/test_crypto.hpp
         tests/hash/test_hash.cpp tests/hash/test_hash.hpp
+        tests/hash/test_randomx.cpp tests/hash/test_randomx.hpp
         tests/json/test_json.cpp tests/json/test_json.hpp
         tests/wallet_state/test_wallet_state.cpp tests/wallet_state/test_wallet_state.hpp
         tests/wallet_file/test_wallet_file.cpp tests/wallet_file/test_wallet_file.hpp tests/crypto/benchmarks.cpp tests/crypto/benchmarks.hpp

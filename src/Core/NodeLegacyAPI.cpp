@@ -149,6 +149,12 @@ void Node::getblocktemplate(const api::cnd::GetBlockTemplate::Request &req, api:
 	res.top_block_hash           = m_block_chain.get_tip_bid();
 	res.transaction_pool_version = m_block_chain.get_tx_pool_version();
 	res.previous_block_hash      = m_block_chain.get_tip().previous_block_hash;
+	if (m_block_chain.get_currency().uses_randomx(block_template.major_version, res.height)) {
+		res.pow_algorithm = "randomx-v2";
+		const Height seed_height = m_block_chain.get_currency().randomx_seed_height(res.height);
+		invariant(m_block_chain.get_chain(seed_height, &res.pow_seed_hash),
+		    "RandomX seed block is missing from the active chain");
+	}
 #if bytecoin_ALLOW_CM
 	// Experimental, a bit hacky
 	if (block_template.major_version >= m_block_chain.get_currency().amethyst_block_version) {

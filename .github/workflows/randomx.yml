@@ -1,0 +1,42 @@
+name: RandomX backend
+
+on:
+  push:
+    paths:
+      - ".github/workflows/randomx.yml"
+      - "src/crypto/RandomX.*"
+      - "tests/hash/test_randomx.*"
+      - "vendor/randomx/**"
+  pull_request:
+    paths:
+      - ".github/workflows/randomx.yml"
+      - "src/crypto/RandomX.*"
+      - "tests/hash/test_randomx.*"
+      - "vendor/randomx/**"
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-v2-tests:
+    name: upstream v2 tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: build-randomx/randomx-tests
+          - os: macos-latest
+            executable: build-randomx/randomx-tests
+          - os: windows-latest
+            executable: build-randomx/Release/randomx-tests.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure pinned RandomX
+        run: cmake -S vendor/randomx -B build-randomx
+      - name: Build upstream tests
+        run: cmake --build build-randomx --config Release --target randomx-tests
+      - name: Run RandomX v2 vectors
+        shell: bash
+        run: ./${{ matrix.executable }} --v2

@@ -1006,6 +1006,8 @@ struct GetBlockTemplate {
 		Hash top_block_hash;                  // for longpoll in v3 - behaves like GetStatus
 		size_t transaction_pool_version = 0;  // for longpoll in v3 - behaves like GetStatus
 		Hash previous_block_hash;             // Deprecated, used by some legacy miners.
+		std::string pow_algorithm = "cryptonight";
+		Hash pow_seed_hash;
 
 		Hash cm_prehash;  // experimental stuff for CM
 		Hash cm_path;     // experimental stuff for CM, usually equals to result of GetCurrencyId

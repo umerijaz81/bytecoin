@@ -3,6 +3,7 @@
 
 #include "BlockChain.hpp"
 
+#include <chrono>
 #include <iostream>
 #include "Config.hpp"
 #include "CryptoNoteTools.hpp"
@@ -107,7 +108,8 @@ void PreparedBlock::prepare(const Currency &currency, crypto::CryptoNightContext
 		    "Coinbase transaction input count wrong,", block.header.base_transaction.inputs.size(), "should be 1"));
 	if (block.header.base_transaction.inputs.at(0).type() != typeid(InputCoinbase))
 		throw ConsensusError("Coinbase transaction input type wrong");
-	if (context) {
+	const auto coinbase = boost::get<InputCoinbase>(block.header.base_transaction.inputs.at(0));
+	if (context && !currency.uses_randomx(block.header.major_version, coinbase.height)) {
 		auto ba  = currency.get_block_pow_hashing_data(block.header, body_proxy);
 		pow_hash = context->cn_slow_hash(ba.data(), ba.size());
 	}
@@ -635,6 +637,22 @@ void BlockChain::for_each_reversed_tip_segment(const api::BlockHeader &prev_info
 		    header->height == 0, "Invariant dead - window size not reached, but genesis not found in get_tip_segment");
 		fun(*header);
 	}
+}
+
+Hash BlockChain::get_ancestor_hash(const api::BlockHeader &prev_info, Height height) const {
+	if (height > prev_info.height)
+		throw std::runtime_error("Requested ancestor is above the parent block");
+	Hash result{};
+	bool found = false;
+	for_each_reversed_tip_segment(prev_info, prev_info.height - height + 1, true,
+	    [&](const api::BlockHeader &header) {
+		    if (header.height == height) {
+			    result = header.hash;
+			    found  = true;
+		    }
+	    });
+	invariant(found, "RandomX seed ancestor was not found");
+	return result;
 }
 
 // std::vector<api::BlockHeader> BlockChain::get_tip_segment(

@@ -38,8 +38,10 @@ unreachable until the release gates below are independently satisfied.
 2. Fail-closed no-auth SOCKS5 outbound transport is implemented with numeric proxy/peer addresses,
    bounded negotiation and no local destination lookup. Remaining: Tor/I2P integration tests,
    hidden-service address support, leak testing and independent review.
-3. A separately reviewed RandomX fork transition with deterministic vectors for node and miner,
-   activation/reorg tests and multi-architecture benchmarks.
+3. A dormant, versioned RandomX v2.0.1 transition is integrated for node and bundled miner with
+   delayed branch-derived seed epochs, explicit template negotiation and a repository KAT. Remaining:
+   independent review, full-memory miner work, activation/reorg integration tests, multi-architecture
+   vectors and benchmarks.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.
 5. Backend agility uses explicit versioned hard forks. A post-quantum backend is not considered
