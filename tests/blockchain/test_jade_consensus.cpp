@@ -27,6 +27,8 @@ using namespace cn;
 static Transaction build_tx(uint8_t version, size_t ring_size) {
 	Transaction tx;
 	tx.version = version;
+	if (version == parameters::TRANSACTION_VERSION_JADE)
+		tx.signature_scheme = static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING);
 
 	InputKey in;
 	in.amount    = 1000;
@@ -107,7 +109,53 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		std::cout << "  [jade] unknown transaction version rejected: " << what << std::endl;
 	}
 
-	// 6. Onyx transaction V6 is a bounded opaque envelope and round-trips without invoking legacy
+	// 6. Jade carries an explicit, prefix-bound authorization scheme. Inactive registered schemes
+	//    and unregistered wire identifiers both fail closed, while Amethyst bytes remain unchanged.
+	{
+		const size_t good = currency.minimum_anonymity(jade) + 1;
+		Transaction jade_tx = build_tx(currency.jade_transaction_version, good);
+		const common::BinaryArray jade_prefix = seria::to_binary(static_cast<const TransactionPrefix &>(jade_tx));
+		invariant(jade_prefix.size() > 1 && jade_prefix[1] ==
+		        static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING),
+		    "Jade signature scheme is not encoded immediately after the transaction version");
+
+		Transaction inactive = jade_tx;
+		inactive.signature_scheme = static_cast<uint8_t>(TransactionSignatureScheme::RESERVED_HYBRID_PQ);
+		invariant(get_transaction_prefix_hash(inactive) != get_transaction_prefix_hash(jade_tx),
+		    "Jade signature scheme is not bound into the signed prefix");
+		const bool inactive_rejected = semantic_rejects(currency, jade, inactive, &what);
+		invariant(inactive_rejected, "Jade accepted an inactive registered signature scheme");
+		bool inactive_wire_rejected = false;
+		try {
+			(void)seria::to_binary(inactive);
+		} catch (const std::exception &) {
+			inactive_wire_rejected = true;
+		}
+		invariant(inactive_wire_rejected, "Jade serialized signatures for an inactive registered scheme");
+
+		Transaction unknown = jade_tx;
+		unknown.signature_scheme = 0xff;
+		bool unknown_rejected = false;
+		try {
+			(void)seria::to_binary(static_cast<const TransactionPrefix &>(unknown));
+		} catch (const std::exception &) {
+			unknown_rejected = true;
+		}
+		invariant(unknown_rejected, "Jade serialized an unregistered signature scheme");
+
+		Transaction amethyst = build_tx(currency.amethyst_transaction_version, good);
+		const common::BinaryArray amethyst_before = seria::to_binary(static_cast<const TransactionPrefix &>(amethyst));
+		amethyst.signature_scheme = 0xff;  // Not a V4 wire field.
+		const common::BinaryArray amethyst_after = seria::to_binary(static_cast<const TransactionPrefix &>(amethyst));
+		invariant(amethyst_before == amethyst_after, "Jade scheme registry changed pre-Jade transaction bytes");
+		TransactionPrefix empty_amethyst;
+		empty_amethyst.version = parameters::TRANSACTION_VERSION_AMETHYST;
+		invariant(seria::to_binary(empty_amethyst) == common::BinaryArray({0x04, 0x00, 0x00, 0x00, 0x00}),
+		    "Amethyst V4 prefix compatibility vector changed");
+		std::cout << "  [jade] explicit signature scheme is prefix-bound and fail-closed" << std::endl;
+	}
+
+	// 7. Onyx transaction V6 is a bounded opaque envelope and round-trips without invoking legacy
 	// input/output/signature serialization. Block major version 6 remains skipped/reserved.
 	{
 		Transaction tx;
@@ -119,6 +167,9 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(decoded.version == tx.version && decoded.onyx_type == parameters::ONYX_TYPE_TRANSFER &&
 		              decoded.onyx_envelope == tx.onyx_envelope,
 		    "Onyx opaque envelope did not round-trip");
+		invariant(get_transaction_hash(tx) == crypto::cn_fast_hash(encoded.data(), encoded.size()) &&
+		              get_transaction_hash(decoded) == get_transaction_hash(tx),
+		    "Onyx transaction hash is not the hash of its canonical envelope encoding");
 		tx.onyx_type = parameters::ONYX_TYPE_BRIDGE;
 		const common::BinaryArray bridge_encoded = seria::to_binary(tx);
 		seria::from_binary(decoded, bridge_encoded);

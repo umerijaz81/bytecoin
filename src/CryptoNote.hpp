@@ -71,9 +71,29 @@ typedef boost::variant<OutputKey> TransactionOutput;
 // Beware - amount is serialized before variant tag. We cannot fix it easily without advancing transaction version
 // We've broken compatibility in amethyst, bringing amount inside variant part
 
+// Stable consensus registry for transaction authorization schemes. Values are serialized only in Jade (V5),
+// inside the signed transaction prefix. Never renumber an entry. A registered value is not necessarily active:
+// consensus activates exactly one scheme per transaction version so unsupported backends fail closed.
+enum class TransactionSignatureScheme : uint8_t {
+	LEGACY_RING_IMPLICIT       = 0,
+	AMETHYST_LINKABLE_RING     = 1,
+	ONYX_AUTHORIZED_PROOF      = 2,
+	RESERVED_HYBRID_PQ         = 16,
+};
+
+inline bool is_registered_signature_scheme(uint8_t value) {
+	return value == static_cast<uint8_t>(TransactionSignatureScheme::LEGACY_RING_IMPLICIT) ||
+	       value == static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING) ||
+	       value == static_cast<uint8_t>(TransactionSignatureScheme::ONYX_AUTHORIZED_PROOF) ||
+	       value == static_cast<uint8_t>(TransactionSignatureScheme::RESERVED_HYBRID_PQ);
+}
+
 struct TransactionPrefix {
 	// version is serialized as varint, but value > 127 will throw on parsing
 	uint8_t version                            = 0;
+	// Serialized only in Jade V5. V1-V4 retain their byte-for-byte implicit authorization formats;
+	// Onyx V6 carries and binds its proof backend identifier inside the canonical opaque envelope.
+	uint8_t signature_scheme = static_cast<uint8_t>(TransactionSignatureScheme::LEGACY_RING_IMPLICIT);
 	BlockOrTimestamp unlock_block_or_timestamp = 0;  // In jade, only 1st output is locked
 	std::vector<TransactionInput> inputs;
 	std::vector<TransactionOutput> outputs;

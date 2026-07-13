@@ -159,6 +159,9 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 	    !is_tx_jade && !(coinbase && tx.version == 1))
 		throw ConsensusError(common::to_string(
 		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
+	if (is_tx_jade &&
+	    tx.signature_scheme != static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING))
+		throw ConsensusError("Transaction signature scheme is not active for Jade");
 	if (is_tx_onyx) {
 		if (coinbase || block_major_version < currency.onyx_block_version)
 			throw ConsensusError("Onyx transaction before activation or in coinbase");

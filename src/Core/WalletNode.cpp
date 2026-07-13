@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include "Config.hpp"
+#include "CryptoNoteConfig.hpp"
 #include "CryptoNoteTools.hpp"
 #include "TransactionBuilder.hpp"
 #include "TransactionExtra.hpp"
@@ -751,12 +752,14 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 	const auto good_anonymity = std::max(min_anonymity, request.transaction.anonymity);
 	Height confirmed_height   = api::ErrorWrongHeight::fix_height_or_depth(
         request.confirmed_height_or_depth, get_wallet_state().get_tip_height(), true, false);
-	bool is_amethyst = false;
+	const bool is_jade = get_wallet_state().get_tip().major_version >= m_currency.jade_block_version;
+	bool is_amethyst   = is_jade;
 	{
 		api::BlockHeader confirmed_header;
-		if (get_wallet_state().read_chain(confirmed_height, &confirmed_header) &&
-		    confirmed_header.major_version >= m_currency.amethyst_block_version)
-			is_amethyst = true;
+		if (get_wallet_state().read_chain(confirmed_height, &confirmed_header))
+			is_amethyst = confirmed_header.major_version >= m_currency.amethyst_block_version;
+		if (is_jade)
+			is_amethyst = true;  // Jade can spend outputs confirmed before the fork, but must emit V5.
 	}
 	if (!request.fee_per_byte) {
 		if (m_wallet_sync->get_last_node_status().recommended_fee_per_byte == 0)
@@ -795,7 +798,11 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 		only_records.insert(addr);
 	}
 	TransactionBuilder builder;
-	builder.m_transaction.version = is_amethyst ? m_currency.amethyst_transaction_version : uint8_t(1);
+	builder.m_transaction.version = is_jade ? m_currency.jade_transaction_version
+	                                       : is_amethyst ? m_currency.amethyst_transaction_version : uint8_t(1);
+	if (is_jade)
+		builder.m_transaction.signature_scheme =
+		    static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING);
 	builder.m_transaction.unlock_block_or_timestamp = request.transaction.unlock_block_or_timestamp;
 	if (request.transaction.payment_id != Hash{})
 		extra::add_payment_id(builder.m_transaction.extra, request.transaction.payment_id);

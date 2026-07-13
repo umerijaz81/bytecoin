@@ -24,6 +24,7 @@ future so current Amethyst/V4 consensus is unchanged until a fork is scheduled a
 | CSPRNG periodic reseed + deterministic-test guard (L-1) | `src/crypto/random.{c,h}` | covered by `--crypto` vectors staying stable |
 | Archive omits peer source IPs by default (M-1) | `src/Core/Archive.{hpp,cpp}`, `BlockChain.cpp`, `Config.{hpp,cpp}` (`--archive-keep-source-addresses`) | build/link |
 | Wallet-sync privacy mode hides wallet age + sparse_chain (M-2) | `src/Core/WalletSync.cpp`, `Config.{hpp,cpp}` (`--wallet-sync-privacy`) | build/link |
+| Jade authorization-scheme registry: stable one-byte ID in the signed V5 prefix, fail-closed inactive/unknown dispatch, unchanged V1-V4 and Onyx bytes | `TransactionSignatureScheme`, `ser_members(TransactionPrefix/Transaction)`, `validate_tx_semantic`, wallet V5 construction | `./bin/tests --jade` compatibility/negative vectors |
 
 The headline result, from `./bin/tests --jade`:
 
@@ -74,12 +75,18 @@ re-architecting.
   vectors, epoch-boundary reorg tests, benchmarks and public testnet activation/soak.
 
 ### Phase 6 — Post-quantum crypto-agility (addresses Q-1)
-- **Seam:** the version/scheme dispatch at `ser_members(TransactionSignatures)`
-  (`src/CryptoNote.cpp:240`) is generalized into an explicit signature-scheme id, so a vendored,
-  standardized PQ signature (e.g. ML-DSA/Dilithium or a hash-based scheme) slots in as a spend-time
-  authenticator. Commit hash-based bindings to public keys so funds aren't exposed until spend
-  ("harvest-now-decrypt-later" mitigation). Full PQ *ring* privacy is open research industry-wide;
-  scope = agility + PQ authenticator, **not** quantum-unbreakable privacy.
+- **Implemented seam:** Jade V5 serializes a stable one-byte `TransactionSignatureScheme` identifier
+  immediately after the version in `TransactionPrefix`. The identifier is therefore covered by the
+  spend signature. V1-V4 retain their exact implicit formats, and Onyx keeps its already-bound backend
+  identifier inside the canonical envelope. Jade currently activates only
+  `AMETHYST_LINKABLE_RING`; unregistered identifiers fail during parsing/serialization and registered
+  but inactive identifiers fail consensus validation. Walletd now emits V5 plus the active identifier
+  after Jade activation instead of continuing to construct V4 transactions.
+- **Reserved, not implemented:** `RESERVED_HYBRID_PQ` is a registry allocation only. Activating it
+  requires a separately versioned transaction format, a peer-reviewed vendored standardized PQ
+  implementation, public-key commitment/migration rules, hybrid downgrade protection, size/cost
+  limits, vectors and external review. Full PQ *ring* privacy remains open research; scope is agility
+  plus a PQ authenticator, **not** quantum-unbreakable privacy.
 
 ### Network privacy (transport, no consensus impact) — Dandelion++ & Tor
 - **Dandelion++ (implemented, validation pending):** negotiated P2P v5 stem relay uses a stable random

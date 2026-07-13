@@ -44,9 +44,11 @@ unreachable until the release gates below are independently satisfied.
    vectors and benchmarks.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.
-5. Backend agility uses explicit versioned hard forks. A post-quantum backend is not considered
-   implemented merely because an interface exists; key migration, address formats, proof/signature
-   sizes and hybrid transition rules require their own specification and audit.
+5. Jade V5 now binds a stable explicit authorization-scheme identifier into its signed prefix and
+   rejects unknown or inactive schemes; wallet construction follows the Jade transaction version at
+   activation. V1-V4 and the Onyx envelope encoding remain unchanged. The reserved hybrid-PQ registry
+   value is not an implementation: its algorithm/dependency selection, key migration, address/public-key
+   commitments, proof/signature sizes, hybrid downgrade rules, vectors and audit remain required.
 
 ### Release gates that cannot be completed by repository code alone
 

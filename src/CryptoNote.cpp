@@ -236,6 +236,9 @@ void ser_members(cn::TransactionSignatures &v, ISeria &s, const TransactionPrefi
 			v = boost::blank{};
 		return;  // No signatures in base transaction
 	}
+	if (prefix.version == parameters::TRANSACTION_VERSION_JADE &&
+	    prefix.signature_scheme != static_cast<uint8_t>(cn::TransactionSignatureScheme::AMETHYST_LINKABLE_RING))
+		throw std::runtime_error("Transaction signature scheme is not active for Jade");
 	s.object_key("signatures");
 	if (prefix.version >= parameters::TRANSACTION_VERSION_AMETHYST) {
 		s.begin_object();
@@ -304,6 +307,11 @@ void ser_members(TransactionPrefix &v, ISeria &s, bool is_root) {
 		s.binary(v.onyx_envelope.data(), size);
 		s.end_array();
 		return;
+	}
+	if (!is_root && v.version == parameters::TRANSACTION_VERSION_JADE) {
+		seria_kv_binary("signature_scheme", &v.signature_scheme, 1, s);
+		if (!cn::is_registered_signature_scheme(v.signature_scheme))
+			throw std::runtime_error("Unknown transaction signature scheme " + common::to_string(v.signature_scheme));
 	}
 	const bool is_tx_amethyst = (v.version >= parameters::TRANSACTION_VERSION_AMETHYST);
 	if (!is_root && v.version != 1 && !is_tx_amethyst)
@@ -532,6 +540,10 @@ Hash cn::get_transaction_prefix_hash(const TransactionPrefix &tx) {
 }
 
 Hash cn::get_transaction_hash(const Transaction &tx) {
+	if (tx.version == parameters::TRANSACTION_VERSION_ONYX) {
+		const BinaryArray canonical_envelope = seria::to_binary(tx);
+		return crypto::cn_fast_hash(canonical_envelope.data(), canonical_envelope.size());
+	}
 	if (tx.version >= parameters::TRANSACTION_VERSION_AMETHYST) {
 		std::pair<Hash, Hash> ha;
 		ha.first                = get_transaction_prefix_hash(tx);
