@@ -96,16 +96,20 @@ or malicious node operator.
 **Remediation:** Strongly prefer running a local node; document the remote-node deanonymization
 risk prominently; consider client-side decoy selection from a locally synced output set.
 
-#### C-5. No transaction-origin (network) privacy
-Transactions are flooded to all peers immediately, with no Dandelion(++) stem phase or relay
-delay:
+#### C-5. Transaction-origin (network) privacy — partially remediated
+The original implementation flooded locally submitted transactions to every peer immediately, which
+made first-seen correlation to the originating IP straightforward. P2P protocol v5 now negotiates a
+Dandelion++ stem message. A node chooses one outbound v5 stem peer for a rotating epoch, validates a
+received stem transaction before forwarding it, and diffuses it on a probabilistic fluff decision,
+the maximum-hop boundary, an embargo timeout, a loop, or downstream disconnect. Older peers receive
+only the existing diffusion message, and a node with no eligible v5 peer safely falls back to it.
 
-- `src/Core/Node.cpp:752-753` — on receipt, `broadcast(nullptr, raw_msg_v4)`.
-- `src/Core/Node.cpp:382-386` — `broadcast()` sends to every peer at once.
-
-A well-connected observer correlates first-seen propagation to the **originating IP address**.
-
-**Remediation:** Implement Dandelion++ relay; document Tor/I2P usage.
+This reduces first-spy correlation but does not provide transport anonymity. A Sybil observer,
+host/network telemetry, or a small adversarial topology can still identify origins. The implementation
+also still requires multi-node adversarial simulation, sustained fuzzing, testnet soak, peer-scoring
+work and independent review. Operators needing IP privacy must use a separately validated anonymous
+transport once proxy support is implemented; `--disable-dandelion` is an explicit privacy-reducing
+compatibility/debug option.
 
 ### MEDIUM / LOW
 
@@ -136,7 +140,7 @@ A well-connected observer correlates first-seen propagation to the **originating
 | C-2 | Critical | Per-denomination rings |
 | C-3 | Critical | Min ring size 3, not consensus-enforced (zero-mixin accepted) |
 | C-4 | Critical | Remote-node mode collapses the ring |
-| C-5 | Critical | No Dandelion / transaction-origin privacy |
+| C-5 | Critical, partially remediated | Dandelion++ implemented; transport anonymity and adversarial validation remain |
 | M-1 | Medium | Archive stores source IP per transaction |
 | M-2 | Medium | Wallet leaks creation timestamp + sparse chain |
 | L-1 | Low | CSPRNG seeded once, never reseeded |

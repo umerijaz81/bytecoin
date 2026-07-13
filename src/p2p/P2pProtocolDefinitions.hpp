@@ -87,6 +87,14 @@ struct RelayTransactions {
 	};
 };
 
+struct StemTransaction {
+	struct Notify {
+		enum { ID = BC_COMMANDS_POOL_BASE + 11, TYPE = LevinProtocol::NOTIFY, MAX_SIZE = 1152, MAX_HOPS = 20 };
+		TransactionDesc transaction_desc;
+		uint8_t hop = 0;
+	};
+};
+
 struct GetObjects {
 	// Request and Response have NOTIFY type for historic purposes
 	struct Request {
@@ -197,6 +205,7 @@ void ser_members(cn::p2p::TimedSync::Notify &v, seria::ISeria &s);
 void ser_members(cn::p2p::TimedSync::Response &v, seria::ISeria &s);
 void ser_members(cn::p2p::RelayBlock::Notify &v, seria::ISeria &s);
 void ser_members(cn::p2p::RelayTransactions::Notify &v, seria::ISeria &s);
+void ser_members(cn::p2p::StemTransaction::Notify &v, seria::ISeria &s);
 void ser_members(cn::p2p::GetObjects::Request &v, seria::ISeria &s);
 void ser_members(cn::p2p::GetObjects::Response &v, seria::ISeria &s);
 void ser_members(cn::p2p::GetChain::Request &v, seria::ISeria &s);

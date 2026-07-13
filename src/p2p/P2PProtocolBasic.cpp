@@ -44,6 +44,7 @@ const std::map<std::pair<uint32_t, LevinProtocol::CommandType>,
 #endif
         levin_pair<p2p::RelayBlock::Notify>(&P2PProtocolBasic::on_msg_notify_new_block),
         levin_pair<p2p::RelayTransactions::Notify>(&P2PProtocolBasic::on_msg_notify_new_transactions),
+        levin_pair<p2p::StemTransaction::Notify>(&P2PProtocolBasic::on_msg_notify_stem_transaction),
         levin_pair<p2p::SyncPool::Request>(&P2PProtocolBasic::on_msg_notify_request_tx_pool),
         levin_pair<p2p::SyncPool::Response>(&P2PProtocolBasic::on_msg_notify_request_tx_pool),
         levin_pair<p2p::GetChain::Request>(&P2PProtocolBasic::on_msg_notify_request_chain),
@@ -78,7 +79,7 @@ Timestamp P2PProtocolBasic::get_local_time() const { return platform::now_unix_t
 
 BasicNodeData P2PProtocolBasic::get_my_node_data() const {
 	BasicNodeData node_data;
-	node_data.version    = P2PProtocolVersion::AMETHYST;
+	node_data.version    = P2PProtocolVersion::DANDELION;
 	node_data.local_time = get_local_time();
 	node_data.peer_id    = my_unique_number;
 	node_data.my_port    = config.p2p_external_port;

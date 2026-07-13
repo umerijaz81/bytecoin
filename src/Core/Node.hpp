@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include "BlockChainState.hpp"
@@ -109,15 +110,24 @@ protected:
 	void send_multicast();
 	void on_multicast(const std::string &addr, const unsigned char *data, size_t size);
 
+	class P2PProtocolBytecoin;
 	const Timestamp m_start_time;
 	platform::Timer m_commit_timer;
 	void db_commit();
+	struct DandelionPending {
+		TransactionDesc desc;
+		P2PProtocolBytecoin *stem_peer = nullptr;
+		std::chrono::steady_clock::time_point deadline;
+	};
+	std::map<Hash, DandelionPending> m_dandelion_pending;
+	P2PProtocolBytecoin *m_dandelion_stem_peer = nullptr;
+	std::chrono::steady_clock::time_point m_dandelion_epoch_end{};
+	platform::Timer m_dandelion_embargo_timer;
 
 	bool check_trust(const p2p::ProofOfTrust &);
 	Timestamp m_last_stat_request_time = 0;
 	// Prevent replay attacks by only trusting requests with timestamp > than previous request
 
-	class P2PProtocolBytecoin;
 	struct DownloadInfo {
 		size_t chain_counter                 = 0;
 		P2PProtocolBytecoin *who_downloading = nullptr;
@@ -148,10 +158,11 @@ protected:
 		platform::Timer m_syncpool_timer;
 		platform::Timer m_download_transactions_timer;
 		std::map<Hash, TransactionDesc> m_transaction_descs;
+		std::map<Hash, uint8_t> m_stem_transaction_hops;
 		void on_syncpool_timer();
 		void on_download_transactions_timer();
 		void transaction_download_finished(const Hash &tid, bool success);
-		bool on_transaction_descs(const std::vector<TransactionDesc> &descs);
+		bool on_transaction_descs(const std::vector<TransactionDesc> &descs, uint8_t stem_hop = 0);
 
 	protected:
 		void on_disconnect(const std::string &ban_reason) override;
@@ -172,6 +183,7 @@ protected:
 		void on_msg_timed_sync(p2p::TimedSync::Notify &&) override;
 		void on_msg_notify_new_block(p2p::RelayBlock::Notify &&) override;
 		void on_msg_notify_new_transactions(p2p::RelayTransactions::Notify &&) override;
+		void on_msg_notify_stem_transaction(p2p::StemTransaction::Notify &&) override;
 		void on_msg_notify_checkpoint(p2p::Checkpoint::Notify &&) override;
 #if bytecoin_ALLOW_DEBUG_COMMANDS
 		void on_msg_stat_info(p2p::GetStatInfo::Request &&) override;
@@ -198,6 +210,13 @@ protected:
 	// TODO - periodically clear m_pow_checker of blocks that were not asked
 
 	void broadcast(P2PProtocolBytecoin *exclude, const BinaryArray &data);
+	void relay_transaction_dandelion(const TransactionDesc &desc, P2PProtocolBytecoin *source, uint8_t hop);
+	void fluff_transaction(const TransactionDesc &desc);
+	void observe_fluff(const std::vector<TransactionDesc> &descs);
+	void on_dandelion_embargo();
+	void schedule_dandelion_embargo();
+	void dandelion_peer_disconnected(P2PProtocolBytecoin *peer);
+	P2PProtocolBytecoin *select_dandelion_stem_peer(P2PProtocolBytecoin *exclude);
 
 	void fill_cors(const http::RequestBody &req, http::ResponseBody &res);
 	bool on_api_http_request(http::Client *, http::RequestBody &&, http::ResponseBody &);

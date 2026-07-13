@@ -11,6 +11,8 @@
 #include "CryptoNoteConfig.hpp"
 #include "common/Invariant.hpp"
 #include "crypto/crypto.hpp"
+#include "p2p/P2pProtocolDefinitions.hpp"
+#include "p2p/Dandelion.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
 #include "seria/KVBinaryInputStream.hpp"
@@ -168,6 +170,40 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(!decoded.need_redundant_data && decoded.need_onyx_history,
 		    "Onyx sync history flag did not round-trip");
 		std::cout << "  [onyx] global commitment-history sync request round-trip ok" << std::endl;
+	}
+
+	// 8. Dandelion++ is negotiated as P2P v5 and its one-descriptor stem message is canonical.
+	{
+		invariant(P2PProtocolVersion::DANDELION == 5, "Dandelion P2P version changed unexpectedly");
+		p2p::StemTransaction::Notify stem;
+		stem.transaction_desc.hash = crypto::rand<Hash>();
+		stem.transaction_desc.fee = 1234;
+		stem.transaction_desc.size = 567;
+		stem.transaction_desc.newest_referenced_block = crypto::rand<Hash>();
+		stem.hop = 7;
+		const common::BinaryArray encoded = seria::to_binary_kv(stem);
+		p2p::StemTransaction::Notify decoded;
+		seria::from_binary_kv(decoded, encoded);
+		invariant(decoded.transaction_desc.hash == stem.transaction_desc.hash &&
+		              decoded.transaction_desc.fee == stem.transaction_desc.fee &&
+		              decoded.transaction_desc.size == stem.transaction_desc.size &&
+		              decoded.transaction_desc.newest_referenced_block ==
+		                  stem.transaction_desc.newest_referenced_block &&
+		              decoded.hop == stem.hop,
+		    "Dandelion stem descriptor did not round-trip");
+		invariant(p2p::StemTransaction::Notify::MAX_HOPS == 20,
+		    "Dandelion maximum stem path changed unexpectedly");
+		invariant(p2p::DandelionPolicy::should_fluff(false, 0, 20, 10, 99),
+		    "disabled Dandelion did not force fluff");
+		invariant(p2p::DandelionPolicy::should_fluff(true, 20, 20, 0, 99),
+		    "Dandelion hop cap did not force fluff");
+		invariant(p2p::DandelionPolicy::should_fluff(true, 1, 20, 10, 9) &&
+		              !p2p::DandelionPolicy::should_fluff(true, 1, 20, 10, 10),
+		    "Dandelion diffusion probability boundary is wrong");
+		invariant(p2p::DandelionPolicy::embargo_seconds(30, 10, 0) == 10 &&
+		              p2p::DandelionPolicy::embargo_seconds(30, 10, 20) == 30,
+		    "Dandelion embargo bounds are not inclusive or normalized");
+		std::cout << "  [jade] Dandelion v5 stem descriptor round-trip ok" << std::endl;
 	}
 
 	std::cout << "  test_jade_consensus: OK" << std::endl;

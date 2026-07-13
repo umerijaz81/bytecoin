@@ -136,6 +136,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 	case 14:
 		levin_parse<cn::p2p::GetStatInfo::Response>(msg);
 		break;
+	case 15:
+		levin_parse<cn::p2p::StemTransaction::Notify>(msg);
+		break;
 	case 128:
 		binary_parse<cn::BlockTemplate>(msg);
 		break;

@@ -176,7 +176,8 @@ void Node::P2PProtocolBytecoin::advance_transactions() {
 	}
 }
 
-bool Node::P2PProtocolBytecoin::on_transaction_descs(const std::vector<TransactionDesc> &descs) {
+bool Node::P2PProtocolBytecoin::on_transaction_descs(
+    const std::vector<TransactionDesc> &descs, uint8_t stem_hop) {
 	const auto &pool   = m_node->m_block_chain.get_memory_state_transactions();
 	Amount minimum_fee = m_node->m_block_chain.minimum_pool_fee_per_byte(true);
 	//	Amount previous_fee_per_byte = std::numeric_limits<Amount>::max();
@@ -217,6 +218,8 @@ bool Node::P2PProtocolBytecoin::on_transaction_descs(const std::vector<Transacti
 	for (const auto &desc : request_transaction_descs) {
 		invariant(m_transaction_descs.insert(std::make_pair(desc.hash, desc)).second, "");
 		invariant(m_node->downloading_transactions.insert(std::make_pair(desc.hash, this)).second, "");
+		if (stem_hop != 0)
+			invariant(m_stem_transaction_hops.insert(std::make_pair(desc.hash, stem_hop)).second, "");
 		p2p::GetObjects::Request msg;
 		msg.txs.push_back(desc.hash);
 		send(LevinProtocol::send(msg));
@@ -230,6 +233,7 @@ void Node::P2PProtocolBytecoin::transaction_download_finished(const Hash &tid, b
 		return;
 	if (success) {
 		tit = m_transaction_descs.erase(tit);
+		m_stem_transaction_hops.erase(tid);
 		return;
 	}
 	if (!m_node->downloading_transactions.insert(std::make_pair(tid, this)).second)
@@ -443,6 +447,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		m_node->m_pow_checker.add_block(bid, check_pow, std::move(rb));
 	}
 	p2p::RelayTransactions::Notify msg_v4;
+	std::vector<std::pair<TransactionDesc, uint8_t>> stem_descs;
 	for (const auto &btx : req.txs) {  // 0 or 1
 		Transaction tx;
 		try {
@@ -451,6 +456,10 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 			return disconnect("Invalid transaction binary format " + common::what(ex));
 		}
 		const Hash tid = get_transaction_hash(tx);
+		uint8_t stem_hop = 0;
+		auto stem_it = m_stem_transaction_hops.find(tid);
+		if (stem_it != m_stem_transaction_hops.end())
+			stem_hop = stem_it->second;
 		auto cit       = m_node->downloading_transactions.find(tid);
 		if (cit == m_node->downloading_transactions.end() || cit->second != this) {
 			m_node->m_log(logging::INFO) << "GetObjectsResponse received stray transaction from " << get_address();
@@ -475,8 +484,12 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 					desc.size                    = btx.size();
 					desc.fee                     = my_fee;
 					desc.newest_referenced_block = tit->second.newest_referenced_block;
-					if (desc.size != 0)  // Should always be true, but will exit process if not, so we double-check
-						msg_v4.transaction_descs.push_back(desc);
+					if (desc.size != 0) {  // Should always be true, but will exit process if not, so we double-check
+						if (stem_hop == 0)
+							msg_v4.transaction_descs.push_back(desc);
+						else
+							stem_descs.push_back(std::make_pair(desc, stem_hop));
+					}
 				}
 			} catch (const ConsensusErrorOutputDoesNotExist &ex) {
 				// We are safe to ban for bad output reference, because we have newest referenced block
@@ -492,6 +505,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		}
 		cit = m_node->downloading_transactions.erase(cit);
 		tit = m_transaction_descs.erase(tit);
+		m_stem_transaction_hops.erase(tid);
 		invariant(m_downloading_transaction_count > 0, "");
 		m_downloading_transaction_count -= 1;
 		for (auto who : m_node->m_broadcast_protocols)
@@ -508,6 +522,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		invariant(tit != m_transaction_descs.end(), "");
 		cit = m_node->downloading_transactions.erase(cit);
 		tit = m_transaction_descs.erase(tit);
+		m_stem_transaction_hops.erase(tid);
 		invariant(m_downloading_transaction_count > 0, "");
 		m_downloading_transaction_count -= 1;
 		for (auto who : m_node->m_broadcast_protocols)
@@ -522,11 +537,15 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		m_download_transactions_timer.once(m_node->m_config.download_transaction_timeout);
 	else
 		m_download_transactions_timer.cancel();
+	for (const auto &stem : stem_descs)
+		m_node->relay_transaction_dandelion(stem.first, this, stem.second);
+	if (!stem_descs.empty())
+		m_node->advance_long_poll();
 	if (!msg_v4.transaction_descs.empty()) {
 		// Contains exactly 1 transaction
 		BinaryArray raw_msg_v4 = LevinProtocol::send(msg_v4);
 
-		m_node->broadcast(this, raw_msg_v4);
+		m_node->broadcast(nullptr, raw_msg_v4);  // Reflection cancels upstream embargo timers.
 		m_node->advance_long_poll();
 	}
 	if (!req.blocks.empty())
@@ -535,6 +554,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 
 void Node::P2PProtocolBytecoin::on_disconnect(const std::string &ban_reason) {
 	m_node->m_broadcast_protocols.erase(this);
+	m_node->dandelion_peer_disconnected(this);
 
 	m_chain_request_sent = false;
 	m_chain_timer.cancel();
@@ -562,6 +582,7 @@ void Node::P2PProtocolBytecoin::on_disconnect(const std::string &ban_reason) {
 			who->transaction_download_finished(cit.first, false);
 	}
 	m_transaction_descs.clear();
+	m_stem_transaction_hops.clear();
 	m_download_transactions_timer.cancel();
 	invariant(m_downloading_transaction_count == 0, "");
 
@@ -653,7 +674,20 @@ void Node::P2PProtocolBytecoin::on_msg_notify_new_block(p2p::RelayBlock::Notify 
 void Node::P2PProtocolBytecoin::on_msg_notify_new_transactions(p2p::RelayTransactions::Notify &&req) {
 	if (req.transaction_descs.size() > p2p::RelayTransactions::Notify::MAX_DESC_COUNT)
 		return disconnect("RelayTransactions too much descs");
+	m_node->observe_fluff(req.transaction_descs);
 	on_transaction_descs(req.transaction_descs);
+}
+
+void Node::P2PProtocolBytecoin::on_msg_notify_stem_transaction(p2p::StemTransaction::Notify &&req) {
+	if (get_peer_version() < P2PProtocolVersion::DANDELION)
+		return disconnect("StemTransaction from pre-Dandelion peer");
+	if (req.hop == 0 || req.hop > p2p::StemTransaction::Notify::MAX_HOPS)
+		return disconnect("StemTransaction invalid hop");
+	if (m_node->m_dandelion_pending.count(req.transaction_desc.hash) != 0) {
+		m_node->relay_transaction_dandelion(req.transaction_desc, this, req.hop);
+		return;
+	}
+	on_transaction_descs(std::vector<TransactionDesc>{req.transaction_desc}, req.hop);
 }
 
 void Node::P2PProtocolBytecoin::on_msg_notify_checkpoint(p2p::Checkpoint::Notify &&req) {

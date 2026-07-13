@@ -83,10 +83,10 @@ re-architecting.
   scope = agility + PQ authenticator, **not** quantum-unbreakable privacy.
 
 ### Network privacy (transport, no consensus impact) — Dandelion++ & Tor
-- **Dandelion++:** insert a stem phase before the immediate flood at `src/Core/Node.cpp` (`broadcast`)
-  using the existing `platform::Timer` (`src/platform/Network.hpp`); relay locally-originated/stem
-  txs to one random outbound peer (`m_broadcast_protocols`, `Node.hpp`), fluffing on embargo
-  timeout. Config flags `dandelion_stem_probability`, `dandelion_embargo_timeout`.
+- **Dandelion++ (implemented, validation pending):** negotiated P2P v5 stem relay uses a stable random
+  outbound peer per epoch, per-hop probabilistic fluff, a hop limit, randomized embargo timers and
+  immediate loop/disconnect recovery. V4 peers retain diffusion compatibility. The default is on;
+  `--disable-dandelion` opts out. See `docs/Dandelion-Relay.md` for the state machine and limitations.
 - **Tor/I2P:** optional SOCKS5 outbound proxy in `src/platform/Network.*` connect path
   (`--p2p-proxy`); document running over Tor. Verify on a two-node regtest.
 

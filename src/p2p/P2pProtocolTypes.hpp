@@ -16,8 +16,8 @@ using common::NetworkAddress;
 
 typedef uint64_t PeerIdType;
 
-enum P2PProtocolVersion : uint8_t { NO_HANDSHAKE_YET = 0, LEGACY = 1, AMETHYST = 4 };
-// V4 adds several fields/messages and sets strict rules, violating would be BAN.
+enum P2PProtocolVersion : uint8_t { NO_HANDSHAKE_YET = 0, LEGACY = 1, AMETHYST = 4, DANDELION = 5 };
+// V4 adds strict descriptor relay. V5 adds negotiated Dandelion++ stem relay; V4 peers receive fluff.
 
 #pragma pack(push, 1)
 struct UUID {

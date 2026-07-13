@@ -79,6 +79,7 @@ public:
 	};
 	typedef std::map<Hash, PoolTransaction> PoolTransMap;
 	const PoolTransMap &get_memory_state_transactions() const { return m_memory_state_tx; }
+	bool get_onyx_snapshot(BinaryArray *snapshot) const { return read_onyx_snapshot(snapshot); }
 	std::vector<TransactionDesc> sync_pool(
 	    const std::pair<Amount, Hash> &from, const std::pair<Amount, Hash> &to, size_t max_count) const;
 

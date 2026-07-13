@@ -97,6 +97,11 @@ public:
 	Timestamp p2p_no_incoming_handshake_disconnect_timeout = 30;
 	Timestamp p2p_no_incoming_message_disconnect_timeout   = 60 * 6;
 	Timestamp p2p_no_outgoing_message_ping_timeout         = 60 * 4;
+	bool dandelion_enabled                                 = true;
+	Timestamp dandelion_epoch_seconds                      = 10 * 60;
+	Timestamp dandelion_embargo_min_seconds                = 10;
+	Timestamp dandelion_embargo_max_seconds                = 30;
+	uint8_t dandelion_fluff_probability_percent            = 10;
 
 	size_t rpc_sync_blocks_max_count;
 	size_t rpc_sync_blocks_max_size;

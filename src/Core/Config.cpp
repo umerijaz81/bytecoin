@@ -76,6 +76,7 @@ Config::Config(common::CommandLine &cmd)
 	// Privacy hardening flags (Phase 1). Archive omits peer IPs by default; opt back in if needed.
 	archive_omit_source_addresses = !cmd.get_bool("--archive-keep-source-addresses");
 	wallet_sync_privacy           = cmd.get_bool("--wallet-sync-privacy");
+	dandelion_enabled             = !cmd.get_bool("--disable-dandelion");
 	if (net == "test") {
 		network_id.data[0] += 1;
 		p2p_bind_port += 1000;

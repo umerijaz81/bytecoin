@@ -293,6 +293,12 @@ predates both the wallet and the shielded tree.
 | O6 | Dandelion++, proxy transport, RandomX transition, backend agility, reproducible release and operational testnet. |
 | Release | Two independent audits, no unresolved critical/high findings, public testnet soak, signed reproducible builds, incident/rollback plan, and governance approval. |
 
+The first O6 component is implemented as a negotiated P2P v5 Dandelion++ relay with epoch-stable
+outbound selection, probabilistic diffusion, bounded hops, randomized embargo, loop/disconnect
+recovery and v4 fallback. This is not completion of O6: proxy transport, peer scoring, adversarial
+simulation, RandomX/backend transition work, reproducible releases and operational testnet evidence
+remain required.
+
 ## 11. Required tests
 
 Every object requires canonical round-trip, truncation, trailing-data, non-minimal, oversize,

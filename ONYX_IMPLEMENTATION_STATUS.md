@@ -31,8 +31,10 @@ unreachable until the release gates below are independently satisfied.
 
 ### O6 network, scaling and crypto agility
 
-1. Dandelion++ transaction relay with epoch rotation, stem-loop prevention, embargo/fluff recovery,
-   peer scoring and adversarial topology simulation.
+1. The negotiated Dandelion++ relay now has epoch rotation, stem-loop prevention, randomized
+   embargo/fluff recovery, hop limits, disconnect recovery, legacy-peer fallback and parser/policy
+   coverage. Remaining: peer scoring, multi-node adversarial topology simulation, fuzz soak and
+   independent network-privacy review.
 2. Explicit SOCKS5/Tor/I2P-capable outbound transport with DNS-leak prevention and integration tests.
 3. A separately reviewed RandomX fork transition with deterministic vectors for node and miner,
    activation/reorg tests and multi-architecture benchmarks.

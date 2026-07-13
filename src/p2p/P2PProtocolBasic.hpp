@@ -56,6 +56,7 @@ protected:
 #endif
 	virtual void on_msg_notify_new_block(p2p::RelayBlock::Notify &&) {}
 	virtual void on_msg_notify_new_transactions(p2p::RelayTransactions::Notify &&) {}
+	virtual void on_msg_notify_stem_transaction(p2p::StemTransaction::Notify &&) {}
 	virtual void on_msg_notify_request_tx_pool(p2p::SyncPool::Request &&) {}
 	virtual void on_msg_notify_request_tx_pool(p2p::SyncPool::Response &&) {}
 	virtual void on_msg_notify_request_chain(p2p::GetChain::Request &&) {}

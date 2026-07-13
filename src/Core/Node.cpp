@@ -12,8 +12,10 @@
 #include "common/Base58.hpp"
 #include "common/JsonValue.hpp"
 #include "common/StringTools.hpp"
+#include "crypto/crypto.hpp"
 #include "http/Server.hpp"
 #include "p2p/PeerDB.hpp"
+#include "p2p/Dandelion.hpp"
 #include "platform/PathTools.hpp"
 #include "platform/PreventSleep.hpp"
 #include "platform/Time.hpp"
@@ -35,6 +37,7 @@ Node::Node(logging::ILogger &log, const Config &config, BlockChainState &block_c
     , m_multicast_timer(std::bind(&Node::send_multicast, this))
     , m_start_time(m_p2p.get_local_time())
     , m_commit_timer(std::bind(&Node::db_commit, this))
+    , m_dandelion_embargo_timer(std::bind(&Node::on_dandelion_embargo, this))
     , log_request_timestamp(std::chrono::steady_clock::now())
     , log_response_timestamp(std::chrono::steady_clock::now())
     , m_pow_checker(block_chain.get_currency(), platform::EventLoop::current()) {
@@ -404,11 +407,129 @@ bool Node::on_get_status(http::Client *who, http::RequestBody &&raw_request, jso
 	return true;
 }
 
+Node::P2PProtocolBytecoin *Node::select_dandelion_stem_peer(P2PProtocolBytecoin *exclude) {
+	const auto now = std::chrono::steady_clock::now();
+	if (m_dandelion_stem_peer != nullptr && m_dandelion_stem_peer != exclude &&
+	    m_broadcast_protocols.count(m_dandelion_stem_peer) != 0 &&
+	    !m_dandelion_stem_peer->is_incoming() &&
+	    m_dandelion_stem_peer->get_peer_version() >= P2PProtocolVersion::DANDELION &&
+	    now < m_dandelion_epoch_end)
+		return m_dandelion_stem_peer;
+	std::vector<P2PProtocolBytecoin *> candidates;
+	for (auto *peer : m_broadcast_protocols)
+		if (peer != exclude && !peer->is_incoming() &&
+		    peer->get_peer_version() >= P2PProtocolVersion::DANDELION)
+			candidates.push_back(peer);
+	if (candidates.empty()) {
+		m_dandelion_stem_peer = nullptr;
+		m_dandelion_epoch_end = {};
+		return nullptr;
+	}
+	m_dandelion_stem_peer = candidates.at(crypto::rand<size_t>() % candidates.size());
+	m_dandelion_epoch_end = now + std::chrono::seconds(m_config.dandelion_epoch_seconds);
+	return m_dandelion_stem_peer;
+}
+
+void Node::schedule_dandelion_embargo() {
+	m_dandelion_embargo_timer.cancel();
+	if (m_dandelion_pending.empty())
+		return;
+	auto earliest = m_dandelion_pending.begin()->second.deadline;
+	for (const auto &entry : m_dandelion_pending)
+		earliest = std::min(earliest, entry.second.deadline);
+	const auto remaining = std::chrono::duration<float>(earliest - std::chrono::steady_clock::now()).count();
+	m_dandelion_embargo_timer.once(std::max(0.001f, remaining));
+}
+
+void Node::fluff_transaction(const TransactionDesc &desc) {
+	m_dandelion_pending.erase(desc.hash);
+	p2p::RelayTransactions::Notify fluff;
+	fluff.transaction_descs.push_back(desc);
+	broadcast(nullptr, LevinProtocol::send(fluff));
+	schedule_dandelion_embargo();
+}
+
+void Node::observe_fluff(const std::vector<TransactionDesc> &descs) {
+	bool changed = false;
+	for (const auto &desc : descs)
+		changed = m_dandelion_pending.erase(desc.hash) != 0 || changed;
+	if (changed)
+		schedule_dandelion_embargo();
+}
+
+void Node::on_dandelion_embargo() {
+	const auto now = std::chrono::steady_clock::now();
+	std::vector<TransactionDesc> expired;
+	for (auto it = m_dandelion_pending.begin(); it != m_dandelion_pending.end();) {
+		if (it->second.deadline > now) {
+			++it;
+			continue;
+		}
+		expired.push_back(it->second.desc);
+		it = m_dandelion_pending.erase(it);
+	}
+	for (const auto &desc : expired) {
+		p2p::RelayTransactions::Notify fluff;
+		fluff.transaction_descs.push_back(desc);
+		broadcast(nullptr, LevinProtocol::send(fluff));
+	}
+	schedule_dandelion_embargo();
+}
+
+void Node::dandelion_peer_disconnected(P2PProtocolBytecoin *peer) {
+	if (m_dandelion_stem_peer == peer) {
+		m_dandelion_stem_peer = nullptr;
+		m_dandelion_epoch_end = {};
+	}
+	std::vector<TransactionDesc> recover;
+	for (auto it = m_dandelion_pending.begin(); it != m_dandelion_pending.end();) {
+		if (it->second.stem_peer != peer) {
+			++it;
+			continue;
+		}
+		recover.push_back(it->second.desc);
+		it = m_dandelion_pending.erase(it);
+	}
+	for (const auto &desc : recover) {
+		p2p::RelayTransactions::Notify fluff;
+		fluff.transaction_descs.push_back(desc);
+		broadcast(nullptr, LevinProtocol::send(fluff));
+	}
+	schedule_dandelion_embargo();
+}
+
+void Node::relay_transaction_dandelion(
+    const TransactionDesc &desc, P2PProtocolBytecoin *source, uint8_t hop) {
+	auto pending = m_dandelion_pending.find(desc.hash);
+	if (pending != m_dandelion_pending.end()) {
+		fluff_transaction(pending->second.desc);  // Stem loop: diffuse immediately.
+		return;
+	}
+	const bool force_fluff = p2p::DandelionPolicy::should_fluff(m_config.dandelion_enabled, hop,
+	    p2p::StemTransaction::Notify::MAX_HOPS, m_config.dandelion_fluff_probability_percent,
+	    crypto::rand<uint32_t>());
+	P2PProtocolBytecoin *stem_peer = force_fluff ? nullptr : select_dandelion_stem_peer(source);
+	if (stem_peer == nullptr) {
+		fluff_transaction(desc);  // Includes mixed-version fallback when no v5 outbound exists.
+		return;
+	}
+	p2p::StemTransaction::Notify stem;
+	stem.transaction_desc = desc;
+	stem.hop = static_cast<uint8_t>(hop + 1);
+	stem_peer->send(LevinProtocol::send(stem));
+	const Timestamp embargo = p2p::DandelionPolicy::embargo_seconds(
+	    m_config.dandelion_embargo_min_seconds, m_config.dandelion_embargo_max_seconds,
+	    crypto::rand<Timestamp>());
+	m_dandelion_pending[desc.hash] =
+	    DandelionPending{desc, stem_peer, std::chrono::steady_clock::now() + std::chrono::seconds(embargo)};
+	schedule_dandelion_embargo();
+}
+
 bool Node::on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_rpc::Request &&,
     api::cnd::GetOnyxSupplyAudit::Request &&, api::cnd::GetOnyxSupplyAudit::Response &response) {
 	response.block_height = m_block_chain.get_tip_height();
 	BinaryArray snapshot;
-	if (!m_block_chain.read_onyx_snapshot(&snapshot) || snapshot.empty())
+	if (!m_block_chain.get_onyx_snapshot(&snapshot) || snapshot.empty())
 		return true;
 #ifdef onyx_USE_ZK
 	zk::Halo2ProofSystem::SupplyAudit audit;
@@ -762,7 +883,6 @@ bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::R
     api::cnd::SendTransaction::Request &&request, api::cnd::SendTransaction::Response &response) {
 	response.send_result = "broadcast";
 
-	p2p::RelayTransactions::Notify msg_v4;
 	Transaction tx;
 	try {
 		seria::from_binary(tx, request.binary_transaction);
@@ -775,10 +895,7 @@ bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::R
 			Height newest_referenced_height = 0;
 			invariant(m_block_chain.get_largest_referenced_height(tx, &newest_referenced_height), "");
 			invariant(m_block_chain.get_chain(newest_referenced_height, &desc.newest_referenced_block), "");
-			msg_v4.transaction_descs.push_back(desc);
-
-			BinaryArray raw_msg_v4 = LevinProtocol::send(msg_v4);
-			broadcast(nullptr, raw_msg_v4);
+			relay_transaction_dandelion(desc, nullptr, 0);
 			advance_long_poll();
 		}
 	} catch (const ConsensusErrorOutputDoesNotExist &ex) {

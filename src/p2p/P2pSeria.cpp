@@ -148,6 +148,11 @@ void ser_members(p2p::RelayTransactions::Notify &v, seria::ISeria &s) {
 	seria::seria_kv("transaction_descs", v.transaction_descs, s);
 }
 
+void ser_members(p2p::StemTransaction::Notify &v, seria::ISeria &s) {
+	seria_kv("transaction_desc", v.transaction_desc, s);
+	seria_kv("hop", v.hop, s);
+}
+
 void ser_members(p2p::GetObjects::Request &v, seria::ISeria &s) {
 	serialize_as_binary(v.txs, "txs", s);
 	serialize_as_binary(v.blocks, "blocks", s);

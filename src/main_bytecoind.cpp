@@ -38,6 +38,7 @@ Options:
   --import-blocks=<folder-path>          Perform import of blockchain from specified folder as blocks.bin and blockindexes.bin, then exit.
   --export-blocks=<folder-path>          Perform hot export of blockchain into specified folder as blocks.bin and blockindexes.bin, then exit. This overwrites existing files.
   --archive                              Work as an archive node [default: off].
+  --disable-dandelion                    Disable Dandelion++ stem relay and diffuse transactions immediately.
   --paranoid-checks                      Perform consensus checks for blocks in checkpoints range (very slow sync))";
 
 int main(int argc, const char *argv[]) try {
