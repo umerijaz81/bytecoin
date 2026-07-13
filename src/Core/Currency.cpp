@@ -71,12 +71,15 @@ Currency::Currency(const Config &config)
     , self_dust_threshold(SELF_DUST_THRESHOLD)
     , difficulty_target(std::max<Timestamp>(1,
           DIFFICULTY_TARGET / platform::get_time_multiplier_for_tests()))  // multiplier can be != 1 only in testnet
-    , upgrade_heights{UPGRADE_HEIGHT_V2, UPGRADE_HEIGHT_V3, UPGRADE_HEIGHT_V4, UPGRADE_HEIGHT_V5}
+    , upgrade_heights{UPGRADE_HEIGHT_V2, UPGRADE_HEIGHT_V3, UPGRADE_HEIGHT_V4, UPGRADE_HEIGHT_V5,
+          UPGRADE_HEIGHT_RESERVED_V6, UPGRADE_HEIGHT_ONYX}
     , key_image_subgroup_checking_height(KEY_IMAGE_SUBGROUP_CHECKING_HEIGHT)
     , amethyst_block_version(BLOCK_VERSION_AMETHYST)
     , amethyst_transaction_version(TRANSACTION_VERSION_AMETHYST)
     , jade_block_version(BLOCK_VERSION_JADE)
     , jade_transaction_version(TRANSACTION_VERSION_JADE)
+    , onyx_block_version(BLOCK_VERSION_ONYX)
+    , onyx_transaction_version(TRANSACTION_VERSION_ONYX)
     , upgrade_vote_minor(9)
     , upgrade_desired_major(4)
     , upgrade_voting_window(UPGRADE_VOTING_WINDOW)
@@ -87,12 +90,12 @@ Currency::Currency(const Config &config)
 	if (net == "test") {
 		// block 1 is already V4; V5 stays dormant (4th entry) until Jade is functionally complete.
 		// Lower the 4th entry to activate Jade consensus on testnet once Tier-B is ready.
-		upgrade_heights       = {1, 1, 1, UPGRADE_HEIGHT_V5};
+		upgrade_heights       = {1, 1, 1, UPGRADE_HEIGHT_V5, UPGRADE_HEIGHT_RESERVED_V6, UPGRADE_HEIGHT_ONYX};
 		upgrade_voting_window = 30;
 		upgrade_window        = 10;
 	}
 	if (net == "stage") {
-		upgrade_heights = {1, 1, 64233, UPGRADE_HEIGHT_V5};
+		upgrade_heights = {1, 1, 64233, UPGRADE_HEIGHT_V5, UPGRADE_HEIGHT_RESERVED_V6, UPGRADE_HEIGHT_ONYX};
 		upgrade_window  = EXPECTED_NUMBER_OF_BLOCKS_PER_DAY;
 	}
 	{

@@ -122,6 +122,7 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 	// for compatibility, we create v1 coinbase transaction if mining on legacy address
 	const bool is_tx_amethyst = tx.version == currency.amethyst_transaction_version;
 	const bool is_tx_jade     = tx.version == currency.jade_transaction_version;
+	const bool is_tx_onyx     = tx.version == currency.onyx_transaction_version;
 
 	if (block_major_version < currency.amethyst_block_version && tx.version != 1)
 		throw ConsensusError(common::to_string(
@@ -129,9 +130,25 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 	if (block_major_version == currency.amethyst_block_version && tx.version != 1 && !is_tx_amethyst)
 		throw ConsensusError(common::to_string(
 		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
-	if (block_major_version >= currency.jade_block_version && !is_tx_jade && !(coinbase && tx.version == 1))
+	if (block_major_version >= currency.onyx_block_version && !is_tx_onyx && !(coinbase && tx.version == 1))
 		throw ConsensusError(common::to_string(
 		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
+	if (block_major_version >= currency.jade_block_version && block_major_version < currency.onyx_block_version &&
+	    !is_tx_jade && !(coinbase && tx.version == 1))
+		throw ConsensusError(common::to_string(
+		    "Wrong transaction version", int(tx.version), "in block version", int(block_major_version)));
+	if (is_tx_onyx) {
+		if (coinbase || block_major_version < currency.onyx_block_version)
+			throw ConsensusError("Onyx transaction before activation or in coinbase");
+		if (!tx.inputs.empty() || !tx.outputs.empty() || !tx.extra.empty() ||
+		    tx.unlock_block_or_timestamp != 0 || tx.signatures.type() != typeid(boost::blank))
+			throw ConsensusError("Onyx envelope contains legacy transaction fields");
+		if (tx.onyx_envelope.empty() || tx.onyx_envelope.size() > parameters::ONYX_MAX_ENVELOPE_SIZE)
+			throw ConsensusError("Onyx envelope size out of bounds");
+		// Fail closed until fee/nullifier/output extraction is atomically connected to DeltaState.
+		// UPGRADE_HEIGHT_ONYX remains an unreachable placeholder while this gate exists.
+		throw ConsensusError("Onyx consensus state integration is not active");
+	}
 	if (block_major_version >= currency.amethyst_block_version && !extra::is_valid(tx.extra))
 		throw ConsensusError("Extra has wrong format");
 	// Subgroup check policy is as following:

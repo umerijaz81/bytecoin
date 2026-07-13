@@ -36,6 +36,11 @@ const Height KEY_IMAGE_SUBGROUP_CHECKING_HEIGHT = 1267000;
 // is intentionally far in the future so current (Amethyst/V4) consensus is unchanged until a
 // concrete fork height is scheduled. Test/stage nets can lower it for end-to-end testing.
 const Height UPGRADE_HEIGHT_V5 = 9000000;
+// Block major version 6 is already reserved by collective-mining builds. Two simultaneous upgrade
+// entries skip it deterministically; Onyx protocol/transaction V6 therefore activates under block
+// major version 7. Both heights remain unreachable placeholders until review and testnet soak.
+const Height UPGRADE_HEIGHT_RESERVED_V6 = 10000000;
+const Height UPGRADE_HEIGHT_ONYX         = 10000000;
 // Block height at which the laptop-friendly, ASIC-resistant PoW (RandomX, Phase 5) takes over
 // from CryptoNight. Kept far in the future until the RandomX integration is reviewed.
 const Height RANDOMX_SWITCH_HEIGHT = 9000000;
@@ -47,6 +52,11 @@ const uint8_t TRANSACTION_VERSION_AMETHYST = 4;
 
 const uint8_t BLOCK_VERSION_JADE       = 5;
 const uint8_t TRANSACTION_VERSION_JADE = 5;
+const uint8_t BLOCK_VERSION_ONYX        = 7;
+const uint8_t TRANSACTION_VERSION_ONYX  = 6;
+const size_t ONYX_MAX_ENVELOPE_SIZE     = 384 * 1024;
+const uint32_t ONYX_MERKLE_DEPTH        = 32;
+const uint32_t ONYX_CIRCUIT_K           = 20;
 
 const size_t MINIMUM_ANONYMITY_AMETHYST = 3;
 // Jade raises the floor to a ring of 16 (15 decoys) AND, unlike Amethyst, this minimum is

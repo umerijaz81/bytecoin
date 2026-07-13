@@ -146,7 +146,9 @@ native transfer, fungible asset, NFT, vesting, multisignature custody, and atomi
 
 ## 8. Fork and migration
 
-- V6 activates only at `UPGRADE_HEIGHT_V6`; earlier blocks reject V6 objects.
+- Onyx protocol and transaction format V6 activate only at `UPGRADE_HEIGHT_ONYX`; earlier blocks
+  reject V6 objects. Core block major version 6 is reserved by collective-mining builds, so two
+  simultaneous upgrade entries skip directly from Jade block V5 to Onyx block V7.
 - Mempool policy evaluates the next block version.
 - The bridge consumes a legacy output once and creates equal native Onyx value minus explicit fee.
 - Bridge nullifiers bind the legacy outpoint to prevent replay.
