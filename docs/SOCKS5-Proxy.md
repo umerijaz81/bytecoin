@@ -16,7 +16,10 @@ service, hide an explicitly public listening address, proxy RPC/wallet traffic, 
 outside this process. For an outbound-only setup, bind P2P to a local interface and do not advertise
 an external port. Configure and verify the anonymity network independently.
 
-The current peer-address format cannot carry `.onion` or I2P hostnames. Numeric SOCKS5 routing avoids
-daemon-side DNS lookups but does not constitute full hidden-service integration. Before release, run
-packet-capture leak tests and multi-node Tor/I2P connection, reconnect, timeout and shutdown tests on
-every supported platform.
+The SOCKS5 policy layer now has canonical domain framing restricted to v3 `.onion` and I2P
+`.b32.i2p` addresses; it rejects clearnet names, malformed lengths, uppercase/non-base32 labels and
+zero ports. It only emits the domain bytes to the proxy and never resolves them locally. The current
+peer-address database and wire format still cannot carry those hostnames, so this is a tested framing
+seam rather than full hidden-service peer integration. Before release, complete that versioned peer
+identity work and run packet-capture leak tests plus multi-node Tor/I2P connection, reconnect, timeout
+and shutdown tests on every supported platform.

@@ -66,6 +66,21 @@ void test_socks5_policy() {
 	target.port = 8080;
 	require(Socks5::connect_ipv4(target) == common::BinaryArray({5, 1, 0, 1, 127, 0, 0, 1, 0x1f, 0x90}),
 	    "SOCKS5 IPv4 request changed");
+	const std::string onion_host = std::string(56, 'a') + ".onion";
+	const std::string i2p_host = std::string(52, '2') + ".b32.i2p";
+	require(Socks5::is_anonymity_domain(onion_host) && Socks5::is_anonymity_domain(i2p_host),
+	    "canonical anonymity domain was rejected");
+	const common::BinaryArray onion_request = Socks5::connect_anonymity_domain(onion_host, 18080);
+	require(onion_request.size() == 7 + onion_host.size() && onion_request[0] == 5 &&
+	        onion_request[3] == 3 && onion_request[4] == onion_host.size() &&
+	        onion_request[onion_request.size() - 2] == 0x46 && onion_request.back() == 0xa0,
+	    "SOCKS5 anonymity-domain request changed");
+	require_rejected([] { Socks5::connect_anonymity_domain("example.com", 80); },
+	    "clearnet domain was accepted by anonymity-only framing");
+	require_rejected([] { Socks5::connect_anonymity_domain(std::string(56, 'A') + ".onion", 80); },
+	    "non-canonical uppercase onion address was accepted");
+	require_rejected([&onion_host] { Socks5::connect_anonymity_domain(onion_host, 0); },
+	    "zero-port anonymity target was accepted");
 
 	const common::BinaryArray ipv4_reply{5, 0, 0, 1, 127, 0, 0, 1, 0, 1};
 	const common::BinaryArray domain_reply{5, 0, 0, 3, 3, 'o', 'k', '!', 0, 1};

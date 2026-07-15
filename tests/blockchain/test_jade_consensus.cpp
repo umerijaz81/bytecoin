@@ -282,6 +282,10 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(p2p::Socks5::connect_ipv4(target) ==
 		              common::BinaryArray({5, 1, 0, 1, 1, 2, 3, 4, 0x1f, 0x90}),
 		    "SOCKS5 numeric target request is not canonical");
+		const std::string onion_host = std::string(56, 'a') + ".onion";
+		invariant(p2p::Socks5::is_anonymity_domain(onion_host) &&
+		              p2p::Socks5::connect_anonymity_domain(onion_host, 18080).at(3) == 3,
+		    "SOCKS5 onion framing is not canonical");
 		p2p::Socks5::validate_method(common::BinaryArray{5, 0});
 		const common::BinaryArray ipv4_reply{5, 0, 0, 1, 127, 0, 0, 1, 0x23, 0x28};
 		invariant(p2p::Socks5::connect_reply_size(ipv4_reply) == ipv4_reply.size(),

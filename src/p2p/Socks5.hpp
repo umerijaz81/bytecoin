@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdexcept>
+#include <string>
 #include "common/BinaryArray.hpp"
 #include "common/Ipv4Address.hpp"
 
@@ -19,6 +20,36 @@ struct Socks5 {
 		result.insert(result.end(), target.ip.begin(), target.ip.end());
 		result.push_back(static_cast<uint8_t>(target.port >> 8));
 		result.push_back(static_cast<uint8_t>(target.port));
+		return result;
+	}
+
+	static bool is_anonymity_domain(const std::string &host) {
+		const std::string onion_suffix = ".onion";
+		const std::string i2p_suffix = ".b32.i2p";
+		size_t label_size = 0;
+		if (host.size() == 56 + onion_suffix.size() &&
+		    host.compare(56, onion_suffix.size(), onion_suffix) == 0)
+			label_size = 56;
+		else if (host.size() == 52 + i2p_suffix.size() &&
+		         host.compare(52, i2p_suffix.size(), i2p_suffix) == 0)
+			label_size = 52;
+		else
+			return false;
+		for (size_t index = 0; index != label_size; ++index) {
+			const char value = host[index];
+			if (!((value >= 'a' && value <= 'z') || (value >= '2' && value <= '7')))
+				return false;
+		}
+		return true;
+	}
+
+	static common::BinaryArray connect_anonymity_domain(const std::string &host, uint16_t port) {
+		if (port == 0 || host.size() > 255 || !is_anonymity_domain(host))
+			throw std::runtime_error("SOCKS5 anonymity target must be a canonical v3 onion or I2P b32 address");
+		common::BinaryArray result{5, 1, 0, 3, static_cast<uint8_t>(host.size())};
+		result.insert(result.end(), host.begin(), host.end());
+		result.push_back(static_cast<uint8_t>(port >> 8));
+		result.push_back(static_cast<uint8_t>(port));
 		return result;
 	}
 
