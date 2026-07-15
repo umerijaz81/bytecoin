@@ -5,15 +5,15 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
+import io
+import json
 import pathlib
 import tomllib
 
 from release_common import (
-    LOCK_PATH,
-    ROOT,
     canonical_json_bytes,
-    load_lock,
-    sha256_file,
+    revision_file,
     spdx_id,
 )
 
@@ -42,9 +42,8 @@ def package_from_lock(dependency: dict) -> dict:
     return package
 
 
-def cargo_packages() -> list[dict]:
-    lock_path = ROOT / "vendor" / "onyx-zk" / "Cargo.lock"
-    with lock_path.open("rb") as stream:
+def cargo_packages(revision: str) -> list[dict]:
+    with io.BytesIO(revision_file(revision, "vendor/onyx-zk/Cargo.lock")) as stream:
         cargo_lock = tomllib.load(stream)
     result = []
     for crate in cargo_lock.get("package", []):
@@ -78,10 +77,11 @@ def cargo_packages() -> list[dict]:
 
 
 def generate(revision: str, epoch: int) -> dict:
-    lock = load_lock()
+    lock_bytes = revision_file(revision, "release/dependencies.lock.json")
+    lock = json.loads(lock_bytes)
     root_id = "SPDXRef-Package-bytecoin"
     dependencies = [package_from_lock(item) for item in lock["dependencies"]]
-    dependencies.extend(cargo_packages())
+    dependencies.extend(cargo_packages(revision))
     dependencies.sort(key=lambda item: (item["name"], item["versionInfo"], item["SPDXID"]))
     root_package = {
         "name": "bytecoin",
@@ -101,7 +101,7 @@ def generate(revision: str, epoch: int) -> dict:
         ],
     }
     created = dt.datetime.fromtimestamp(epoch, tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    namespace_suffix = sha256_file(LOCK_PATH)[:16]
+    namespace_suffix = hashlib.sha256(lock_bytes).hexdigest()[:16]
     packages = [root_package, *dependencies]
     relationships = [
         {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": root_id}

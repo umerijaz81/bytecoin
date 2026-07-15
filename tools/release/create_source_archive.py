@@ -6,37 +6,23 @@ from __future__ import annotations
 import argparse
 import gzip
 import io
-import os
 import pathlib
-import subprocess
 import tarfile
 
-from release_common import ROOT, tracked_files
-
-
-def index_modes() -> dict[str, int]:
-    raw = subprocess.check_output(["git", "ls-files", "-s", "-z"], cwd=ROOT)
-    modes: dict[str, int] = {}
-    for record in raw.split(b"\0"):
-        if not record:
-            continue
-        metadata, path = record.split(b"\t", 1)
-        mode = metadata.split(b" ", 1)[0]
-        modes[path.decode("utf-8")] = int(mode, 8)
-    return modes
+from release_common import git_blobs, revision_entries
 
 
 def create(output: pathlib.Path, revision: str, epoch: int) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    modes = index_modes()
     prefix = f"bytecoin-{revision[:12]}"
     with output.open("wb") as raw_output:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, compresslevel=9, mtime=epoch) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.GNU_FORMAT) as archive:
-                for relative in tracked_files():
-                    path = ROOT / relative
-                    git_mode = modes[relative]
-                    info = tarfile.TarInfo(f"{prefix}/{relative.replace(os.sep, '/')}")
+                entries = revision_entries(revision)
+                blobs = git_blobs([object_id for _, _, object_id in entries])
+                for (relative, raw_mode, _), data in zip(entries, blobs):
+                    git_mode = int(raw_mode, 8)
+                    info = tarfile.TarInfo(f"{prefix}/{relative}")
                     info.mtime = epoch
                     info.uid = 0
                     info.gid = 0
@@ -45,11 +31,10 @@ def create(output: pathlib.Path, revision: str, epoch: int) -> None:
                     if git_mode == 0o120000:
                         info.type = tarfile.SYMTYPE
                         info.mode = 0o777
-                        info.linkname = os.readlink(path)
+                        info.linkname = data.decode("utf-8")
                         info.size = 0
                         archive.addfile(info)
                         continue
-                    data = path.read_bytes()
                     info.type = tarfile.REGTYPE
                     info.mode = 0o755 if git_mode & 0o111 else 0o644
                     info.size = len(data)

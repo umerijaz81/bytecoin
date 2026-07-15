@@ -11,7 +11,7 @@ import sys
 import tempfile
 import urllib.request
 
-from release_common import HEX_40, HEX_64, ROOT, load_lock, sha256_file, tracked_tree_sha256
+from release_common import HEX_40, HEX_64, ROOT, index_entries, git_blob, load_lock, tracked_tree_sha256
 
 
 REQUIRED_COMMON = {"name", "version", "kind", "purl"}
@@ -88,8 +88,11 @@ def verify() -> list[str]:
                 errors.append(f"{name}: toolchain descriptor is missing: {relative}")
             elif not HEX_64.fullmatch(expected):
                 errors.append(f"{name}: sha256 must be 64 lowercase hex characters")
-            elif sha256_file(path) != expected:
-                errors.append(f"{name}: descriptor digest does not match the lock")
+            else:
+                entries = index_entries(relative)
+                actual = hashlib.sha256(git_blob(entries[0][2])).hexdigest() if len(entries) == 1 else ""
+                if actual != expected:
+                    errors.append(f"{name}: descriptor digest does not match the lock")
 
     required = {"boost", "openssl", "lmdb-bytecoin", "randomx", "onyx-zk", "rust-toolchain"}
     if missing := required - names:

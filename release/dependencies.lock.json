@@ -34,7 +34,7 @@
       "kind": "vendored",
       "path": "vendor/randomx",
       "revision": "aaafe71322df6602c21a5c72937ac284724ae561",
-      "tree_sha256": "deb26a181a244cd466a80ff98a76e2b143553cbd05f86e6a0de4ed8b03cbb078",
+      "tree_sha256": "ae608a5dbcefd718d2becd8d3e4fa1cd7adbc1bab7d247e2c898d5780b775bde",
       "license": "BSD-3-Clause",
       "purl": "pkg:github/tevador/RandomX@v2.0.1"
     },
@@ -44,7 +44,7 @@
       "kind": "vendored",
       "path": "vendor/onyx-zk",
       "lockfile": "vendor/onyx-zk/Cargo.lock",
-      "tree_sha256": "47e5a07b4013c2cec0a5ba57d31fea5cd85dd7324502cf668a0c3dac8c3717ec",
+      "tree_sha256": "3283642e5245b654e36ece505e26812fe3f4c8dca2250fe4f738c8890db1e6ae",
       "license": "LGPL-3.0-or-later",
       "purl": "pkg:cargo/onyx-zk@0.0.1"
     },

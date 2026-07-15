@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -45,8 +46,9 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertTrue(any("two distinct report" in error for error in errors), errors)
 
     def test_spdx_identifiers_are_unique_and_deterministic(self) -> None:
-        first = generate_spdx.generate("0" * 40, 0)
-        second = generate_spdx.generate("0" * 40, 0)
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        first = generate_spdx.generate(revision, 0)
+        second = generate_spdx.generate(revision, 0)
         self.assertEqual(first, second)
         identifiers = [package["SPDXID"] for package in first["packages"]]
         self.assertEqual(len(identifiers), len(set(identifiers)))

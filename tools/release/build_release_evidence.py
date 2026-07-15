@@ -13,11 +13,11 @@ import tempfile
 from create_source_archive import create as create_archive
 from generate_spdx import generate as generate_spdx
 from release_common import (
-    LOCK_PATH,
     ROOT,
     canonical_json_bytes,
     git,
     sha256_file,
+    revision_file_sha256,
     source_date_epoch,
 )
 from verify_dependencies import verify as verify_dependencies
@@ -87,7 +87,7 @@ def main() -> int:
         "source_date_epoch": epoch,
         "created": created,
         "dirty_worktree": dirty,
-        "dependencies_lock_sha256": sha256_file(LOCK_PATH),
+        "dependencies_lock_sha256": revision_file_sha256(revision, "release/dependencies.lock.json"),
         "materials": [
             {"name": archive.name, "sha256": sha256_file(archive)},
             {"name": sbom.name, "sha256": sha256_file(sbom)},

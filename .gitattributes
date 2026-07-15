@@ -1,0 +1,2 @@
+# Cargo vendor checksums cover exact crate bytes, including intentional mixed EOLs.
+vendor/onyx-zk/vendor/** -text whitespace=cr-at-eol
