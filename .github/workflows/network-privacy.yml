@@ -1,0 +1,50 @@
+name: Network privacy policies
+
+on:
+  push:
+    paths:
+      - ".github/workflows/network-privacy.yml"
+      - "src/p2p/Dandelion.hpp"
+      - "src/p2p/Socks5.hpp"
+      - "src/Core/Node.cpp"
+      - "src/Core/Node.hpp"
+      - "src/Core/Node_P2PProtocolBytecoin.cpp"
+      - "tests/network/**"
+  pull_request:
+    paths:
+      - ".github/workflows/network-privacy.yml"
+      - "src/p2p/Dandelion.hpp"
+      - "src/p2p/Socks5.hpp"
+      - "src/Core/Node.cpp"
+      - "src/Core/Node.hpp"
+      - "src/Core/Node_P2PProtocolBytecoin.cpp"
+      - "tests/network/**"
+
+permissions:
+  contents: read
+
+jobs:
+  policy-tests:
+    name: policy tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: build-network-privacy/network-privacy-tests
+          - os: macos-latest
+            executable: build-network-privacy/network-privacy-tests
+          - os: windows-latest
+            executable: build-network-privacy/Release/network-privacy-tests.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Configure policy tests
+        run: cmake -S tests/network -B build-network-privacy
+      - name: Build policy tests
+        run: cmake --build build-network-privacy --config Release
+      - name: Run adversarial policy tests
+        shell: bash
+        run: ./${{ matrix.executable }}

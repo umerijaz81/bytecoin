@@ -415,19 +415,45 @@ Node::P2PProtocolBytecoin *Node::select_dandelion_stem_peer(P2PProtocolBytecoin 
 	    m_dandelion_stem_peer->get_peer_version() >= P2PProtocolVersion::DANDELION &&
 	    now < m_dandelion_epoch_end)
 		return m_dandelion_stem_peer;
+	if (now >= m_dandelion_epoch_end)
+		for (auto &entry : m_dandelion_peer_scores)
+			entry.second = p2p::DandelionPolicy::decay_peer_score(entry.second);
 	std::vector<P2PProtocolBytecoin *> candidates;
+	std::vector<int> scores;
 	for (auto *peer : m_broadcast_protocols)
 		if (peer != exclude && !peer->is_incoming() &&
-		    peer->get_peer_version() >= P2PProtocolVersion::DANDELION)
+		    peer->get_peer_version() >= P2PProtocolVersion::DANDELION) {
 			candidates.push_back(peer);
+			scores.push_back(m_dandelion_peer_scores[peer]);
+		}
 	if (candidates.empty()) {
 		m_dandelion_stem_peer = nullptr;
 		m_dandelion_epoch_end = {};
 		return nullptr;
 	}
-	m_dandelion_stem_peer = candidates.at(crypto::rand<size_t>() % candidates.size());
+	const size_t selected =
+	    p2p::DandelionPolicy::select_weighted_peer(scores, crypto::rand<uint64_t>());
+	m_dandelion_stem_peer = candidates.at(selected);
 	m_dandelion_epoch_end = now + std::chrono::seconds(m_config.dandelion_epoch_seconds);
 	return m_dandelion_stem_peer;
+}
+
+void Node::reward_dandelion_peer(P2PProtocolBytecoin *peer) {
+	if (peer == nullptr || m_broadcast_protocols.count(peer) == 0)
+		return;
+	int &score = m_dandelion_peer_scores[peer];
+	score = p2p::DandelionPolicy::update_peer_score(score, 1);
+}
+
+void Node::penalize_dandelion_peer(P2PProtocolBytecoin *peer) {
+	if (peer == nullptr || m_broadcast_protocols.count(peer) == 0)
+		return;
+	int &score = m_dandelion_peer_scores[peer];
+	score = p2p::DandelionPolicy::update_peer_score(score, -2);
+	if (m_dandelion_stem_peer == peer) {
+		m_dandelion_stem_peer = nullptr;
+		m_dandelion_epoch_end = {};
+	}
 }
 
 void Node::schedule_dandelion_embargo() {
@@ -449,10 +475,20 @@ void Node::fluff_transaction(const TransactionDesc &desc) {
 	schedule_dandelion_embargo();
 }
 
-void Node::observe_fluff(const std::vector<TransactionDesc> &descs) {
+void Node::observe_fluff(const std::vector<TransactionDesc> &descs, P2PProtocolBytecoin *source) {
 	bool changed = false;
-	for (const auto &desc : descs)
-		changed = m_dandelion_pending.erase(desc.hash) != 0 || changed;
+	for (const auto &desc : descs) {
+		auto pending = m_dandelion_pending.find(desc.hash);
+		if (pending == m_dandelion_pending.end())
+			continue;
+		// A selected peer can pretend it diffused by reflecting fluff only to its upstream. Require
+		// third-party propagation evidence; otherwise the embargo remains as the liveness backstop.
+		if (!p2p::DandelionPolicy::accept_fluff_reflection(pending->second.stem_peer == source))
+			continue;
+		reward_dandelion_peer(pending->second.stem_peer);
+		m_dandelion_pending.erase(pending);
+		changed = true;
+	}
 	if (changed)
 		schedule_dandelion_embargo();
 }
@@ -465,6 +501,7 @@ void Node::on_dandelion_embargo() {
 			++it;
 			continue;
 		}
+		penalize_dandelion_peer(it->second.stem_peer);
 		expired.push_back(it->second.desc);
 		it = m_dandelion_pending.erase(it);
 	}
@@ -495,6 +532,7 @@ void Node::dandelion_peer_disconnected(P2PProtocolBytecoin *peer) {
 		fluff.transaction_descs.push_back(desc);
 		broadcast(nullptr, LevinProtocol::send(fluff));
 	}
+	m_dandelion_peer_scores.erase(peer);
 	schedule_dandelion_embargo();
 }
 
@@ -502,6 +540,7 @@ void Node::relay_transaction_dandelion(
     const TransactionDesc &desc, P2PProtocolBytecoin *source, uint8_t hop) {
 	auto pending = m_dandelion_pending.find(desc.hash);
 	if (pending != m_dandelion_pending.end()) {
+		penalize_dandelion_peer(pending->second.stem_peer);
 		fluff_transaction(pending->second.desc);  // Stem loop: diffuse immediately.
 		return;
 	}

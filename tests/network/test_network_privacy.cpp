@@ -1,0 +1,114 @@
+// Copyright (c) 2012-2018, The CryptoNote developers, The Bytecoin developers.
+// Licensed under the GNU Lesser General Public License. See LICENSE for details.
+
+#include <array>
+#include <cstdint>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+#include "p2p/Dandelion.hpp"
+#include "p2p/Socks5.hpp"
+
+namespace {
+
+void require(bool value, const char *message) {
+	if (!value)
+		throw std::runtime_error(message);
+}
+
+template<class Function>
+void require_rejected(Function function, const char *message) {
+	try {
+		function();
+	} catch (const std::runtime_error &) {
+		return;
+	}
+	throw std::runtime_error(message);
+}
+
+void test_dandelion_policy() {
+	using cn::p2p::DandelionPolicy;
+	require(DandelionPolicy::should_fluff(false, 0, 20, 10, 99), "disabled relay did not fluff");
+	require(DandelionPolicy::should_fluff(true, 20, 20, 0, 99), "hop limit did not fluff");
+	require(DandelionPolicy::should_fluff(true, 1, 20, 10, 9), "probability lower bound changed");
+	require(!DandelionPolicy::should_fluff(true, 1, 20, 10, 10), "probability upper bound changed");
+	require(DandelionPolicy::embargo_seconds(30, 10, 0) == 10, "embargo lower bound changed");
+	require(DandelionPolicy::embargo_seconds(30, 10, 20) == 30, "embargo upper bound changed");
+
+	require(DandelionPolicy::update_peer_score(8, 1) == 8, "positive score escaped bound");
+	require(DandelionPolicy::update_peer_score(-8, -2) == -8, "negative score escaped bound");
+	require(DandelionPolicy::decay_peer_score(3) == 2, "positive score did not decay");
+	require(DandelionPolicy::decay_peer_score(-3) == -2, "negative score did not decay");
+	require(!DandelionPolicy::accept_fluff_reflection(true),
+	    "selected peer could cancel its own embargo");
+	require(DandelionPolicy::accept_fluff_reflection(false),
+	    "third-party fluff did not cancel the embargo");
+	require(DandelionPolicy::peer_weight(-100) == 1, "degraded peer was excluded");
+	require(DandelionPolicy::peer_weight(100) == 17, "peer weight escaped bound");
+
+	// Deterministic adversarial topology: a failing peer remains selectable but receives 17x less
+	// traffic than a peer whose stems repeatedly reappear as fluff. Neutral peers remain in between.
+	const std::vector<int> scores{-8, 0, 8};
+	std::array<size_t, 3> selected{{0, 0, 0}};
+	for (uint64_t draw = 0; draw != 2700; ++draw)
+		++selected.at(DandelionPolicy::select_weighted_peer(scores, draw));
+	require(selected[0] == 100 && selected[1] == 900 && selected[2] == 1700,
+	    "weighted topology distribution changed");
+	require(DandelionPolicy::select_weighted_peer(std::vector<int>{}, 42) == 0,
+	    "empty topology sentinel changed");
+}
+
+void test_socks5_policy() {
+	using cn::p2p::Socks5;
+	require(Socks5::greeting() == common::BinaryArray({5, 1, 0}), "SOCKS5 greeting changed");
+	common::NetworkAddress target;
+	target.ip = {127, 0, 0, 1};
+	target.port = 8080;
+	require(Socks5::connect_ipv4(target) == common::BinaryArray({5, 1, 0, 1, 127, 0, 0, 1, 0x1f, 0x90}),
+	    "SOCKS5 IPv4 request changed");
+
+	const common::BinaryArray ipv4_reply{5, 0, 0, 1, 127, 0, 0, 1, 0, 1};
+	const common::BinaryArray domain_reply{5, 0, 0, 3, 3, 'o', 'k', '!', 0, 1};
+	common::BinaryArray ipv6_reply{5, 0, 0, 4};
+	ipv6_reply.resize(22, 0);
+	require(Socks5::connect_reply_size(ipv4_reply) == 10, "SOCKS5 IPv4 reply size changed");
+	require(Socks5::connect_reply_size(domain_reply) == 10, "SOCKS5 domain reply size changed");
+	require(Socks5::connect_reply_size(ipv6_reply) == 22, "SOCKS5 IPv6 reply size changed");
+	Socks5::validate_method(common::BinaryArray{5, 0});
+	Socks5::validate_connect_reply(ipv4_reply);
+	Socks5::validate_connect_reply(domain_reply);
+	Socks5::validate_connect_reply(ipv6_reply);
+
+	require_rejected([] { Socks5::validate_method(common::BinaryArray{5, 0xff}); },
+	    "SOCKS5 authentication rejection was accepted");
+	require_rejected([] { Socks5::connect_reply_size(common::BinaryArray{5, 5, 0, 1}); },
+	    "SOCKS5 destination rejection was accepted");
+	require_rejected([] { Socks5::validate_connect_reply(common::BinaryArray{5, 0, 0, 3, 4, 'x'}); },
+	    "truncated SOCKS5 domain reply was accepted");
+	require_rejected([] { Socks5::connect_reply_size(common::BinaryArray{5, 0, 0, 2}); },
+	    "unknown SOCKS5 address type was accepted");
+	require_rejected([&target] {
+		auto invalid = target;
+		invalid.port = 0;
+		Socks5::connect_ipv4(invalid);
+	}, "zero-port SOCKS5 target was accepted");
+	require_rejected([&target] {
+		auto invalid = target;
+		invalid.ip.resize(16);
+		Socks5::connect_ipv4(invalid);
+	}, "non-IPv4 SOCKS5 target was accepted");
+}
+
+}  // namespace
+
+int main() {
+	try {
+		test_dandelion_policy();
+		test_socks5_policy();
+		std::cout << "network privacy policy tests passed" << std::endl;
+		return 0;
+	} catch (const std::exception &error) {
+		std::cerr << error.what() << std::endl;
+		return 1;
+	}
+}

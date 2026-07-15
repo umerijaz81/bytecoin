@@ -674,7 +674,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_new_block(p2p::RelayBlock::Notify 
 void Node::P2PProtocolBytecoin::on_msg_notify_new_transactions(p2p::RelayTransactions::Notify &&req) {
 	if (req.transaction_descs.size() > p2p::RelayTransactions::Notify::MAX_DESC_COUNT)
 		return disconnect("RelayTransactions too much descs");
-	m_node->observe_fluff(req.transaction_descs);
+	m_node->observe_fluff(req.transaction_descs, this);
 	on_transaction_descs(req.transaction_descs);
 }
 

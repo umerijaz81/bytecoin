@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "test_jade_consensus.hpp"
+#include <array>
 #include <iostream>
 #include <stdexcept>
 #include "Core/BlockChainState.hpp"
@@ -255,6 +256,19 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(p2p::DandelionPolicy::embargo_seconds(30, 10, 0) == 10 &&
 		              p2p::DandelionPolicy::embargo_seconds(30, 10, 20) == 30,
 		    "Dandelion embargo bounds are not inclusive or normalized");
+		invariant(p2p::DandelionPolicy::update_peer_score(8, 1) == 8 &&
+		              p2p::DandelionPolicy::update_peer_score(-8, -2) == -8 &&
+		              p2p::DandelionPolicy::decay_peer_score(3) == 2 &&
+		              p2p::DandelionPolicy::decay_peer_score(-3) == -2 &&
+		              !p2p::DandelionPolicy::accept_fluff_reflection(true) &&
+		              p2p::DandelionPolicy::accept_fluff_reflection(false),
+		    "Dandelion peer score bounds or decay changed");
+		const std::vector<int> topology_scores{-8, 0, 8};
+		std::array<size_t, 3> selections{{0, 0, 0}};
+		for (uint64_t draw = 0; draw != 2700; ++draw)
+			++selections.at(p2p::DandelionPolicy::select_weighted_peer(topology_scores, draw));
+		invariant(selections[0] == 100 && selections[1] == 900 && selections[2] == 1700,
+		    "Dandelion weighted peer selection is not deterministic or bounded");
 		std::cout << "  [jade] Dandelion v5 stem descriptor round-trip ok" << std::endl;
 	}
 

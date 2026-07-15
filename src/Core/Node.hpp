@@ -121,6 +121,7 @@ protected:
 	};
 	std::map<Hash, DandelionPending> m_dandelion_pending;
 	P2PProtocolBytecoin *m_dandelion_stem_peer = nullptr;
+	std::map<P2PProtocolBytecoin *, int> m_dandelion_peer_scores;
 	std::chrono::steady_clock::time_point m_dandelion_epoch_end{};
 	platform::Timer m_dandelion_embargo_timer;
 
@@ -212,9 +213,11 @@ protected:
 	void broadcast(P2PProtocolBytecoin *exclude, const BinaryArray &data);
 	void relay_transaction_dandelion(const TransactionDesc &desc, P2PProtocolBytecoin *source, uint8_t hop);
 	void fluff_transaction(const TransactionDesc &desc);
-	void observe_fluff(const std::vector<TransactionDesc> &descs);
+	void observe_fluff(const std::vector<TransactionDesc> &descs, P2PProtocolBytecoin *source);
 	void on_dandelion_embargo();
 	void schedule_dandelion_embargo();
+	void reward_dandelion_peer(P2PProtocolBytecoin *peer);
+	void penalize_dandelion_peer(P2PProtocolBytecoin *peer);
 	void dandelion_peer_disconnected(P2PProtocolBytecoin *peer);
 	P2PProtocolBytecoin *select_dandelion_stem_peer(P2PProtocolBytecoin *exclude);
 
