@@ -1,0 +1,52 @@
+name: Reproducible release evidence
+
+on:
+  push:
+  pull_request:
+    paths:
+      - ".github/workflows/release-evidence.yml"
+      - "release/**"
+      - "rust-toolchain.toml"
+      - "tools/release/**"
+      - "vendor/onyx-zk/Cargo.lock"
+      - "vendor/onyx-zk/Cargo.toml"
+      - "vendor/randomx/BYTECOIN_VENDOR.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  source-evidence:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Verify immutable dependency and activation locks
+        run: |
+          python3 tools/release/verify_dependencies.py
+          python3 tools/release/verify_release_gates.py
+          python3 -m unittest discover -s tests/release -p "test_*.py"
+      - name: Re-fetch and hash release inputs
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: python3 tools/release/verify_dependencies.py --verify-upstream
+      - name: Build twice and compare deterministic evidence
+        run: python3 tools/release/build_release_evidence.py --output-dir dist --revision "$GITHUB_SHA"
+      - name: Verify published checksums
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+      - name: Upload release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bytecoin-release-evidence-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+      - name: Attest tag evidence
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: "dist/*"

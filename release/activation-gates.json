@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "placeholder_heights": {
+    "UPGRADE_HEIGHT_V5": 9000000,
+    "RANDOMX_SWITCH_HEIGHT": 9000000,
+    "UPGRADE_HEIGHT_RESERVED_V6": 10000000,
+    "UPGRADE_HEIGHT_ONYX": 10000000
+  },
+  "gates": [
+    {
+      "id": "source-provenance",
+      "required_for_activation": true,
+      "status": "implemented",
+      "evidence": [
+        ".github/workflows/release-evidence.yml",
+        "release/dependencies.lock.json",
+        "tools/release/build_release_evidence.py"
+      ]
+    },
+    {
+      "id": "independent-audits",
+      "required_for_activation": true,
+      "status": "pending",
+      "minimum_independent_reports": 2,
+      "evidence": []
+    },
+    {
+      "id": "public-testnet-soak",
+      "required_for_activation": true,
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "reproducible-platform-binaries",
+      "required_for_activation": true,
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "incident-response-drill",
+      "required_for_activation": true,
+      "status": "pending",
+      "evidence": ["docs/Incident-Response.md"]
+    },
+    {
+      "id": "governance-approval",
+      "required_for_activation": true,
+      "status": "pending",
+      "evidence": []
+    }
+  ]
+}

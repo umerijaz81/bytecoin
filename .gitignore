@@ -15,6 +15,7 @@ bin/
 libs/
 build/
 build-zk/
+dist/
 
 # Tests
 tests/scratchpad/

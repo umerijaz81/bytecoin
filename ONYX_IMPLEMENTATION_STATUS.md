@@ -50,6 +50,17 @@ unreachable until the release gates below are independently satisfied.
    value is not an implementation: its algorithm/dependency selection, key migration, address/public-key
    commitments, proof/signature sizes, hybrid downgrade rules, vectors and audit remain required.
 
+### Release readiness
+
+Deterministic tracked-source archives, SPDX 2.3 SBOM generation, immutable dependency/vendored-tree
+locks, duplicate-generation comparison, checksums, pinned CI actions and tag provenance attestations
+are implemented in `tools/release`, `release/` and `.github/workflows/release-evidence.yml`. The legacy
+Azure publisher is disabled because its runner images, dependency acquisition and OpenSSL release are
+not a trustworthy or reproducible build boundary. `docs/Release-Readiness.md` defines the two-person
+ceremony and `docs/Incident-Response.md` defines the consensus/privacy response and rollback boundary.
+The activation-gate verifier keeps all placeholder heights unchanged while any mandatory evidence is
+not passed.
+
 ### Release gates that cannot be completed by repository code alone
 
 - Two independent cryptographic/consensus audits with no unresolved critical or high findings.

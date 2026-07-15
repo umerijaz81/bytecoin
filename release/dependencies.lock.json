@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "dependencies": [
+    {
+      "name": "boost",
+      "version": "1.69.0",
+      "kind": "archive",
+      "url": "https://archives.boost.io/release/1.69.0/source/boost_1_69_0.tar.gz",
+      "sha256": "9a2c2819310839ea373f42d69e733c339b4e9a19deab6bfec448281554aa4dbb",
+      "license": "BSL-1.0",
+      "purl": "pkg:generic/boost@1.69.0"
+    },
+    {
+      "name": "openssl",
+      "version": "3.5.7",
+      "kind": "archive",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz",
+      "sha256": "a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8",
+      "license": "Apache-2.0",
+      "purl": "pkg:generic/openssl@3.5.7"
+    },
+    {
+      "name": "lmdb-bytecoin",
+      "version": "f334f6a4a5c00b873f5721b8265d102c6b6b3667",
+      "kind": "git",
+      "url": "https://github.com/bcndev/lmdb.git",
+      "revision": "f334f6a4a5c00b873f5721b8265d102c6b6b3667",
+      "license": "OLDAP-2.8",
+      "purl": "pkg:github/bcndev/lmdb@f334f6a4a5c00b873f5721b8265d102c6b6b3667"
+    },
+    {
+      "name": "randomx",
+      "version": "2.0.1",
+      "kind": "vendored",
+      "path": "vendor/randomx",
+      "revision": "aaafe71322df6602c21a5c72937ac284724ae561",
+      "tree_sha256": "deb26a181a244cd466a80ff98a76e2b143553cbd05f86e6a0de4ed8b03cbb078",
+      "license": "BSD-3-Clause",
+      "purl": "pkg:github/tevador/RandomX@v2.0.1"
+    },
+    {
+      "name": "onyx-zk",
+      "version": "0.0.1",
+      "kind": "vendored",
+      "path": "vendor/onyx-zk",
+      "lockfile": "vendor/onyx-zk/Cargo.lock",
+      "tree_sha256": "47e5a07b4013c2cec0a5ba57d31fea5cd85dd7324502cf668a0c3dac8c3717ec",
+      "license": "LGPL-3.0-or-later",
+      "purl": "pkg:cargo/onyx-zk@0.0.1"
+    },
+    {
+      "name": "rust-toolchain",
+      "version": "1.88.0",
+      "kind": "toolchain",
+      "path": "rust-toolchain.toml",
+      "sha256": "5796b10b0ff023089f93fefc35aec81a19196b87a470386f01bee28ae8acb79b",
+      "purl": "pkg:generic/rust@1.88.0"
+    }
+  ]
+}
