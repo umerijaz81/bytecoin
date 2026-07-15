@@ -5,17 +5,50 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import pathlib
 import subprocess
 import sys
 import tempfile
 import urllib.request
 
-from release_common import HEX_40, HEX_64, ROOT, index_entries, git_blob, load_lock, tracked_tree_sha256
+from release_common import HEX_40, HEX_64, ROOT, git_blobs, index_entries, git_blob, load_lock, tracked_tree_sha256
 
 
 REQUIRED_COMMON = {"name", "version", "kind", "purl"}
 ALLOWED_KINDS = {"archive", "git", "vendored", "toolchain"}
+
+
+def verify_cargo_vendor(prefix: str) -> list[str]:
+    """Verify every Cargo vendor checksum against canonical Git index blobs."""
+    entries = index_entries(prefix)
+    blobs = git_blobs([object_id for _, _, object_id in entries])
+    indexed = {path: blob for (path, _, _), blob in zip(entries, blobs)}
+    manifests = sorted(path for path in indexed if path.endswith("/.cargo-checksum.json"))
+    missing: list[str] = []
+    mismatched: list[str] = []
+    malformed: list[str] = []
+    for manifest in manifests:
+        try:
+            checksums = json.loads(indexed[manifest])["files"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            malformed.append(manifest)
+            continue
+        directory = pathlib.PurePosixPath(manifest).parent
+        for relative, expected in checksums.items():
+            path = (directory / relative).as_posix()
+            blob = indexed.get(path)
+            if blob is None:
+                missing.append(path)
+            elif hashlib.sha256(blob).hexdigest() != expected:
+                mismatched.append(path)
+    errors = []
+    for label, paths in (("malformed manifests", malformed), ("missing checksum-covered files", missing), ("checksum mismatches", mismatched)):
+        if paths:
+            sample = ", ".join(paths[:5])
+            suffix = " ..." if len(paths) > 5 else ""
+            errors.append(f"Cargo vendor has {len(paths)} {label}: {sample}{suffix}")
+    return errors
 
 
 def verify() -> list[str]:
@@ -74,6 +107,7 @@ def verify() -> list[str]:
                     errors.append(f"{name}: tree_sha256 must be 64 lowercase hex characters")
                 elif actual != expected:
                     errors.append(f"{name}: tracked tree digest {actual} != lock {expected}")
+                errors.extend(f"{name}: {error}" for error in verify_cargo_vendor(relative))
             revision = dependency.get("revision")
             if revision is not None and not HEX_40.fullmatch(str(revision)):
                 errors.append(f"{name}: revision must be a full 40-hex commit")

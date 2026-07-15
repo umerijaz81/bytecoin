@@ -14,6 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 
 import generate_spdx  # noqa: E402
+import verify_dependencies  # noqa: E402
 import verify_release_gates  # noqa: E402
 
 
@@ -53,6 +54,9 @@ class ReleaseToolsTest(unittest.TestCase):
         identifiers = [package["SPDXID"] for package in first["packages"]]
         self.assertEqual(len(identifiers), len(set(identifiers)))
         self.assertEqual("SPDX-2.3", first["spdxVersion"])
+
+    def test_cargo_vendor_is_complete_and_checksum_exact(self) -> None:
+        self.assertEqual([], verify_dependencies.verify_cargo_vendor("vendor/onyx-zk"))
 
 
 if __name__ == "__main__":

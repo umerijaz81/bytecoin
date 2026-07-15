@@ -17,6 +17,12 @@ build/
 build-zk/
 dist/
 
+# Cargo vendor manifests checksum these source assets despite their directory names.
+!vendor/onyx-zk/vendor/thiserror-2.0.18/build/
+!vendor/onyx-zk/vendor/thiserror-2.0.18/build/probe.rs
+!vendor/onyx-zk/vendor/tracing-0.1.44/test-macros/bin/
+!vendor/onyx-zk/vendor/tracing-0.1.44/test-macros/bin/macro-results.sh
+
 # Tests
 tests/scratchpad/
 
