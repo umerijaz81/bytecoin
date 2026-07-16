@@ -25,21 +25,25 @@ until content-addressed dependency import is implemented.
 
 The implemented language accepts explicitly public/private parameters, `bool`, checked `u8`/`u16`/
 `u32`/`u64`, Pasta `field`, bounded byte-string/array interface types, fixed-array construction and
-bounded indexing, immutable `let`, assertions, one final return, statically bounded `for`, constrained
-`if`/`else`, three closed cryptographic intrinsics and direct calls to earlier name-sorted functions.
+bounded indexing, canonical nonrecursive records with ordered construction/field access, immutable
+`let`, assertions, one final return, statically bounded `for`, constrained `if`/`else`, three closed
+cryptographic intrinsics and direct calls to earlier name-sorted functions.
 Loops are expanded with a cumulative package bound. Conditional instructions carry an explicit
 dominating boolean guard so checked arithmetic and assertions can be gated by a future circuit
 backend. Recursion, backward calls, `while`, mutable globals, indirect calls, implicit casts, unknown
 intrinsics and nested returns are rejected.
 
-Record operations, byte-string construction, dependency import and the remaining versioned
-cryptographic intrinsics are not implemented yet; using them fails compilation. This is intentionally
-recorded as remaining work rather than silently assigning host-language semantics.
+Byte-string construction, dependency import and the remaining versioned cryptographic intrinsics are
+not implemented yet; using them fails compilation. This is intentionally recorded as remaining work
+rather than silently assigning host-language semantics.
 
 ## Artifact and verifier
 
-The compiler atomically emits normalized sources, schemas, a target profile, conservative resources,
-provenance, file hashes and canonical binary `ONXIR` v1. The IR uses shortest-form unsigned LEB128,
+The compiler executes manifest-declared positive and negative vectors with a checked reference IR
+evaluator, then atomically emits those results, normalized sources, schemas, a target profile,
+conservative resources, provenance, file hashes and canonical binary `ONXIR` v1. Intrinsic-bearing
+vectors fail closed until the Halo2-backed evaluator is available; an expected-negative vector cannot
+hide an unsupported evaluator operation. The IR uses shortest-form unsigned LEB128,
 closed type/opcode tables, dominance-ordered value ids, explicit guards and acyclic name-ordered
 calls. Its identifier is domain-separated SHA-256.
 

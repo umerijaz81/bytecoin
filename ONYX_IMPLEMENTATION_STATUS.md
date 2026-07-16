@@ -27,8 +27,9 @@ unreachable until the release gates below are independently satisfied.
    non-registrable alpha frontend now implements strict source-package loading, a bounded typed parser,
    static loop/conditional lowering, acyclic direct calls, guarded canonical binary IR, conservative
    resource analysis, reproducible bundles and a strict independent decoder/recompiler with frozen
-   cross-platform digests. Fixed arrays have canonical construction and bounded-index IR. Remaining:
-   record/byte-string operations and dependency import, deterministic
+   cross-platform digests. Fixed arrays have canonical construction and bounded-index IR; records have
+   canonical nonrecursive construction and field access. Remaining: byte-string operations and
+   dependency import, deterministic
    Halo2 lowering, verifier-key regeneration, structured fuzzing, audit and testnet gates. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,

@@ -40,7 +40,7 @@ def write_json(path: pathlib.Path, value: object) -> bytes:
     return data
 
 
-def create_package(root: pathlib.Path, source: bytes = SOURCE, **manifest_changes) -> pathlib.Path:
+def create_package(root: pathlib.Path, source: bytes = SOURCE, vectors=None, **manifest_changes) -> pathlib.Path:
     root.mkdir(parents=True)
     (root / "src").mkdir()
     (root / "src" / "main.onx").write_bytes(source)
@@ -65,6 +65,9 @@ def create_package(root: pathlib.Path, source: bytes = SOURCE, **manifest_change
         "target_profile": "halo2-ipa-pasta-onyx-compiler-v1",
         "target_profile_digest": hashlib.sha256(compiler_v1.canonical_json(compiler_v1.target_profile())).hexdigest(),
         "version": "1.0.0",
+        "vectors": ([{"function": "balance", "inputs": [7, 10], "expected": 9},
+                     {"function": "balance", "inputs": [7, 0], "expect_failure": True}]
+                    if vectors is None else vectors),
     }
     manifest.update(manifest_changes)
     write_json(root / "onyx-package.json", manifest)
@@ -86,11 +89,13 @@ class CompilerV1Tests(unittest.TestCase):
             profile = json.loads((first_bundle / "target-profile.json").read_text("utf-8"))
             provenance = json.loads((first_bundle / "provenance.json").read_text("utf-8"))
             resources = json.loads((first_bundle / "resources.json").read_text("utf-8"))
+            vectors = json.loads((first_bundle / "vectors.json").read_text("utf-8"))
             self.assertEqual(profile["backend_status"], "frontend-only-not-registrable")
             self.assertFalse(provenance["registrable"])
             self.assertGreater(resources["expanded_instructions"], 10)
             self.assertEqual(resources["public_inputs"], 1)
             self.assertEqual(resources["private_inputs"], 1)
+            self.assertEqual([vector["outcome"] for vector in vectors["vectors"]], ["accepted", "rejected"])
             golden = json.loads((ROOT / "tests" / "onyx_compiler" / "golden-v1.json").read_text("utf-8"))
             self.assertEqual(compiler_v1.compiler_digest(), golden["compiler_build_digest"])
             self.assertEqual(hashlib.sha256(compiler_v1.canonical_json(profile)).hexdigest(),
@@ -150,7 +155,8 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
 """
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            package = create_package(root / "package", source)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [7, 10], "expected": 11}])
             bundle = root / "bundle"
             compiler_v1.write_bundle(compiler_v1.load_package(package), bundle)
             verifier.verify_bundle(bundle)
@@ -167,7 +173,27 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
 """
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            package = create_package(root / "package", source)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [7, 10], "expected": 10}])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle)
+            verifier.verify_bundle(bundle)
+
+    def test_nonrecursive_record_construction_and_field_access_are_verified(self):
+        source = b"""record Pair {
+  left: u64;
+  right: u64;
+}
+export fn balance(public network: u32, private amount: u64) -> u64 {
+  let pair: Pair = Pair { left: amount, right: amount };
+  let output: u64 = pair.right;
+  return output;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [7, 10], "expected": 10}])
             bundle = root / "bundle"
             compiler_v1.write_bundle(compiler_v1.load_package(package), bundle)
             verifier.verify_bundle(bundle)
@@ -194,6 +220,19 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
             write_json(package / "onyx-package.json", manifest)
             with self.assertRaisesRegex(compiler_v1.CompileError, "E_INSTRUCTION_LIMIT|E_RESOURCE_LIMIT"):
                 compiler_v1.compile_sources(compiler_v1.load_package(package))
+
+    def test_negative_vector_cannot_hide_an_unsupported_intrinsic_evaluator(self):
+        source = b"""export fn balance(public left: field, private right: field) -> field {
+  let output: field = poseidon_hash(left, right);
+  return output;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [1, 2], "expect_failure": True}])
+            with self.assertRaisesRegex(compiler_v1.CompileError, "E_VECTOR_UNSUPPORTED"):
+                compiler_v1.write_bundle(compiler_v1.load_package(package), root / "bundle")
 
 
 if __name__ == "__main__":

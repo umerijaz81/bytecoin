@@ -143,6 +143,7 @@ def load_package(root: pathlib.Path) -> SourcePackage:
         "target_profile_digest",
         "sources",
         "exports",
+        "vectors",
         "limits",
         "dependency_lock_digest",
     }:
@@ -223,6 +224,17 @@ def load_package(root: pathlib.Path) -> SourcePackage:
     exports = manifest["exports"]
     if not isinstance(exports, list) or not exports or exports != sorted(set(exports)):
         raise CompileError("E_EXPORT_ORDER", "exports must be a nonempty sorted unique string list")
+    vectors = manifest["vectors"]
+    if not isinstance(vectors, list) or len(vectors) > 1024:
+        raise CompileError("E_VECTOR_COUNT", "program vector count is outside bounds")
+    for vector in vectors:
+        if not isinstance(vector, dict) or set(vector) not in (
+                {"function", "inputs", "expected"}, {"function", "inputs", "expect_failure"}):
+            raise CompileError("E_VECTOR_FIELDS", "program vector has unknown or missing fields")
+        if vector["function"] not in exports or not isinstance(vector["inputs"], list):
+            raise CompileError("E_VECTOR_FUNCTION", "program vector targets an unknown export")
+        if "expect_failure" in vector and vector["expect_failure"] is not True:
+            raise CompileError("E_VECTOR_FAILURE", "negative vector must explicitly expect failure")
     if manifest["target_profile_digest"] != sha256(canonical_json(target_profile())):
         raise CompileError("E_TARGET_PROFILE_PIN", "package target-profile digest mismatch")
     declared_files = {"onyx-package.json", "onyx.lock", *(relative for relative, _ in sources)}
@@ -239,7 +251,7 @@ def load_package(root: pathlib.Path) -> SourcePackage:
 
 TOKEN = re.compile(
     r"(?P<space>[ \t\n]+)|(?P<comment>//[^\n]*)|(?P<number>0|[1-9][0-9]*)|"
-    r"(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>->|\.\.|==|!=|<=|>=|&&|\|\||<<|>>|[{}()\[\],;:+\-*/%<>=!])"
+    r"(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>->|\.\.|==|!=|<=|>=|&&|\|\||<<|>>|[.{}()\[\],;:+\-*/%<>=!])"
 )
 
 
@@ -271,12 +283,15 @@ class Type:
     name: str
     element: "Type | None" = None
     length: int = 0
+    fields: tuple[tuple[str, "Type"], ...] = ()
 
     def canonical(self) -> str:
         if self.element is not None:
             return f"[{self.element.canonical()};{self.length}]"
         if self.name == "bytes":
             return f"bytes<{self.length}>"
+        if self.name == "record":
+            return "{" + ",".join(name + ":" + type_.canonical() for name, type_ in self.fields) + "}"
         return self.name
 
 
@@ -313,10 +328,11 @@ class Function:
 
 
 class Parser:
-    def __init__(self, tokens: list[Token], path: str):
+    def __init__(self, tokens: list[Token], path: str, records: dict[str, Type]):
         self.tokens = tokens
         self.index = 0
         self.path = path
+        self.records = records
 
     def peek(self, value: str | None = None) -> bool | str:
         current = self.tokens[self.index].value
@@ -332,7 +348,7 @@ class Parser:
     def identifier(self) -> str:
         value = self.take()
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) or value in {
-            "fn", "export", "public", "private", "let", "assert", "return", "if", "else", "for", "in"
+            "fn", "record", "export", "public", "private", "let", "assert", "return", "if", "else", "for", "in"
         }:
             raise CompileError("E_IDENTIFIER", f"invalid identifier {value!r}")
         return value
@@ -356,12 +372,31 @@ class Parser:
                 raise CompileError("E_TYPE_BOUND", "byte-string length is outside profile bounds")
             return Type("bytes", None, length)
         if name not in ("bool", "u8", "u16", "u32", "u64", "field"):
-            raise CompileError("E_TYPE", f"unsupported type {name!r}")
+            if name in self.records:
+                return self.records[name]
+            raise CompileError("E_TYPE", f"unsupported or forward-declared type {name!r}")
         return Type(name)
 
     def parse(self) -> list[Function]:
         functions = []
         while not self.peek("<eof>"):
+            if self.peek("record"):
+                self.take()
+                name = self.identifier()
+                if name in self.records:
+                    raise CompileError("E_RECORD_DUPLICATE", f"duplicate record {name!r}")
+                self.take("{")
+                fields = []
+                while not self.peek("}"):
+                    field_name = self.identifier()
+                    self.take(":")
+                    fields.append((field_name, self.parse_type()))
+                    self.take(";")
+                self.take("}")
+                if not fields or [field[0] for field in fields] != sorted(set(field[0] for field in fields)):
+                    raise CompileError("E_RECORD_FIELDS", "record fields must be nonempty, unique and name-sorted")
+                self.records[name] = Type("record", fields=tuple(fields))
+                continue
             exported = False
             if self.peek("export"):
                 self.take()
@@ -467,7 +502,20 @@ class Parser:
             self.take("]")
             left = Expr("array", None, tuple(elements))
         elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token):
-            if self.peek("("):
+            if self.peek("{"):
+                self.take()
+                field_names = []
+                field_values = []
+                while not self.peek("}"):
+                    field_names.append(self.identifier())
+                    self.take(":")
+                    field_values.append(self.expression())
+                    if not self.peek(","):
+                        break
+                    self.take()
+                self.take("}")
+                left = Expr("record", (token, tuple(field_names)), tuple(field_values))
+            elif self.peek("("):
                 self.take()
                 arguments = []
                 if not self.peek(")"):
@@ -487,6 +535,9 @@ class Parser:
             index = self.expression()
             self.take("]")
             left = Expr("index", None, (left, index))
+        while self.peek("."):
+            self.take()
+            left = Expr("field", self.identifier(), (left,))
         precedence = {"||": 1, "&&": 2, "==": 3, "!=": 3, "<": 4, "<=": 4, ">": 4, ">=": 4,
                       "<<": 5, ">>": 5, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7}
         while self.peek() in precedence and precedence[str(self.peek())] >= minimum:
@@ -523,10 +574,12 @@ INTRINSICS = {
 
 
 class Lowerer:
-    def __init__(self, function_names: dict[str, Function], limits: dict, current_function: str):
+    def __init__(self, function_names: dict[str, Function], limits: dict, current_function: str,
+                 records: dict[str, Type]):
         self.function_names = function_names
         self.limits = limits
         self.current_function = current_function
+        self.records = records
         self.instructions: list[Instruction] = []
         self.environment: dict[str, tuple[Type, int]] = {}
         self.return_value: int | None = None
@@ -627,6 +680,30 @@ class Lowerer:
             if index_type.name != "u64":
                 raise CompileError("E_INDEX_TYPE", "array index requires u64")
             return array_type.element, self.emit("index", array_type.element, (array, index), immediate=array_type.length)
+        if expression.kind == "record":
+            record_name, field_names = expression.value
+            record_type = self.records.get(record_name)
+            if record_type is None or expected != record_type:
+                raise CompileError("E_RECORD_TYPE", "record literal requires its exact declared context")
+            if tuple(name for name, _ in record_type.fields) != field_names:
+                raise CompileError("E_RECORD_FIELDS", "record literal fields are missing, reordered or unknown")
+            operands = []
+            for expression_value, (_, field_type) in zip(expression.args, record_type.fields):
+                actual, value = self.expression(expression_value, field_type)
+                if actual != field_type:
+                    raise CompileError("E_RECORD_FIELD_TYPE", "record field type differs")
+                operands.append(value)
+            return record_type, self.emit("record", record_type, operands)
+        if expression.kind == "field":
+            record_type, record = self.expression(expression.args[0])
+            if record_type.name != "record":
+                raise CompileError("E_FIELD_TYPE", "field access requires a record")
+            matches = [(index, type_) for index, (name, type_) in enumerate(record_type.fields)
+                       if name == expression.value]
+            if len(matches) != 1:
+                raise CompileError("E_FIELD_NAME", f"unknown record field {expression.value!r}")
+            index, field_type = matches[0]
+            return field_type, self.emit("field", field_type, (record,), immediate=index)
         raise CompileError("E_EXPRESSION_KIND", "unknown expression kind")
 
     def statements(self, statements: tuple[Statement, ...], guard: int | None = None, nested=False) -> None:
@@ -700,7 +777,7 @@ class Lowerer:
 
 OPCODES = {name: index for index, name in enumerate((
     "parameter", "const", "not", "and", "or", "eq", "ne", "lt", "le", "gt", "ge",
-    "add", "sub", "mul", "div", "rem", "shl", "shr", "array", "index", "intrinsic", "call", "assert", "return"
+    "add", "sub", "mul", "div", "rem", "shl", "shr", "array", "index", "record", "field", "intrinsic", "call", "assert", "return"
 ), 1)}
 
 
@@ -748,8 +825,9 @@ def encode_ir(functions: list[CompiledFunction], profile_digest: bytes) -> bytes
 
 def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], bytes, dict, dict]:
     functions = []
+    records = {}
     for path, data in package.sources:
-        functions.extend(Parser(lex(data, path), path).parse())
+        functions.extend(Parser(lex(data, path), path, records).parse())
     if not functions:
         raise CompileError("E_FUNCTION_COUNT", "package contains no functions")
     names = [function.name for function in functions]
@@ -759,7 +837,8 @@ def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], byt
     actual_exports = [function.name for function in functions if function.exported]
     if actual_exports != package.manifest["exports"]:
         raise CompileError("E_EXPORT_MISMATCH", "manifest exports differ from source exports")
-    compiled = [Lowerer(mapping, package.manifest["limits"], function.name).lower(function) for function in functions]
+    compiled = [Lowerer(mapping, package.manifest["limits"], function.name, records).lower(function)
+                for function in functions]
     profile = target_profile()
     if package.manifest["target_profile"] != profile["name"]:
         raise CompileError("E_TARGET_PROFILE_NAME", "package target-profile name mismatch")
@@ -784,6 +863,8 @@ def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], byt
                     cost = 1 + len(instruction.operands)
                 elif instruction.opcode == "index":
                     cost = 1 + 2 * int(instruction.immediate or 0)
+                elif instruction.opcode == "record":
+                    cost = 1 + len(instruction.operands)
                 else:
                     cost = 1
                 constraints_for_function = checked_add(constraints_for_function, cost, "constraint estimate")
@@ -841,8 +922,183 @@ def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], byt
     return compiled, ir, {"profile": profile, "resources": resources}, schemas
 
 
+PASTA_FP_MODULUS = int("40000000000000000000000000000000224698fc094cf91b992d30ed00000001", 16)
+
+
+class ExecutionFailure(RuntimeError):
+    pass
+
+
+class UnsupportedEvaluation(RuntimeError):
+    pass
+
+
+def neutral_value(type_name: str):
+    match = re.fullmatch(r"\[(.+);([1-9][0-9]{0,3})\]", type_name)
+    if match:
+        return tuple(neutral_value(match.group(1)) for _ in range(int(match.group(2))))
+    if type_name.startswith("{"):
+        return tuple(neutral_value(type_) for _, type_ in parse_record_type(type_name))
+    return False if type_name == "bool" else 0
+
+
+def checked_value(value, type_name: str):
+    if type_name == "bool":
+        if type(value) is not bool:
+            raise ExecutionFailure("expected bool")
+        return value
+    if type_name in INTEGER_BITS:
+        if type(value) is not int or value < 0 or value >= 1 << INTEGER_BITS[type_name]:
+            raise ExecutionFailure(f"value is outside {type_name}")
+        return value
+    if type_name == "field":
+        if type(value) is not int or value < 0 or value >= PASTA_FP_MODULUS:
+            raise ExecutionFailure("value is outside the Pasta base field")
+        return value
+    match = re.fullmatch(r"\[(.+);([1-9][0-9]{0,3})\]", type_name)
+    if match:
+        if not isinstance(value, (list, tuple)) or len(value) != int(match.group(2)):
+            raise ExecutionFailure("fixed-array value has the wrong length")
+        return tuple(checked_value(item, match.group(1)) for item in value)
+    if type_name.startswith("{"):
+        fields = parse_record_type(type_name)
+        if not isinstance(value, (list, tuple)) or len(value) != len(fields):
+            raise ExecutionFailure("record value has the wrong field count")
+        return tuple(checked_value(item, field_type) for item, (_, field_type) in zip(value, fields))
+    raise ExecutionFailure(f"reference evaluator does not support {type_name}")
+
+
+def evaluate_function(function: CompiledFunction, inputs: list, functions: dict[str, CompiledFunction]):
+    if len(inputs) != len(function.source.parameters):
+        raise ExecutionFailure("input arity mismatch")
+    typed_inputs = [checked_value(value, parameter.type.canonical())
+                    for value, parameter in zip(inputs, function.source.parameters)]
+    input_index = 0
+    values = {}
+    result = None
+    for index, instruction in enumerate(function.instructions):
+        active = instruction.guard is None or bool(values[instruction.guard])
+        operands = [values[operand] for operand in instruction.operands]
+        if instruction.opcode == "parameter":
+            value = typed_inputs[input_index]
+            input_index += 1
+        elif not active:
+            value = neutral_value(instruction.type)
+        elif instruction.opcode == "const":
+            value = checked_value(bool(instruction.immediate) if instruction.type == "bool" else instruction.immediate,
+                                  instruction.type)
+        elif instruction.opcode == "not":
+            value = not operands[0]
+        elif instruction.opcode == "and":
+            value = operands[0] and operands[1]
+        elif instruction.opcode == "or":
+            value = operands[0] or operands[1]
+        elif instruction.opcode in ("eq", "ne", "lt", "le", "gt", "ge"):
+            value = {"eq": operands[0] == operands[1], "ne": operands[0] != operands[1],
+                     "lt": operands[0] < operands[1], "le": operands[0] <= operands[1],
+                     "gt": operands[0] > operands[1], "ge": operands[0] >= operands[1]}[instruction.opcode]
+        elif instruction.opcode in ("add", "sub", "mul", "div", "rem", "shl", "shr"):
+            left, right = operands
+            if instruction.opcode in ("div", "rem") and right == 0:
+                raise ExecutionFailure("division by zero")
+            if instruction.opcode in ("shl", "shr") and right >= INTEGER_BITS[instruction.type]:
+                raise ExecutionFailure("shift count exceeds integer width")
+            if instruction.opcode == "add": value = left + right
+            elif instruction.opcode == "sub": value = left - right
+            elif instruction.opcode == "mul": value = left * right
+            elif instruction.opcode == "div":
+                value = (left * pow(right, -1, PASTA_FP_MODULUS)) % PASTA_FP_MODULUS if instruction.type == "field" else left // right
+            elif instruction.opcode == "rem": value = left % right
+            elif instruction.opcode == "shl": value = left << right
+            else: value = left >> right
+            if instruction.type == "field":
+                value %= PASTA_FP_MODULUS
+            value = checked_value(value, instruction.type)
+        elif instruction.opcode == "array":
+            value = checked_value(operands, instruction.type)
+        elif instruction.opcode == "index":
+            if operands[1] >= int(instruction.immediate):
+                raise ExecutionFailure("array index exceeds its bound")
+            value = operands[0][operands[1]]
+        elif instruction.opcode == "record":
+            value = checked_value(operands, instruction.type)
+        elif instruction.opcode == "field":
+            value = operands[0][int(instruction.immediate)]
+        elif instruction.opcode == "call":
+            value = evaluate_function(functions[instruction.text], operands, functions)
+        elif instruction.opcode == "intrinsic":
+            raise UnsupportedEvaluation("reference evaluator has no intrinsic backend")
+        elif instruction.opcode == "assert":
+            if not operands[0]:
+                raise ExecutionFailure("assertion failed")
+            continue
+        elif instruction.opcode == "return":
+            result = checked_value(operands[0], instruction.type)
+            continue
+        else:
+            raise ExecutionFailure("unknown evaluator opcode")
+        if instruction.result is not None:
+            values[index] = checked_value(value, instruction.type)
+    if result is None:
+        raise ExecutionFailure("function produced no result")
+    return result
+
+
+def evaluate_vectors(package: SourcePackage, compiled: list[CompiledFunction]) -> dict:
+    functions = {function.source.name: function for function in compiled}
+    results = []
+    for number, vector in enumerate(package.manifest["vectors"]):
+        try:
+            result = evaluate_function(functions[vector["function"]], vector["inputs"], functions)
+        except UnsupportedEvaluation as error:
+            raise CompileError("E_VECTOR_UNSUPPORTED", f"vector {number} cannot be evaluated: {error}") from error
+        except ExecutionFailure as error:
+            if vector.get("expect_failure") is not True:
+                raise CompileError("E_VECTOR_EXECUTION", f"positive vector {number} failed: {error}") from error
+            results.append({"function": vector["function"], "inputs": vector["inputs"],
+                            "outcome": "rejected"})
+            continue
+        if vector.get("expect_failure") is True:
+            raise CompileError("E_VECTOR_ACCEPTED", f"negative vector {number} unexpectedly succeeded")
+        expected = checked_value(vector["expected"], functions[vector["function"]].source.return_type.canonical())
+        if result != expected:
+            raise CompileError("E_VECTOR_RESULT", f"positive vector {number} result mismatch")
+        results.append({"function": vector["function"], "inputs": vector["inputs"],
+                        "outcome": "accepted", "result": json_value(result)})
+    return {"format": 1, "reference": "checked-onyx-ir-v1", "vectors": results}
+
+
+def json_value(value):
+    if isinstance(value, tuple):
+        return [json_value(item) for item in value]
+    return value
+
+
+def parse_record_type(value: str) -> tuple[tuple[str, str], ...]:
+    if not value.startswith("{") or not value.endswith("}"):
+        raise ExecutionFailure("invalid record type")
+    body = value[1:-1]
+    fields = []
+    start = 0
+    depth = 0
+    parts = []
+    for index, character in enumerate(body):
+        if character in "[{": depth += 1
+        elif character in "]}": depth -= 1
+        elif character == "," and depth == 0:
+            parts.append(body[start:index]); start = index + 1
+    parts.append(body[start:])
+    for part in parts:
+        name, separator, type_name = part.partition(":")
+        if not separator or not name or not type_name:
+            raise ExecutionFailure("invalid record type")
+        fields.append((name, type_name))
+    return tuple(fields)
+
+
 def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
-    _, ir, metadata, schemas = compile_sources(package)
+    compiled, ir, metadata, schemas = compile_sources(package)
+    vectors = evaluate_vectors(package, compiled)
     parent = destination.resolve().parent
     parent.mkdir(parents=True, exist_ok=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix=destination.name + ".tmp-", dir=parent))
@@ -860,6 +1116,7 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
         (temporary / "ir-id.txt").write_bytes((ir_id + "\n").encode("ascii"))
         (temporary / "target-profile.json").write_bytes(canonical_json(metadata["profile"]))
         (temporary / "resources.json").write_bytes(canonical_json(metadata["resources"]))
+        (temporary / "vectors.json").write_bytes(canonical_json(vectors))
         for name, schema in schemas.items():
             (temporary / "schemas" / f"{name}.json").write_bytes(canonical_json(schema))
         provenance = {

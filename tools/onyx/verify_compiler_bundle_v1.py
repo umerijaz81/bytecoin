@@ -75,7 +75,12 @@ def valid_type(value: str) -> bool:
     if match:
         return int(match.group(1)) <= 4096
     match = compiler_v1.re.fullmatch(r"\[(.+);([1-9][0-9]{0,3})\]", value)
-    return bool(match and int(match.group(2)) <= compiler_v1.MAX_LOOP_BOUND and valid_type(match.group(1)))
+    if match:
+        return bool(int(match.group(2)) <= compiler_v1.MAX_LOOP_BOUND and valid_type(match.group(1)))
+    if value.startswith("{"):
+        fields = record_type(value)
+        return fields is not None and bool(fields)
+    return False
 
 
 def array_type(value: str) -> tuple[str, int] | None:
@@ -83,6 +88,33 @@ def array_type(value: str) -> tuple[str, int] | None:
     if not match or not valid_type(match.group(1)):
         return None
     return match.group(1), int(match.group(2))
+
+
+def record_type(value: str) -> tuple[tuple[str, str], ...] | None:
+    if not value.startswith("{") or not value.endswith("}"):
+        return None
+    body = value[1:-1]
+    start = 0
+    depth = 0
+    parts = []
+    for index, character in enumerate(body):
+        if character in "[{": depth += 1
+        elif character in "]}":
+            depth -= 1
+            if depth < 0: return None
+        elif character == "," and depth == 0:
+            parts.append(body[start:index]); start = index + 1
+    if depth != 0: return None
+    parts.append(body[start:])
+    fields = []
+    for part in parts:
+        name, separator, field_type = part.partition(":")
+        if not separator or not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or not valid_type(field_type):
+            return None
+        fields.append((name, field_type))
+    if [name for name, _ in fields] != sorted(set(name for name, _ in fields)):
+        return None
+    return tuple(fields)
 
 
 def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
@@ -181,7 +213,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 raise VerificationError("IR direct call is not acyclic name order")
             if opcode not in ("parameter", "intrinsic", "call") and text:
                 raise VerificationError("unexpected IR instruction text")
-            if opcode not in ("const", "index") and immediate is not None:
+            if opcode not in ("const", "index", "field") and immediate is not None:
                 raise VerificationError("unexpected IR immediate")
             if opcode == "return":
                 if saw_return or index + 1 != instruction_count or len(operands) != 1:
@@ -192,6 +224,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 "ne": 2, "lt": 2, "le": 2, "gt": 2, "ge": 2, "add": 2, "sub": 2,
                 "mul": 2, "div": 2, "rem": 2, "shl": 2, "shr": 2, "return": 1,
                 "index": 2,
+                "field": 1,
             }
             if opcode in expected_operands and len(operands) != expected_operands[opcode]:
                 raise VerificationError("IR opcode has a noncanonical operand count")
@@ -214,6 +247,8 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                     function_constraints += 1 + len(operands)
                 elif opcode == "index":
                     function_constraints += 1 + 2 * int(immediate or 0)
+                elif opcode == "record":
+                    function_constraints += 1 + len(operands)
                 else:
                     function_constraints += 1
             operand_types = tuple(value_types[operand] for operand in operands)
@@ -253,6 +288,14 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 parsed_array = array_type(operand_types[0]) if len(operand_types) == 2 else None
                 if parsed_array is None or operand_types[1] != "u64" or type_name != parsed_array[0] or immediate != parsed_array[1]:
                     raise VerificationError("IR bounded-index types are invalid")
+            elif opcode == "record":
+                fields = record_type(type_name)
+                if fields is None or operand_types != tuple(field_type for _, field_type in fields):
+                    raise VerificationError("IR record construction types are invalid")
+            elif opcode == "field":
+                fields = record_type(operand_types[0]) if len(operand_types) == 1 else None
+                if fields is None or immediate is None or immediate >= len(fields) or type_name != fields[immediate][1]:
+                    raise VerificationError("IR record field access is invalid")
             elif opcode == "assert" and (type_name != "bool" or any(value != "bool" for value in operand_types)):
                 raise VerificationError("IR assertion types are invalid")
             elif opcode == "return" and (operand_types != (return_type,) or type_name != return_type):
