@@ -47,9 +47,24 @@ jobs:
         if: matrix.shard == 'core'
         shell: bash
         run: node sdk/onyx/typescript/test.mjs
+      - name: Build deterministic Onyx compiler Halo2 backend
+        if: matrix.shard == 'core'
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          cargo build --release --locked --offline
+          --manifest-path vendor/onyx-zk/Cargo.toml
+          --bin onyx-compiler-backend
       - name: Test deterministic Onyx compiler frontend and independent verifier
         if: matrix.shard == 'core'
-        run: python -m unittest discover -s tests/onyx_compiler -p "test_*.py"
+        shell: bash
+        run: |
+          if [[ -x vendor/onyx-zk/target/release/onyx-compiler-backend.exe ]]; then
+            export ONYX_COMPILER_BACKEND="$PWD/vendor/onyx-zk/target/release/onyx-compiler-backend.exe"
+          else
+            export ONYX_COMPILER_BACKEND="$PWD/vendor/onyx-zk/target/release/onyx-compiler-backend"
+          fi
+          python -m unittest discover -s tests/onyx_compiler -p "test_*.py"
       - name: Build versioned Python SDK wheel without network access
         if: matrix.shard == 'core'
         run: |

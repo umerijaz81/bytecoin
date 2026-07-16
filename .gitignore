@@ -12,6 +12,8 @@ cmake-build-*
 
 # Build
 bin/
+!vendor/onyx-zk/src/bin/
+!vendor/onyx-zk/src/bin/onyx-compiler-backend.rs
 libs/
 build/
 build-zk/

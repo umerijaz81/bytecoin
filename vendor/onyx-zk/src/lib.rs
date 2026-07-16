@@ -27,6 +27,7 @@ pub mod authorization;
 pub mod bridge;
 pub mod bridge_circuit;
 pub mod bundle_circuit;
+pub mod compiler_backend;
 pub mod keys;
 pub mod linked_transfer_circuit;
 pub mod membership_circuit;

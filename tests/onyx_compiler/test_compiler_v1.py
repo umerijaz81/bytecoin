@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import shutil
 import sys
@@ -330,6 +331,23 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
                 vectors=[{"function": "balance", "inputs": [7, 10], "expected": 10}])
             with self.assertRaisesRegex(compiler_v1.CompileError, "E_CALL_CYCLE"):
                 compiler_v1.compile_sources(compiler_v1.load_package(package))
+
+    @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
+    def test_halo2_descriptor_is_embedded_and_independently_regenerated(self):
+        source = b"""export fn balance(public left: field, private right: field) -> field {
+  let output: field = left * right;
+  return output;
+}
+"""
+        backend = pathlib.Path(os.environ["ONYX_COMPILER_BACKEND"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [6, 7], "expected": 42}])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
+            self.assertEqual((bundle / "halo2-vk-descriptor.bin").stat().st_size, 101)
+            verifier.verify_bundle(bundle, backend)
 
 
 if __name__ == "__main__":

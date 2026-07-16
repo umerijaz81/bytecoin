@@ -61,13 +61,31 @@ the call graph, recomputes expanded instruction/constraint/row/column/witness/me
 checks every artifact digest, recompiles from the normalized package in a fresh absolute path and
 requires every output byte to match.
 
+## Halo2 scalar alpha backend
+
+`vendor/onyx-zk/src/compiler_backend.rs` independently decodes canonical `ONXIR` inside the pinned
+Rust/Halo2 dependency boundary. Its first executable profile accepts exactly one call-free exported
+function over Pasta `field` and `bool` values. It rejects integers, composites, calls, guards and
+intrinsics until their circuit gadgets are implemented. The circuit constrains public parameters and
+the returned value as instances, copies every operand through Halo2 equality constraints, range-checks
+booleans, and implements field add/subtract/multiply, boolean not/and/or, equality/inequality with an
+inverse witness, and assertion gates.
+
+The `onyx-compiler-backend` executable reads IR only from standard input and emits a fixed-length
+descriptor containing the circuit size, profile digest, IR digest and a domain-separated digest of
+the pinned Halo2 verifying key. Passing `--backend-executable` to the frontend embeds that descriptor
+and backend measurements. Verification then requires an explicitly supplied backend executable,
+regenerates the VK descriptor from bundled IR, recompiles the whole bundle and byte-compares it. The
+descriptor remains `scalar-alpha-not-registrable`; unsupported IR cannot omit constraints silently.
+
 The locked three-platform core workflow runs positive reproduction plus negative manifest, source,
 IR, resource, call-graph and unsupported-language tests. `tests/onyx_compiler/golden-v1.json` freezes
 the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 
 ## Remaining activation boundary
 
-The frontend does not yet lower IR into Halo2 constraints, generate or independently regenerate a
-verifying key, construct proofs, or supply backend measurements. Those stages, structured fuzzing,
-standard-library packages, independent builds, external audits and public testnet soak remain
-mandatory before governance can approve any compiler/profile digest.
+The scalar subset now lowers to Halo2 and independently regenerates its descriptor, but the complete
+language does not. Checked integers, arrays, records, byte strings, guarded control flow, calls and
+cryptographic intrinsics still require circuit lowering, proof vectors and backend measurements.
+Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
+soak remain mandatory before governance can approve any compiler/profile digest.

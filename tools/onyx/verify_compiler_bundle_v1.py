@@ -369,7 +369,7 @@ def compare_directories(first: pathlib.Path, second: pathlib.Path) -> None:
             raise VerificationError(f"recompiled artifact differs: {relative}")
 
 
-def verify_bundle(root: pathlib.Path) -> None:
+def verify_bundle(root: pathlib.Path, backend_executable: pathlib.Path | None = None) -> None:
     root = root.resolve()
     if not root.is_dir() or root.is_symlink():
         raise VerificationError("bundle root is not a regular directory")
@@ -404,8 +404,8 @@ def verify_bundle(root: pathlib.Path) -> None:
     provenance, _ = read_json(root / "provenance.json")
     if not isinstance(profile, dict) or profile.get("backend_status") != "frontend-only-not-registrable":
         raise VerificationError("bundle target profile is not the fail-closed frontend profile")
-    if not isinstance(resources, dict) or resources.get("backend_measurements", "missing") is not None:
-        raise VerificationError("frontend resource report claims backend measurements")
+    if not isinstance(resources, dict) or "backend_measurements" not in resources:
+        raise VerificationError("resource report omits the explicit backend-measurement state")
     if not isinstance(provenance, dict) or provenance.get("registrable") is not False:
         raise VerificationError("frontend bundle incorrectly claims registrability")
     lock, lock_bytes = read_json(root / "source" / "onyx.lock")
@@ -424,22 +424,43 @@ def verify_bundle(root: pathlib.Path) -> None:
     expected_ir_id = hashlib.sha256(compiler_v1.IR_ID_DOMAIN + ir).hexdigest()
     if (root / "ir-id.txt").read_bytes() != (expected_ir_id + "\n").encode("ascii") or provenance.get("ir_id") != expected_ir_id:
         raise VerificationError("IR identifier mismatch")
+    descriptor_path = root / "halo2-vk-descriptor.bin"
+    if descriptor_path.exists():
+        if backend_executable is None:
+            raise VerificationError("Halo2 descriptor requires an explicit regeneration executable")
+        backend = provenance.get("halo2_backend")
+        measurements = resources["backend_measurements"]
+        if not isinstance(backend, dict) or not isinstance(measurements, dict) or \
+                backend.get("status") != "scalar-alpha-not-registrable":
+            raise VerificationError("invalid Halo2 alpha provenance")
+        descriptor = descriptor_path.read_bytes()
+        if len(descriptor) != measurements.get("descriptor_bytes") or \
+                hashlib.sha256(descriptor).hexdigest() != backend.get("descriptor_sha256") or \
+                measurements.get("circuit_k") != backend.get("circuit_k"):
+            raise VerificationError("Halo2 descriptor differs from backend provenance")
+        regenerated = compiler_v1.backend_descriptor(backend_executable, ir, backend["circuit_k"])
+        if regenerated != descriptor:
+            raise VerificationError("Halo2 verifying-key descriptor did not regenerate")
+    elif resources["backend_measurements"] is not None or "halo2_backend" in provenance:
+        raise VerificationError("backend metadata exists without a Halo2 descriptor")
     if hashlib.sha256(manifest_bytes).hexdigest() == "":  # keep manifest bytes covered by strict parsing
         raise VerificationError("unreachable manifest digest state")
     with tempfile.TemporaryDirectory(prefix="onyx-compiler-verify-") as temporary:
         rebuilt = pathlib.Path(temporary) / "rebuilt"
         dependency_store = root / "dependencies"
         compiler_v1.write_bundle(compiler_v1.load_package(root / "source",
-            dependency_store if dependency_store.exists() else None), rebuilt)
+            dependency_store if dependency_store.exists() else None), rebuilt, backend_executable,
+            provenance.get("halo2_backend", {}).get("circuit_k", 12))
         compare_directories(root, rebuilt)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle", type=pathlib.Path)
+    parser.add_argument("--backend-executable", type=pathlib.Path)
     args = parser.parse_args()
     try:
-        verify_bundle(args.bundle)
+        verify_bundle(args.bundle, args.backend_executable)
     except (VerificationError, compiler_v1.CompileError) as error:
         print(f"verification failed: {error}")
         return 2

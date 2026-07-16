@@ -15,6 +15,7 @@ SHARDS = {
     "core": (
         "authorization",
         "bridge",
+        "compiler_backend",
         "keys",
         "note_commitment_circuit",
         "program",

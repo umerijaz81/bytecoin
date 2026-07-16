@@ -15,6 +15,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import tempfile
 import unicodedata
 
@@ -1259,9 +1260,36 @@ def parse_record_type(value: str) -> tuple[tuple[str, str], ...]:
     return tuple(fields)
 
 
-def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
+def backend_descriptor(executable: pathlib.Path, ir: bytes, circuit_k: int) -> bytes:
+    executable = executable.resolve()
+    if not executable.is_file() or executable.is_symlink():
+        raise CompileError("E_BACKEND_EXECUTABLE", "Halo2 backend executable is missing or linked")
+    process = subprocess.run([str(executable), "descriptor", str(circuit_k)], input=ir,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
+    if process.returncode != 0:
+        message = process.stderr.decode("utf-8", "replace")[:512]
+        raise CompileError("E_BACKEND_REJECTED", f"Halo2 backend rejected canonical IR: {message}")
+    output = process.stdout.strip()
+    if not re.fullmatch(b"[0-9a-f]{202}", output):
+        raise CompileError("E_BACKEND_DESCRIPTOR", "Halo2 backend descriptor is not canonical v1 hex")
+    descriptor = bytes.fromhex(output.decode("ascii"))
+    if descriptor[0] != 1 or int.from_bytes(descriptor[1:5], "little") != circuit_k:
+        raise CompileError("E_BACKEND_DESCRIPTOR", "Halo2 backend descriptor header mismatch")
+    return descriptor
+
+
+def write_bundle(package: SourcePackage, destination: pathlib.Path,
+                 backend_executable: pathlib.Path | None = None, circuit_k: int = 12) -> None:
     compiled, ir, metadata, schemas = compile_sources(package)
     vectors = evaluate_vectors(package, compiled)
+    descriptor = None
+    if backend_executable is not None:
+        descriptor = backend_descriptor(backend_executable, ir, circuit_k)
+        metadata["resources"]["backend_measurements"] = {
+            "backend": "halo2-ipa-pasta-compiler-scalar-alpha",
+            "circuit_k": circuit_k,
+            "descriptor_bytes": len(descriptor),
+        }
     parent = destination.resolve().parent
     parent.mkdir(parents=True, exist_ok=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix=destination.name + ".tmp-", dir=parent))
@@ -1290,6 +1318,8 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
         (temporary / "target-profile.json").write_bytes(canonical_json(metadata["profile"]))
         (temporary / "resources.json").write_bytes(canonical_json(metadata["resources"]))
         (temporary / "vectors.json").write_bytes(canonical_json(vectors))
+        if descriptor is not None:
+            (temporary / "halo2-vk-descriptor.bin").write_bytes(descriptor)
         for name, schema in schemas.items():
             (temporary / "schemas" / f"{name}.json").write_bytes(canonical_json(schema))
         provenance = {
@@ -1305,6 +1335,12 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
             "registrable": False,
             "missing_gate": "audited deterministic Halo2 lowering and verifying-key regeneration",
         }
+        if descriptor is not None:
+            provenance["halo2_backend"] = {
+                "circuit_k": circuit_k,
+                "descriptor_sha256": sha256(descriptor),
+                "status": "scalar-alpha-not-registrable",
+            }
         (temporary / "provenance.json").write_bytes(canonical_json(provenance))
         files = []
         for path in sorted((path for path in temporary.rglob("*") if path.is_file()), key=lambda item: item.relative_to(temporary).as_posix().encode("utf-8")):
@@ -1324,6 +1360,8 @@ def main() -> int:
     parser.add_argument("package", nargs="?", type=pathlib.Path)
     parser.add_argument("output", nargs="?", type=pathlib.Path)
     parser.add_argument("--dependency-store", type=pathlib.Path)
+    parser.add_argument("--backend-executable", type=pathlib.Path)
+    parser.add_argument("--circuit-k", type=int, default=12)
     parser.add_argument("--print-build-digest", action="store_true")
     parser.add_argument("--print-target-profile-digest", action="store_true")
     args = parser.parse_args()
@@ -1336,7 +1374,8 @@ def main() -> int:
     if args.package is None or args.output is None:
         parser.error("package and output are required")
     try:
-        write_bundle(load_package(args.package, args.dependency_store), args.output)
+        write_bundle(load_package(args.package, args.dependency_store), args.output,
+                     args.backend_executable, args.circuit_k)
     except CompileError as error:
         print(error)
         return 2
