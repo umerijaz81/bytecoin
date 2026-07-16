@@ -58,6 +58,65 @@ void test_dandelion_policy() {
 	    "empty topology sentinel changed");
 }
 
+void test_dandelion_adversarial_campaign() {
+	using cn::p2p::DandelionPolicy;
+	const size_t peer_count = 64;
+	const size_t adversarial_count = 16;
+	std::vector<int> scores(peer_count, 0);
+	std::vector<size_t> selections(peer_count, 0);
+	uint64_t state = 0xbb67ae8584caa73bULL;
+	size_t reflected = 0;
+	size_t recovered = 0;
+	for (size_t transaction = 0; transaction != 20000; ++transaction) {
+		state ^= state << 13;
+		state ^= state >> 7;
+		state ^= state << 17;
+		const size_t selected = DandelionPolicy::select_weighted_peer(scores, state);
+		require(selected < peer_count, "campaign selected a nonexistent stem peer");
+		++selections[selected];
+		if (selected < adversarial_count) {
+			// A selected observer reflects its own fluff immediately. That reflection must not cancel
+			// pending state; disconnect/embargo recovery then diffuses the transaction and penalizes it.
+			require(!DandelionPolicy::accept_fluff_reflection(true),
+			    "adversarial self-reflection cancelled pending stem state");
+			scores[selected] = DandelionPolicy::update_peer_score(scores[selected], -2);
+			++recovered;
+		} else {
+			require(DandelionPolicy::accept_fluff_reflection(false),
+			    "independent fluff did not complete an honest stem");
+			scores[selected] = DandelionPolicy::update_peer_score(scores[selected], 1);
+			++reflected;
+		}
+		if (transaction % 64 == 63)
+			for (int &score : scores)
+				score = DandelionPolicy::decay_peer_score(score);
+		// Model a connection identity disappearing. New connections start neutral and cannot inherit
+		// permanent reputation from the old socket identity.
+		if (transaction % 257 == 256)
+			scores[(state >> 32) % peer_count] = 0;
+		for (int score : scores)
+			require(score >= DandelionPolicy::MIN_PEER_SCORE &&
+			            score <= DandelionPolicy::MAX_PEER_SCORE,
+			    "campaign peer score escaped its bounds");
+	}
+	require(reflected + recovered == 20000, "campaign lost a pending transaction");
+	size_t adversarial_selections = 0;
+	size_t honest_selections = 0;
+	for (size_t peer = 0; peer != peer_count; ++peer) {
+		require(selections[peer] != 0, "weighted campaign permanently excluded a live peer");
+		if (peer < adversarial_count)
+			adversarial_selections += selections[peer];
+		else
+			honest_selections += selections[peer];
+	}
+	// Compare per-peer rates: repeatedly failing peers remain reachable but should carry less than
+	// half the average honest peer's stem load. Score decay and connection replacement deliberately
+	// restore neutral eligibility, so this is a delivery preference rather than permanent exclusion.
+	require(honest_selections * adversarial_count > adversarial_selections *
+	            (peer_count - adversarial_count) * 2,
+	    "delivery scoring did not sufficiently reduce repeated adversarial selection");
+}
+
 void test_socks5_policy() {
 	using cn::p2p::Socks5;
 	require(Socks5::greeting() == common::BinaryArray({5, 1, 0}), "SOCKS5 greeting changed");
@@ -130,6 +189,7 @@ void test_socks5_policy() {
 int main() {
 	try {
 		test_dandelion_policy();
+		test_dandelion_adversarial_campaign();
 		test_socks5_policy();
 		std::cout << "network privacy policy tests passed" << std::endl;
 		return 0;
