@@ -205,7 +205,7 @@ public:
 
 	crypto::CryptoNightContext crypto_context;
 	crypto::RandomXContext randomx_context;
-	std::shared_ptr<const crypto::RandomXDataset> randomx_dataset;
+	std::shared_ptr<const crypto::RandomXDataset> randomx_dataset_handle;
 	std::unique_ptr<RandomXHashPool> randomx_hash_pool;
 	BlockTemplate block{};
 	api::cnd::GetBlockTemplate::Response block_response;
@@ -292,12 +292,12 @@ public:
 		return true;
 	}
 	bool on_randomx_idle() {
-		if (!randomx_dataset || randomx_dataset->seed() != block_response.pow_seed_hash) {
+		if (!randomx_dataset_handle || randomx_dataset_handle->seed() != block_response.pow_seed_hash) {
 			randomx_hash_pool.reset();
-			randomx_dataset = std::make_shared<crypto::RandomXDataset>(block_response.pow_seed_hash,
+			randomx_dataset_handle = std::make_shared<crypto::RandomXDataset>(block_response.pow_seed_hash,
 			    mining_config.randomx_init_threads, mining_config.randomx_large_pages);
 			randomx_hash_pool =
-			    std::make_unique<RandomXHashPool>(randomx_dataset, mining_config.threads);
+			    std::make_unique<RandomXHashPool>(randomx_dataset_handle, mining_config.threads);
 			std::cout << "RandomX full-memory dataset ready with " << mining_config.threads
 			          << " hashing thread(s)" << std::endl;
 		}
@@ -428,7 +428,7 @@ public:
 				    block_response = resp;
 				    if (resp.pow_algorithm != "randomx-v2") {
 					    randomx_hash_pool.reset();
-					    randomx_dataset.reset();
+					    randomx_dataset_handle.reset();
 				    }
 				    seria::from_binary(block, resp.blocktemplate_blob);
 				    set_root_extra_to_solo_mining_tag(block);
