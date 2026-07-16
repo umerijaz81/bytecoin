@@ -3,6 +3,7 @@
 
 #include "WalletState.hpp"
 #include "Config.hpp"
+#include "CryptoNoteConfig.hpp"
 #include "CryptoNoteTools.hpp"
 #include "TransactionBuilder.hpp"
 #include "TransactionExtra.hpp"
