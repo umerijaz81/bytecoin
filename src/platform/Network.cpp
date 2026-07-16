@@ -515,7 +515,7 @@ static void add_system_root_certs(ssl::context &ctx) {
 
 thread_local EventLoop *EventLoop::current_loop = nullptr;
 
-EventLoop::EventLoop(boost::asio::io_service &io_service) : io_service(io_service) {
+EventLoop::EventLoop(boost::asio::io_context &io_context) : io_context(io_context) {
 	if (current_loop)
 		throw std::logic_error("RunLoop::RunLoop Only single RunLoop per thread is allowed");
 	current_loop = this;
@@ -523,10 +523,10 @@ EventLoop::EventLoop(boost::asio::io_service &io_service) : io_service(io_servic
 
 EventLoop::~EventLoop() { current_loop = nullptr; }
 
-void EventLoop::cancel() { io_service.stop(); }
+void EventLoop::cancel() { io_context.stop(); }
 
-void EventLoop::run() { io_service.run(); }
-void EventLoop::wake(std::function<void()> &&a_handler) { io_service.post(std::move(a_handler)); }
+void EventLoop::run() { io_context.run(); }
+void EventLoop::wake(std::function<void()> &&a_handler) { io_context.post(std::move(a_handler)); }
 
 class SafeMessage::Impl {
 public:

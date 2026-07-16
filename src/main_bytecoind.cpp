@@ -131,7 +131,7 @@ int main(int argc, const char *argv[]) try {
 	}
 	//	block_chain.test_undo_everything(1790000);
 	//	return 0;
-	boost::asio::io_service io;
+	boost::asio::io_context io;
 	platform::EventLoop run_loop(io);
 
 	Node node(log_manager, config, block_chain);

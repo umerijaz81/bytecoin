@@ -232,7 +232,7 @@ private:
 namespace platform {
 class EventLoop : private common::Nocopy {  // enough wrappers! if boost, use no impl at all...
 public:
-	explicit EventLoop(boost::asio::io_service &io_service);
+	explicit EventLoop(boost::asio::io_context &io_context);
 	~EventLoop();
 
 	static EventLoop *current() { return current_loop; }
@@ -243,10 +243,10 @@ public:
 
 	static void cancel_current() { current()->cancel(); }
 
-	boost::asio::io_service &io() { return io_service; }
+	boost::asio::io_context &io() { return io_context; }
 
 private:
-	boost::asio::io_service &io_service;
+	boost::asio::io_context &io_context;
 	static thread_local EventLoop *current_loop;
 };
 class SafeMessage : private common::Nocopy {

@@ -474,7 +474,7 @@ public:
 			return 1;
 		}
 
-		boost::asio::io_service io;
+		boost::asio::io_context io;
 		platform::EventLoop run_loop(io);
 
 		HTTPMiner miner(mining_config);

@@ -334,7 +334,7 @@ int main(int argc, const char *argv[]) try {
 	logging::LoggerManager logManagerWalletNode;
 	logManagerWalletNode.configure_default(config.get_data_folder("logs"), "walletd-", cn::app_version());
 
-	boost::asio::io_service io;
+	boost::asio::io_context io;
 	platform::EventLoop run_loop(io);  // must be before Wallet creation (trezor uses io)
 
 	std::unique_ptr<Wallet> wallet;
@@ -509,7 +509,7 @@ int main(int argc, const char *argv[]) try {
 		try {
 			if (separate_thread_for_bytecoind) {
 				bytecoind_thread      = std::thread([&prm, &logManagerNode, &config, &currency] {
-                    boost::asio::io_service io;
+                    boost::asio::io_context io;
                     platform::EventLoop separate_run_loop(io);
 
                     std::unique_ptr<BlockChainState> separate_block_chain;
@@ -597,7 +597,7 @@ int main_app(common::console::UnicodeConsoleSetup &console_setup, common::Comman
 
 	logging::ConsoleLogger logger;
 
-	boost::asio::io_service io;
+	boost::asio::io_context io;
 	platform::EventLoop run_loop(io);
 
 	auto wallet_node = std::make_unique<WalletNodeExt>(config, currency, logger);
