@@ -6,7 +6,8 @@ in `docs/Onyx-Compiler-Specification.md`:
 ```text
 python tools/onyx/compiler_v1.py --print-build-digest
 python tools/onyx/compiler_v1.py --print-target-profile-digest
-python tools/onyx/compiler_v1.py <package-directory> <new-output-directory>
+python tools/onyx/compiler_v1.py <package-directory> <new-output-directory> \
+  --dependency-store <content-addressed-directory>
 python tools/onyx/verify_compiler_bundle_v1.py <output-directory>
 ```
 
@@ -20,8 +21,15 @@ A package contains exactly `onyx-package.json`, `onyx.lock` and its manifest-dec
 All JSON must use the compiler's canonical UTF-8 encoding (sorted keys, no insignificant whitespace,
 LF terminator). Source paths and files are digest-bound, UTF-8 NFC, LF-only, relative, byte-sorted and
 free of symlinks, case-fold collisions and undeclared ambient inputs. The manifest pins both the exact
-compiler build and target-profile digest. The current alpha fails closed on nonempty dependency locks
-until content-addressed dependency import is implemented.
+compiler build and target-profile digest.
+
+Dependencies are selected only from an explicitly supplied store whose child directory is the locked
+SHA-256 tree digest. Each canonical `onyx-library.json`, identity, version, sorted source list, file
+digest, namespace prefix and complete tree digest is independently checked. Dependency counts and
+aggregate bytes are bounded; unlisted files and symlinks fail closed. The call graph across libraries
+and application code is placed in deterministic lexicographic topological order, and recursion is
+rejected. Exact library trees are copied into the output bundle, so the verifier recompiles offline
+from the bundle rather than consulting the original store.
 
 The implemented language accepts explicitly public/private parameters, `bool`, checked `u8`/`u16`/
 `u32`/`u64`, Pasta `field`, canonical fixed byte strings with lowercase hex construction, fixed-array construction and
@@ -33,9 +41,9 @@ dominating boolean guard so checked arithmetic and assertions can be gated by a 
 backend. Recursion, backward calls, `while`, mutable globals, indirect calls, implicit casts, unknown
 intrinsics and nested returns are rejected.
 
-Dependency import and the remaining versioned cryptographic intrinsics are not implemented yet; using
-them fails compilation. This is intentionally recorded as remaining work rather than silently
-assigning host-language semantics.
+The remaining versioned cryptographic intrinsics are not implemented yet; using them fails compilation.
+This is intentionally recorded as remaining work rather than silently assigning host-language
+semantics.
 
 ## Artifact and verifier
 

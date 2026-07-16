@@ -26,6 +26,8 @@ IR_ID_DOMAIN = b"bytecoin.onyx.ir.v1"
 SCHEMA_DOMAIN = b"bytecoin.onyx.schema.v1"
 MAX_SOURCE_FILES = 64
 MAX_SOURCE_BYTES = 1 << 20
+MAX_DEPENDENCIES = 32
+MAX_DEPENDENCY_BYTES = 4 << 20
 MAX_TOKEN_COUNT = 200_000
 MAX_LOOP_BOUND = 1024
 MAX_INSTRUCTIONS = 1_000_000
@@ -108,12 +110,23 @@ def validate_path(text: object) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
+class LibraryPackage:
+    name: str
+    version: str
+    digest: str
+    root: pathlib.Path
+    manifest_bytes: bytes
+    sources: tuple[tuple[str, bytes], ...]
+
+
+@dataclasses.dataclass(frozen=True)
 class SourcePackage:
     root: pathlib.Path
     manifest: dict
     manifest_bytes: bytes
     lock_bytes: bytes
     sources: tuple[tuple[str, bytes], ...]
+    dependencies: tuple[LibraryPackage, ...]
 
 
 REQUIRED_LIMITS = (
@@ -126,7 +139,68 @@ REQUIRED_LIMITS = (
 )
 
 
-def load_package(root: pathlib.Path) -> SourcePackage:
+def tree_digest(files: tuple[tuple[str, bytes], ...]) -> str:
+    digest = hashlib.sha256(b"bytecoin.onyx.dependency-tree.v1")
+    for relative, data in files:
+        digest.update(enc_text(relative))
+        digest.update(enc_bytes(data))
+    return digest.hexdigest()
+
+
+def load_library(store: pathlib.Path, dependency: dict) -> LibraryPackage:
+    digest = dependency["artifact_sha256"]
+    root = (store / digest).resolve()
+    if store.resolve() not in root.parents or not root.is_dir() or root.is_symlink():
+        raise CompileError("E_DEPENDENCY_MISSING", f"content-addressed dependency is missing: {digest}")
+    manifest_value, manifest_bytes = read_canonical_json(root / "onyx-library.json")
+    if not isinstance(manifest_value, dict) or set(manifest_value) != {"format", "name", "version", "sources"}:
+        raise CompileError("E_LIBRARY_FIELDS", "library manifest differs from the v1 closed schema")
+    if manifest_value["format"] != 1 or manifest_value["name"] != dependency["name"] or \
+            manifest_value["version"] != dependency["version"]:
+        raise CompileError("E_LIBRARY_IDENTITY", "library identity differs from its lock entry")
+    entries = manifest_value["sources"]
+    if not isinstance(entries, list) or not 0 < len(entries) <= MAX_SOURCE_FILES:
+        raise CompileError("E_LIBRARY_SOURCES", "library source count is outside bounds")
+    sources = []
+    previous = b""
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"path", "sha256"}:
+            raise CompileError("E_LIBRARY_SOURCE", "library source entry has unknown or missing fields")
+        relative = validate_path(entry["path"])
+        encoded = relative.encode("utf-8")
+        if previous and encoded <= previous:
+            raise CompileError("E_LIBRARY_ORDER", "library sources are not unique and byte-sorted")
+        previous = encoded
+        path = root.joinpath(*relative.split("/"))
+        if path.is_symlink() or not path.is_file() or root not in path.resolve().parents:
+            raise CompileError("E_LIBRARY_FILE", f"unsafe library source: {relative}")
+        data = path.read_bytes()
+        if len(data) > MAX_SOURCE_BYTES or sha256(data) != entry["sha256"] or b"\r" in data or b"\x00" in data:
+            raise CompileError("E_LIBRARY_DIGEST", f"library source framing/digest failed: {relative}")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise CompileError("E_LIBRARY_UTF8", f"library source is not strict UTF-8: {relative}") from error
+        if unicodedata.normalize("NFC", text) != text:
+            raise CompileError("E_LIBRARY_NFC", f"library source is not Unicode NFC: {relative}")
+        sources.append((relative, data))
+    declared = {"onyx-library.json", *(relative for relative, _ in sources)}
+    actual = set()
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise CompileError("E_LIBRARY_SYMLINK", "library contains a symlink")
+        if path.is_file():
+            actual.add(path.relative_to(root).as_posix())
+    if actual != declared:
+        raise CompileError("E_LIBRARY_UNDECLARED", "library contains undeclared or misses declared files")
+    digest_files = (("onyx-library.json", manifest_bytes), *sources)
+    if tree_digest(tuple(digest_files)) != digest:
+        raise CompileError("E_LIBRARY_TREE_DIGEST", "library tree digest differs from its store key")
+    return LibraryPackage(dependency["name"], dependency["version"], digest, root,
+                          manifest_bytes, tuple(sources))
+
+
+def load_package(root: pathlib.Path, dependency_store: pathlib.Path | None = None) -> SourcePackage:
     root = root.resolve()
     if not root.is_dir():
         raise CompileError("E_PACKAGE_ROOT", "package root is not a directory")
@@ -165,19 +239,34 @@ def load_package(root: pathlib.Path) -> SourcePackage:
     if not isinstance(lock_value, dict) or set(lock_value) != {"format", "dependencies"} or lock_value["format"] != 1:
         raise CompileError("E_LOCK_FIELDS", "dependency lock fields differ from the v1 closed schema")
     dependencies = lock_value["dependencies"]
-    if not isinstance(dependencies, list):
-        raise CompileError("E_LOCK_DEPENDENCIES", "dependencies must be an ordered list")
+    if not isinstance(dependencies, list) or len(dependencies) > MAX_DEPENDENCIES:
+        raise CompileError("E_LOCK_DEPENDENCIES", "dependencies must be a bounded ordered list")
     previous_dep = ""
     for dependency in dependencies:
         if not isinstance(dependency, dict) or set(dependency) != {"name", "version", "artifact_sha256"}:
             raise CompileError("E_LOCK_DEPENDENCY", "dependency entry has unknown or missing fields")
+        if not isinstance(dependency["name"], str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", dependency["name"]):
+            raise CompileError("E_LOCK_DEPENDENCY", "dependency name is not canonical")
+        if not isinstance(dependency["version"], str) or not re.fullmatch(
+                r"[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?", dependency["version"]):
+            raise CompileError("E_LOCK_DEPENDENCY", "dependency version is not semantic")
         key = f"{dependency['name']}@{dependency['version']}"
         if key <= previous_dep or not re.fullmatch(r"[0-9a-f]{64}", str(dependency["artifact_sha256"])):
             raise CompileError("E_LOCK_ORDER", "dependencies are not unique, sorted and digest-pinned")
         previous_dep = key
-    if dependencies:
-        raise CompileError("E_DEPENDENCIES_UNSUPPORTED",
-            "v1 alpha does not yet import dependencies; nonempty locks fail closed")
+    loaded_dependencies = []
+    if dependencies and dependency_store is None:
+        raise CompileError("E_DEPENDENCY_STORE", "nonempty lock requires an explicit dependency store")
+    if dependency_store is not None:
+        dependency_store = dependency_store.resolve()
+        if not dependency_store.is_dir() or dependency_store.is_symlink():
+            raise CompileError("E_DEPENDENCY_STORE", "dependency store is not a regular directory")
+    for dependency in dependencies:
+        loaded_dependencies.append(load_library(dependency_store, dependency))
+    dependency_bytes = sum(len(library.manifest_bytes) + sum(len(data) for _, data in library.sources)
+                           for library in loaded_dependencies)
+    if dependency_bytes > MAX_DEPENDENCY_BYTES:
+        raise CompileError("E_DEPENDENCY_SIZE", "aggregate dependency bytes exceed the profile")
     limits = manifest["limits"]
     if not isinstance(limits, dict) or tuple(sorted(limits)) != tuple(sorted(REQUIRED_LIMITS)):
         raise CompileError("E_LIMIT_FIELDS", "resource limits differ from the v1 closed schema")
@@ -246,7 +335,7 @@ def load_package(root: pathlib.Path) -> SourcePackage:
             actual_files.add(path.relative_to(root).as_posix())
     if actual_files != declared_files:
         raise CompileError("E_PACKAGE_UNDECLARED", "package contains undeclared or misses declared files")
-    return SourcePackage(root, manifest, manifest_bytes, lock_bytes, tuple(sources))
+    return SourcePackage(root, manifest, manifest_bytes, lock_bytes, tuple(sources), tuple(loaded_dependencies))
 
 
 TOKEN = re.compile(
@@ -661,8 +750,8 @@ class Lowerer:
             target = self.function_names.get(name)
             if target is None:
                 raise CompileError("E_UNKNOWN_CALL", f"unknown function {name!r}")
-            if name >= self.current_function:
-                raise CompileError("E_CALL_ORDER", "direct calls must target an earlier name-sorted function")
+            if name not in self.function_names:
+                raise CompileError("E_CALL_ORDER", "direct call target is not in the closed function set")
             if len(target.parameters) != len(expression.args):
                 raise CompileError("E_CALL_ARITY", f"wrong argument count for {name}")
             operands = []
@@ -802,6 +891,7 @@ def target_profile() -> dict:
         "instruction_set": list(OPCODES),
         "intrinsics": sorted(INTRINSICS),
         "backend_status": "frontend-only-not-registrable",
+        "dependency_format": "content-addressed-onyx-library-v1",
     }
 
 
@@ -836,17 +926,43 @@ def encode_ir(functions: list[CompiledFunction], profile_digest: bytes) -> bytes
 def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], bytes, dict, dict]:
     functions = []
     records = {}
+    for dependency in package.dependencies:
+        for relative, data in dependency.sources:
+            parsed = Parser(lex(data, f"dependency/{dependency.name}/{relative}"),
+                            f"dependency/{dependency.name}/{relative}", records).parse()
+            if any(function.exported for function in parsed):
+                raise CompileError("E_LIBRARY_EXPORT", "dependency functions cannot be transaction exports")
+            prefix = dependency.name.replace("-", "_") + "__"
+            if any(not function.name.startswith(prefix) for function in parsed):
+                raise CompileError("E_LIBRARY_NAMESPACE",
+                    f"dependency functions must use the namespace prefix {prefix!r}")
+            functions.extend(parsed)
     for path, data in package.sources:
         functions.extend(Parser(lex(data, path), path, records).parse())
     if not functions:
         raise CompileError("E_FUNCTION_COUNT", "package contains no functions")
     names = [function.name for function in functions]
-    if names != sorted(names) or len(names) != len(set(names)):
-        raise CompileError("E_FUNCTION_ORDER", "functions must be globally unique and name-sorted")
+    if len(names) != len(set(names)):
+        raise CompileError("E_FUNCTION_ORDER", "functions must be globally unique")
     mapping = {function.name: function for function in functions}
-    actual_exports = [function.name for function in functions if function.exported]
+    actual_exports = sorted(function.name for function in functions if function.exported)
     if actual_exports != package.manifest["exports"]:
         raise CompileError("E_EXPORT_MISMATCH", "manifest exports differ from source exports")
+    dependencies = {name: function_calls(function) for name, function in mapping.items()}
+    for name, calls in dependencies.items():
+        unknown = calls - mapping.keys()
+        if unknown:
+            raise CompileError("E_UNKNOWN_CALL", f"{name} calls unknown functions: {sorted(unknown)}")
+    ordered = []
+    remaining = set(mapping)
+    while remaining:
+        available = sorted(name for name in remaining if dependencies[name].isdisjoint(remaining))
+        if not available:
+            raise CompileError("E_CALL_CYCLE", "function call graph is recursive")
+        for name in available:
+            ordered.append(mapping[name])
+            remaining.remove(name)
+    functions = ordered
     compiled = [Lowerer(mapping, package.manifest["limits"], function.name, records).lower(function)
                 for function in functions]
     profile = target_profile()
@@ -932,6 +1048,24 @@ def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], byt
         schema["schema_hash"] = sha256(SCHEMA_DOMAIN + schema_bytes)
         schemas[function.name] = schema
     return compiled, ir, {"profile": profile, "resources": resources}, schemas
+
+
+def function_calls(function: Function) -> set[str]:
+    result = set()
+    def expression_calls(expression: Expr | None):
+        if expression is None:
+            return
+        if expression.kind == "call" and expression.value not in INTRINSICS:
+            result.add(str(expression.value))
+        for argument in expression.args:
+            expression_calls(argument)
+    def statement_calls(statements: tuple[Statement, ...]):
+        for statement in statements:
+            expression_calls(statement.expression)
+            statement_calls(statement.body)
+            statement_calls(statement.alternate)
+    statement_calls(function.body)
+    return result
 
 
 PASTA_FP_MODULUS = int("40000000000000000000000000000000224698fc094cf91b992d30ed00000001", 16)
@@ -1140,6 +1274,16 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
             output = temporary / "source" / relative
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(data)
+        if package.dependencies:
+            (temporary / "dependencies").mkdir()
+        for dependency in package.dependencies:
+            dependency_output = temporary / "dependencies" / dependency.digest
+            dependency_output.mkdir()
+            (dependency_output / "onyx-library.json").write_bytes(dependency.manifest_bytes)
+            for relative, data in dependency.sources:
+                output = dependency_output / relative
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(data)
         (temporary / "program.onxir").write_bytes(ir)
         ir_id = sha256(IR_ID_DOMAIN + ir)
         (temporary / "ir-id.txt").write_bytes((ir_id + "\n").encode("ascii"))
@@ -1154,6 +1298,8 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path) -> None:
             "compiler_build_digest": compiler_digest(),
             "package_manifest_sha256": sha256(package.manifest_bytes),
             "dependency_lock_sha256": sha256(package.lock_bytes),
+            "dependencies": [{"name": dependency.name, "version": dependency.version,
+                              "artifact_sha256": dependency.digest} for dependency in package.dependencies],
             "target_profile_sha256": sha256(canonical_json(metadata["profile"])),
             "ir_id": ir_id,
             "registrable": False,
@@ -1177,6 +1323,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("package", nargs="?", type=pathlib.Path)
     parser.add_argument("output", nargs="?", type=pathlib.Path)
+    parser.add_argument("--dependency-store", type=pathlib.Path)
     parser.add_argument("--print-build-digest", action="store_true")
     parser.add_argument("--print-target-profile-digest", action="store_true")
     args = parser.parse_args()
@@ -1189,7 +1336,7 @@ def main() -> int:
     if args.package is None or args.output is None:
         parser.error("package and output are required")
     try:
-        write_bundle(load_package(args.package), args.output)
+        write_bundle(load_package(args.package, args.dependency_store), args.output)
     except CompileError as error:
         print(error)
         return 2

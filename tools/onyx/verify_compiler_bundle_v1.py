@@ -126,7 +126,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
     function_count = reader.uleb()
     if not 0 < function_count <= 1024:
         raise VerificationError("IR function count is outside bounds")
-    previous_name = ""
+    function_names = set()
     total_instructions = 0
     public_inputs = 0
     private_inputs = 0
@@ -138,9 +138,9 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
     total_constraints = 0
     for _ in range(function_count):
         name = reader.text(128)
-        if not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or name <= previous_name:
-            raise VerificationError("IR functions are not uniquely name-sorted")
-        previous_name = name
+        if not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or name in function_names:
+            raise VerificationError("IR function name is invalid or duplicated")
+        function_names.add(name)
         if reader.byte() not in (0, 1):
             raise VerificationError("invalid IR export flag")
         parameter_count = reader.uleb()
@@ -209,8 +209,8 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 raise VerificationError("malformed IR constant")
             if opcode == "intrinsic" and text not in compiler_v1.INTRINSICS:
                 raise VerificationError("unknown IR intrinsic")
-            if opcode == "call" and (not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text) or text >= name):
-                raise VerificationError("IR direct call is not acyclic name order")
+            if opcode == "call" and (not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text) or text not in signatures):
+                raise VerificationError("IR direct call does not target an earlier function")
             if opcode not in ("parameter", "bytes", "intrinsic", "call") and text:
                 raise VerificationError("unexpected IR instruction text")
             if opcode not in ("const", "index", "field") and immediate is not None:
@@ -408,6 +408,15 @@ def verify_bundle(root: pathlib.Path) -> None:
         raise VerificationError("frontend resource report claims backend measurements")
     if not isinstance(provenance, dict) or provenance.get("registrable") is not False:
         raise VerificationError("frontend bundle incorrectly claims registrability")
+    lock, lock_bytes = read_json(root / "source" / "onyx.lock")
+    if provenance.get("dependency_lock_sha256") != hashlib.sha256(lock_bytes).hexdigest() or \
+            provenance.get("dependencies") != lock.get("dependencies"):
+        raise VerificationError("dependency provenance differs from the normalized lock")
+    dependency_root = root / "dependencies"
+    expected_dependency_digests = [entry["artifact_sha256"] for entry in lock.get("dependencies", [])]
+    actual_dependency_digests = sorted(path.name for path in dependency_root.iterdir()) if dependency_root.is_dir() else []
+    if actual_dependency_digests != sorted(expected_dependency_digests):
+        raise VerificationError("bundled dependency directories differ from the normalized lock")
     ir = (root / "program.onxir").read_bytes()
     if len(ir) > 64 << 20:
         raise VerificationError("IR exceeds bundle size limit")
@@ -419,7 +428,9 @@ def verify_bundle(root: pathlib.Path) -> None:
         raise VerificationError("unreachable manifest digest state")
     with tempfile.TemporaryDirectory(prefix="onyx-compiler-verify-") as temporary:
         rebuilt = pathlib.Path(temporary) / "rebuilt"
-        compiler_v1.write_bundle(compiler_v1.load_package(root / "source"), rebuilt)
+        dependency_store = root / "dependencies"
+        compiler_v1.write_bundle(compiler_v1.load_package(root / "source",
+            dependency_store if dependency_store.exists() else None), rebuilt)
         compare_directories(root, rebuilt)
 
 

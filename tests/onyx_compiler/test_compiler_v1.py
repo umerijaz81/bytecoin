@@ -40,11 +40,12 @@ def write_json(path: pathlib.Path, value: object) -> bytes:
     return data
 
 
-def create_package(root: pathlib.Path, source: bytes = SOURCE, vectors=None, **manifest_changes) -> pathlib.Path:
+def create_package(root: pathlib.Path, source: bytes = SOURCE, vectors=None, dependencies=None,
+                   **manifest_changes) -> pathlib.Path:
     root.mkdir(parents=True)
     (root / "src").mkdir()
     (root / "src" / "main.onx").write_bytes(source)
-    lock_bytes = write_json(root / "onyx.lock", {"dependencies": [], "format": 1})
+    lock_bytes = write_json(root / "onyx.lock", {"dependencies": dependencies or [], "format": 1})
     manifest = {
         "compiler_build_digest": compiler_v1.compiler_digest(),
         "compiler_version": compiler_v1.COMPILER_VERSION,
@@ -72,6 +73,23 @@ def create_package(root: pathlib.Path, source: bytes = SOURCE, vectors=None, **m
     manifest.update(manifest_changes)
     write_json(root / "onyx-package.json", manifest)
     return root
+
+
+def create_library(store: pathlib.Path, name: str, version: str, source: bytes) -> tuple[pathlib.Path, dict]:
+    manifest = {
+        "format": 1,
+        "name": name,
+        "sources": [{"path": "src/library.onx", "sha256": hashlib.sha256(source).hexdigest()}],
+        "version": version,
+    }
+    manifest_bytes = compiler_v1.canonical_json(manifest)
+    digest = compiler_v1.tree_digest((("onyx-library.json", manifest_bytes),
+                                      ("src/library.onx", source)))
+    library = store / digest
+    (library / "src").mkdir(parents=True)
+    (library / "onyx-library.json").write_bytes(manifest_bytes)
+    (library / "src" / "library.onx").write_bytes(source)
+    return store, {"artifact_sha256": digest, "name": name, "version": version}
 
 
 class CompilerV1Tests(unittest.TestCase):
@@ -247,6 +265,71 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
                 vectors=[{"function": "balance", "inputs": [1, 2], "expect_failure": True}])
             with self.assertRaisesRegex(compiler_v1.CompileError, "E_VECTOR_UNSUPPORTED"):
                 compiler_v1.write_bundle(compiler_v1.load_package(package), root / "bundle")
+
+    def test_content_addressed_dependency_is_bundled_and_reproduced(self):
+        library_source = b"""fn math__add_one(private value: u64) -> u64 {
+  let one: u64 = 1;
+  let result: u64 = value + one;
+  return result;
+}
+"""
+        application_source = b"""export fn balance(public network: u32, private amount: u64) -> u64 {
+  let output: u64 = math__add_one(amount);
+  return output;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            store, dependency = create_library(root / "store", "math", "1.0.0", library_source)
+            package = create_package(root / "package", application_source,
+                vectors=[{"function": "balance", "inputs": [7, 10], "expected": 11}],
+                dependencies=[dependency])
+            bundle = root / "bundle"
+            loaded = compiler_v1.load_package(package, store)
+            compiler_v1.write_bundle(loaded, bundle)
+            self.assertTrue((bundle / "dependencies" / dependency["artifact_sha256"] /
+                             "src" / "library.onx").is_file())
+            verifier.verify_bundle(bundle)
+
+    def test_dependency_digest_namespace_and_ambient_files_fail_closed(self):
+        source = b"""fn math__identity(private value: u64) -> u64 {
+  return value;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            store, dependency = create_library(root / "store", "math", "1.0.0", source)
+            package = create_package(root / "package", dependencies=[dependency])
+            with self.assertRaisesRegex(compiler_v1.CompileError, "E_DEPENDENCY_STORE"):
+                compiler_v1.load_package(package)
+            (store / dependency["artifact_sha256"] / "ambient").write_text("no", encoding="utf-8")
+            with self.assertRaisesRegex(compiler_v1.CompileError, "E_LIBRARY_UNDECLARED"):
+                compiler_v1.load_package(package, store)
+            (store / dependency["artifact_sha256"] / "ambient").unlink()
+            dependency["artifact_sha256"] = "0" * 64
+            package2 = create_package(root / "package2", dependencies=[dependency])
+            with self.assertRaisesRegex(compiler_v1.CompileError, "E_DEPENDENCY_MISSING"):
+                compiler_v1.load_package(package2, store)
+
+    def test_recursive_dependency_call_graph_fails_closed(self):
+        source = b"""fn a(private value: u64) -> u64 {
+  let result: u64 = b(value);
+  return result;
+}
+fn b(private value: u64) -> u64 {
+  let result: u64 = a(value);
+  return result;
+}
+export fn balance(public network: u32, private amount: u64) -> u64 {
+  let output: u64 = a(amount);
+  return output;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            package = create_package(pathlib.Path(temporary) / "package", source,
+                vectors=[{"function": "balance", "inputs": [7, 10], "expected": 10}])
+            with self.assertRaisesRegex(compiler_v1.CompileError, "E_CALL_CYCLE"):
+                compiler_v1.compile_sources(compiler_v1.load_package(package))
 
 
 if __name__ == "__main__":

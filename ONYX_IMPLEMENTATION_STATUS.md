@@ -29,8 +29,9 @@ unreachable until the release gates below are independently satisfied.
    resource analysis, reproducible bundles and a strict independent decoder/recompiler with frozen
    cross-platform digests. Fixed arrays have canonical construction and bounded-index IR; records have
    canonical nonrecursive construction and field access; fixed byte strings use exact-length lowercase
-   hex literals. Remaining: dependency import, deterministic
-   Halo2 lowering, verifier-key regeneration, structured fuzzing, audit and testnet gates. Unknown or
+   hex literals. Content-addressed libraries are lock/tree-digest verified, namespace isolated,
+   deterministically topologically ordered and embedded for offline reproduction. Remaining:
+   deterministic Halo2 lowering, verifier-key regeneration, structured fuzzing, audit and testnet gates. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative
