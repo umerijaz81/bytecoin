@@ -9,8 +9,10 @@
 #include "TargetConditionals.h"
 #endif
 
-// We need if x86, but no portable way to express that
-#if !defined(__EMSCRIPTEN__) && !defined(__PPC__) && !TARGET_OS_IPHONE && !defined(__ANDROID__)
+// Compile the intrinsic implementation only when the compiler targets x86/x64. Architecture
+// macros are required here: platform exclusions alone accidentally selected SSE on macOS ARM64.
+#if (defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)) && \
+    !defined(__EMSCRIPTEN__) && !defined(__PPC__) && !TARGET_OS_IPHONE && !defined(__ANDROID__)
 
 #include <emmintrin.h>
 #include <wmmintrin.h>

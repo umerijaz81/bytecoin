@@ -162,8 +162,10 @@ void crypto_cn_slow_hash_platform_independent(
 	oaes_free(&aes_ctx);
 }
 
-// We need if !x86, but no portable way to express that
-#if defined(__EMSCRIPTEN__) || defined(__PPC__) || TARGET_OS_IPHONE || defined(__ANDROID__)
+// Export the portable fallback for every non-x86 target and for platforms where intrinsics are
+// deliberately disabled. Keep this condition complementary to slow-hash_x86.c.
+#if !(defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)) || \
+    defined(__EMSCRIPTEN__) || defined(__PPC__) || TARGET_OS_IPHONE || defined(__ANDROID__)
 void crypto_cn_slow_hash(void *scratchpad, const void *data, size_t length, struct cryptoHash *hash) {
 	crypto_cn_slow_hash_platform_independent(scratchpad, data, length, hash);
 }
