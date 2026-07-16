@@ -108,6 +108,12 @@ each ordered compiler proof over the 22-field context plus a public true result.
 standard-circuit audits have not landed, so the existing token-family dispatch remains the only activated program
 path.
 
+The four approved follow-on standards now share a versioned native application-data decoder. It derives typed
+public suffixes for NFT identity/nonces, vesting schedules, multisig policy thresholds, and swap hashlock/timeout
+branches. Every profile requires an authenticated changing state commitment, and timelocks are checked against
+the context inclusion window validated by consensus. This closes the caller-supplied-height/state ambiguity at
+the standard ABI boundary; the corresponding constraint programs and negative proof vectors remain in progress.
+
 Standard token programs also register eight fixed mixed-transfer shapes. Each proof composes an
 independent token lane (one or two spends/outputs, zero fee, exact Program ID) with a native lane (one
 or two spends, one change output, public miner fee). Transaction ordering is token spends then native

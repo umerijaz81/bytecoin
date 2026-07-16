@@ -270,6 +270,16 @@ proof, spend-authorization digest, and binding signature; cross-asset cancellati
 Planned audited programs after fungible-token deployment are NFT, vesting, multisignature custody,
 and atomic swap.
 
+Their contextual application-data profile is version 1 followed by a one-byte kind and canonical bounded
+fields. Kind 1 (NFT) carries collection and token identifiers plus serial and transfer nonce. Kind 2
+(vesting) carries schedule and beneficiary commitments plus unlock height. Kind 3 (multisig custody) carries
+policy and action commitments plus a threshold and participant count bounded to 16. Kind 4 (swap) carries a
+swap identifier, hashlock, timeout, and claim/refund branch. All require a present, changing state commitment;
+vesting and swap-refund additionally require the consensus-checked context `valid_from` height to meet the
+encoded timelock. Native decoding derives the exact compiler public-input suffix and rejects wrong kinds,
+zero identifiers, invalid thresholds, noncanonical varints, and trailing bytes. These profiles do not by
+themselves activate a standard: each still requires its registered constraint program and audit gates.
+
 ## 8. Fork and migration
 
 - Onyx protocol and transaction format V6 activate only at `UPGRADE_HEIGHT_ONYX`; earlier blocks

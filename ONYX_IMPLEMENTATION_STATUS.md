@@ -53,7 +53,9 @@ unreachable until the release gates below are independently satisfied.
    authorized transaction and exactly one context and proof per ordered call; authorization covers the complete
    versioned proof bundle. The rollback-safe contextual state path validates every ordered context before mutation.
    Exact registered native/single-program-asset base dispatch and export-bound compiler proof composition are
-   implemented behind the non-activated Rust boundary. Consensus C ABI wiring and the standard circuits remain.
+   implemented behind the non-activated Rust boundary. A canonical native decoder now derives typed public
+   suffixes for NFT, vesting, multisig and swap profiles and enforces state/timelock invariants. Consensus C ABI
+   wiring, the four constraint programs and their proof vectors remain.
 
 ### O6 network, scaling and crypto agility
 

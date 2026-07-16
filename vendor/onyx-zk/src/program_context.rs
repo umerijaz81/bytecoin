@@ -12,6 +12,7 @@ use crate::proof::{
     multi_transfer_backend_id, program_transfer_backend_id, verify_multi_transfer_proof,
     verify_program_multi_transfer_proof,
 };
+use crate::standard_programs::{contextual_public_inputs, kind_for_schema};
 use crate::state::CanonicalField;
 use crate::transaction::{
     write_public_output, AuthorizedTransaction, ProgramCall, TransactionPreimage,
@@ -513,10 +514,7 @@ impl ContextualAuthorizedTransaction {
             let (entry, function) = registry
                 .active_function(&call.program_id, call.function_id, block_height)
                 .map_err(|_| ProgramContextError::Registry)?;
-            if entry.backend != COMPILER_PROGRAM_BACKEND
-                || function.public_input_schema_hash != schema_hash
-                || artifact.export.is_empty()
-            {
+            if entry.backend != COMPILER_PROGRAM_BACKEND || artifact.export.is_empty() {
                 return Err(ProgramContextError::ProgramProof);
             }
             let descriptor = compiler_vk_descriptor_for_export(
@@ -528,8 +526,16 @@ impl ContextualAuthorizedTransaction {
             if descriptor != function.verifying_key {
                 return Err(ProgramContextError::ProgramProof);
             }
-            let mut public_inputs = context.public_inputs()?;
-            public_inputs.push(Fp::one());
+            let public_inputs = if function.public_input_schema_hash == schema_hash {
+                let mut inputs = context.public_inputs()?;
+                inputs.push(Fp::one());
+                inputs
+            } else if let Some(kind) = kind_for_schema(&function.public_input_schema_hash) {
+                contextual_public_inputs(context, kind)
+                    .map_err(|_| ProgramContextError::ProgramProof)?
+            } else {
+                return Err(ProgramContextError::ProgramProof);
+            };
             verify_compiler_proof_for_export(
                 &artifact.ir,
                 artifact.circuit_k,
@@ -544,6 +550,10 @@ impl ContextualAuthorizedTransaction {
 }
 
 pub fn contextual_compiler_schema_hash() -> [u8; 32] {
+    debug_assert_eq!(
+        domain_hash(COMPILER_SCHEMA_DOMAIN, COMPILER_PUBLIC_INPUT_SCHEMA),
+        CONTEXTUAL_COMPILER_SCHEMA_HASH
+    );
     CONTEXTUAL_COMPILER_SCHEMA_HASH
 }
 

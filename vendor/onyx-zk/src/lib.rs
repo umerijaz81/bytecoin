@@ -39,6 +39,7 @@ pub mod program_context;
 pub mod program_deployment;
 pub mod proof;
 pub mod spend_auth_circuit;
+pub mod standard_programs;
 pub mod state;
 pub mod token_issuance;
 pub mod token_issuance_circuit;
