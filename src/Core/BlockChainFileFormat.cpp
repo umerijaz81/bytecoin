@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "BlockChainFileFormat.hpp"
+#include <chrono>
 #include "BlockChainState.hpp"
 #include "common/Math.hpp"
 #include "platform/PathTools.hpp"
