@@ -7,6 +7,7 @@ on:
       - ".github/workflows/onyx-zk.yml"
       - "rust-toolchain.toml"
       - "sdk/onyx/**"
+      - "tools/onyx/**"
       - "vendor/onyx-zk/**"
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - ".github/workflows/onyx-zk.yml"
       - "rust-toolchain.toml"
       - "sdk/onyx/**"
+      - "tools/onyx/**"
       - "vendor/onyx-zk/**"
 
 permissions:
@@ -21,19 +23,26 @@ permissions:
 
 jobs:
   offline-tests:
-    name: locked offline tests (${{ matrix.os }})
+    name: locked offline tests (${{ matrix.os }}, ${{ matrix.shard }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        shard: [core, transfer, programs, assets-wallet]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Verify formatting
+        if: matrix.shard == 'core'
         run: cargo fmt --manifest-path vendor/onyx-zk/Cargo.toml -- --check
-      - name: Test without network access
-        run: cargo test --locked --offline --manifest-path vendor/onyx-zk/Cargo.toml
       - name: Test Python SDK binding
+        if: matrix.shard == 'core'
         run: python -m unittest discover -s sdk/onyx/python -p "test_*.py"
+      - name: Test optimized proof shard without network access
+        env:
+          CARGO_INCREMENTAL: "0"
+          RUST_BACKTRACE: "1"
+        run: python tools/onyx/run_test_shard.py "${{ matrix.shard }}"
