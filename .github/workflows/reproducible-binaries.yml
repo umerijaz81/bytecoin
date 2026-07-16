@@ -119,3 +119,69 @@ jobs:
           path: dist/macos-arm64-reproducibility.json
           if-no-files-found: error
           compression-level: 0
+
+  windows-x64:
+    name: two clean Windows x64 builds
+    runs-on: windows-2022
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install static release dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            openssl:x64-windows-static `
+            boost-algorithm:x64-windows-static `
+            boost-asio:x64-windows-static `
+            boost-multi-index:x64-windows-static `
+            boost-multiprecision:x64-windows-static `
+            boost-optional:x64-windows-static `
+            boost-preprocessor:x64-windows-static `
+            boost-stacktrace:x64-windows-static `
+            boost-variant:x64-windows-static
+      - name: Export two clean source trees
+        shell: pwsh
+        run: |
+          $reproRoot = Join-Path $env:RUNNER_TEMP "bytecoin-repro"
+          $archive = Join-Path $env:RUNNER_TEMP "bytecoin-source.tar"
+          New-Item -ItemType Directory -Force -Path "$reproRoot\a", "$reproRoot\b" | Out-Null
+          git archive --format=tar --output=$archive HEAD
+          tar -xf $archive -C "$reproRoot\a"
+          tar -xf $archive -C "$reproRoot\b"
+          "REPRO_ROOT=$reproRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build and normalize both trees
+        shell: pwsh
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: |
+          foreach ($tree in @("a", "b")) {
+            $root = Join-Path $env:REPRO_ROOT $tree
+            $env:RUSTFLAGS = "--remap-path-prefix=$root=. -Ccodegen-units=1 -Ctarget-feature=+crt-static"
+            cmake -S $root -B "$root\build-release" -G "Visual Studio 17 2022" -A x64 `
+              -DUSE_SQLITE=ON -DONYX_ZK=ON -DREPRODUCIBLE_BUILD=ON `
+              -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+              -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+              -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+              -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$root\bin"
+            cmake --build "$root\build-release" --config Release --parallel 2 --target bytecoind walletd minerd
+          }
+      - name: Compare executables and emit manifest
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $compiler = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\cl.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          $env:CXX_DESCRIPTION = "MSVC $($compiler.VersionInfo.FileVersion)"
+          python tools/release/verify_binary_reproducibility.py `
+            "$env:REPRO_ROOT\a\bin" "$env:REPRO_ROOT\b\bin" `
+            --revision $env:GITHUB_SHA --output dist/windows-x64-reproducibility.json
+      - name: Upload reproducibility evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bytecoin-windows-x64-reproducibility-${{ github.sha }}
+          path: dist/windows-x64-reproducibility.json
+          if-no-files-found: error
+          compression-level: 0

@@ -105,10 +105,13 @@ else()
     set(SRC_DB ${SRC_DB} src/platform/DBlmdb.cpp src/platform/DBlmdb.hpp)
 endif()
 
-message(STATUS "Make sure OpenSSL headers are in " ${OPENSSL_ROOT} "/include and static libs are in " ${OPENSSL_ROOT} "/")
-include_directories(${OPENSSL_ROOT}/include)
-link_directories(${OPENSSL_ROOT}) # Must be placed before add_executable, add_library.
-set(LINK_OPENSSL ssl crypto)
+if(BYTECOIN_OPENSSL_ROOT)
+    set(OPENSSL_ROOT_DIR ${BYTECOIN_OPENSSL_ROOT})
+endif()
+find_package(OpenSSL REQUIRED)
+message(STATUS "OpenSSL include directory: ${OPENSSL_INCLUDE_DIR}")
+include_directories(${OPENSSL_INCLUDE_DIR})
+set(LINK_OPENSSL OpenSSL::SSL OpenSSL::Crypto)
 add_definitions(-Dplatform_USE_SSL=1)
 
 file(GLOB SRC_CRYPTO
@@ -263,9 +266,9 @@ if(ONYX_ZK)
     endif()
 endif()
 
-link_libraries(bytecoin-crypto bytecoin-core)
+link_libraries(bytecoin-crypto bytecoin-core ${LINK_OPENSSL})
 if(NOT WIN32)
-    link_libraries(${LINK_OPENSSL} dl pthread)
+    link_libraries(dl pthread)
 endif()
 
 if(NOT "${SANITIZE}" STREQUAL "fuzzer,address,undefined")

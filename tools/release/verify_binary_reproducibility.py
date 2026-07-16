@@ -75,7 +75,8 @@ def main() -> int:
         "revision": args.revision,
         "source_date_epoch": source_date_epoch,
         "platform": platform.platform(),
-        "compiler": command_version([os.environ.get("CXX", "c++"), "--version"]),
+        "compiler": os.environ.get("CXX_DESCRIPTION")
+        or command_version([os.environ.get("CXX", "c++"), "--version"]),
         "cmake": command_version(["cmake", "--version"]),
         "rustc": command_version(["rustc", "--version"]),
         "binaries": binaries,
