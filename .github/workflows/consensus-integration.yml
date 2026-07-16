@@ -8,9 +8,14 @@ on:
       - "src/CryptoNote.*"
       - "src/Core/BlockChain*"
       - "src/Core/Currency.*"
+      - "src/Core/Config.*"
+      - "src/Core/Node*"
+      - "src/common/Ipv4Address.*"
       - "src/crypto/RandomX.*"
+      - "src/p2p/**"
       - "src/main_miner.cpp"
       - "tests/blockchain/**"
+      - "tests/network/**"
       - "vendor/randomx/**"
   pull_request:
     paths:
@@ -19,9 +24,14 @@ on:
       - "src/CryptoNote.*"
       - "src/Core/BlockChain*"
       - "src/Core/Currency.*"
+      - "src/Core/Config.*"
+      - "src/Core/Node*"
+      - "src/common/Ipv4Address.*"
       - "src/crypto/RandomX.*"
+      - "src/p2p/**"
       - "src/main_miner.cpp"
       - "tests/blockchain/**"
+      - "tests/network/**"
       - "vendor/randomx/**"
 
 permissions:

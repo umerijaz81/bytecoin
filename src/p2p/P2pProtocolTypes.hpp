@@ -16,8 +16,10 @@ using common::NetworkAddress;
 
 typedef uint64_t PeerIdType;
 
-enum P2PProtocolVersion : uint8_t { NO_HANDSHAKE_YET = 0, LEGACY = 1, AMETHYST = 4, DANDELION = 5 };
-// V4 adds strict descriptor relay. V5 adds negotiated Dandelion++ stem relay; V4 peers receive fluff.
+enum P2PProtocolVersion : uint8_t {
+	NO_HANDSHAKE_YET = 0, LEGACY = 1, AMETHYST = 4, DANDELION = 5, ANONYMITY_ADDRESSES = 6
+};
+// V4 adds strict descriptor relay; V5 adds Dandelion++; V6 adds proxy-only anonymity identities.
 
 #pragma pack(push, 1)
 struct UUID {
@@ -49,6 +51,20 @@ struct BasicNodeData {
 	Timestamp local_time = 0;
 	uint16_t my_port     = 0;  // p2p external port.
 	PeerIdType peer_id   = 0;
+	std::string anonymity_host;
+	uint16_t anonymity_port = 0;
+};
+
+struct AnonymityNetworkAddress {
+	std::string host;
+	uint16_t port = 0;
+
+	NetworkAddress to_network_address() const {
+		NetworkAddress result;
+		result.host = host;
+		result.port = port;
+		return result;
+	}
 };
 
 struct CoreSyncData {
@@ -123,6 +139,7 @@ CRYPTO_MAKE_COMPARABLE(UUID, std::memcmp)
 namespace seria {
 bool ser(cn::UUID &v, seria::ISeria &s);
 void ser_members(cn::BasicNodeData &v, seria::ISeria &s);
+void ser_members(cn::AnonymityNetworkAddress &v, seria::ISeria &s);
 void ser_members(cn::CoreSyncData &v, seria::ISeria &s);
 void ser_members(cn::TransactionDesc &v, seria::ISeria &s);
 void ser_members(cn::PeerlistEntryLegacy &v, seria::ISeria &s);

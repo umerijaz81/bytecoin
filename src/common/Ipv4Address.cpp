@@ -8,7 +8,11 @@
 
 namespace common {
 
-std::string NetworkAddress::to_string() const { return common::ip_address_and_port_to_string(ip, port); }
+std::string NetworkAddress::to_string() const {
+	if (!host.empty())
+		return host + ":" + common::to_string(port);
+	return common::ip_address_and_port_to_string(ip, port);
+}
 
 std::string ip_address_to_string(const BinaryArray &ip) {
 	if (ip.size() != 4)

@@ -30,6 +30,12 @@ full-memory equality test on x86-64 and ARM64, and contains a RISC-V/QEMU vector
 release qualification includes independent review, longer/deeper randomized reorg and sync runs,
 corrupt-template tests, published mining throughput/power benchmarks and public testnet soak.
 
+The RISC-V gate cross-compiles the pinned upstream suite as RV64GC with a vector-crypto-capable GNU
+toolchain, then executes the v2 vectors under QEMU. It passed alongside all three native jobs on
+2026-07-16 (GitHub Actions run `29463920603`). This proves deterministic vector execution in the
+emulated architecture; it is not a substitute for performance or power qualification on RISC-V
+hardware.
+
 The bundled miner uses one shared 2,080 MiB full-memory dataset by default. Dataset initialization is
 bounded by `--randomx-init-threads`, hashing uses persistent workers selected by `--threads`, and each
 worker owns its own VM while the immutable dataset remains shared. `--randomx-large-pages` is an

@@ -63,6 +63,7 @@ public:
 	    const NetworkAddress &addr, const std::vector<PeerlistEntryLegacy> &outer_bs, Timestamp now);
 	bool add_incoming_peer(const NetworkAddress &addr, Timestamp now);
 	std::vector<NetworkAddress> get_peerlist_to_p2p(const NetworkAddress &for_addr, Timestamp now, size_t depth);
+	std::vector<AnonymityNetworkAddress> get_anonymity_peerlist_to_p2p(Timestamp now, size_t depth);
 	std::vector<PeerlistEntryLegacy> get_peerlist_to_p2p_legacy(
 	    const NetworkAddress &for_addr, Timestamp now, size_t depth);
 	void set_peer_just_seen(

@@ -75,6 +75,17 @@ void test_socks5_policy() {
 	        onion_request[3] == 3 && onion_request[4] == onion_host.size() &&
 	        onion_request[onion_request.size() - 2] == 0x46 && onion_request.back() == 0xa0,
 	    "SOCKS5 anonymity-domain request changed");
+	common::NetworkAddress onion_target;
+	onion_target.host = onion_host;
+	onion_target.port = 18080;
+	require(Socks5::is_anonymity_target(onion_target), "canonical anonymity target was rejected");
+	require(Socks5::connect_target(onion_target) == onion_request,
+	    "generic SOCKS5 target did not preserve anonymity-domain framing");
+	require_rejected([&onion_target] {
+		auto ambiguous = onion_target;
+		ambiguous.ip = {127, 0, 0, 1};
+		Socks5::connect_target(ambiguous);
+	}, "ambiguous numeric/anonymity target was accepted");
 	require_rejected([] { Socks5::connect_anonymity_domain("example.com", 80); },
 	    "clearnet domain was accepted by anonymity-only framing");
 	require_rejected([] { Socks5::connect_anonymity_domain(std::string(56, 'A') + ".onion", 80); },

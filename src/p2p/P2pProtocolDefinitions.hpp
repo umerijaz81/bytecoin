@@ -31,12 +31,13 @@ struct Handshake {
 			TYPE                = LevinProtocol::RESPONSE,
 			MAX_PEER_COUNT      = 500,
 			MAX_SEND_PEER_COUNT = 200,
-			MAX_SIZE            = 1024 + MAX_PEER_COUNT * sizeof(PeerlistEntryLegacy)  // Update in V5
+			MAX_SIZE            = 64 * 1024
 		};
 		BasicNodeData node_data;
 		CoreSyncData payload_data;
 		std::vector<PeerlistEntryLegacy> local_peerlist;  // Remove in V5
 		std::vector<NetworkAddress> peerlist;
+		std::vector<AnonymityNetworkAddress> anonymity_peerlist;
 	};
 };
 

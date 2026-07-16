@@ -51,6 +51,11 @@ std::vector<PeerlistEntryLegacy> Node::P2PProtocolBytecoin::get_legacy_peers_to_
 	    get_address(), m_node->m_p2p.get_local_time(), config.p2p_default_peers_in_handshake);
 }
 
+std::vector<AnonymityNetworkAddress> Node::P2PProtocolBytecoin::get_anonymity_peers_to_share() const {
+	return m_node->m_peer_db->get_anonymity_peerlist_to_p2p(
+	    m_node->m_p2p.get_local_time(), config.p2p_default_peers_in_handshake);
+}
+
 void Node::P2PProtocolBytecoin::on_first_message_after_handshake() {
 	// if we set just seen on handshake, we will keep connecting to seed nodes forever
 	m_node->m_peer_db->set_peer_just_seen(get_peer_unique_number(), get_address(), m_node->m_p2p.get_local_time());
@@ -324,12 +329,33 @@ void Node::P2PProtocolBytecoin::after_handshake() {
 
 void Node::P2PProtocolBytecoin::on_msg_handshake(p2p::Handshake::Request &&req) {
 	m_node->m_peer_db->add_incoming_peer(get_address(), m_node->m_p2p.get_local_time());
+	if (config.p2p_proxy_enabled && req.node_data.version >= P2PProtocolVersion::ANONYMITY_ADDRESSES &&
+	    !req.node_data.anonymity_host.empty()) {
+		NetworkAddress advertised;
+		advertised.host = req.node_data.anonymity_host;
+		advertised.port = req.node_data.anonymity_port;
+		m_node->m_peer_db->add_incoming_peer(advertised, m_node->m_p2p.get_local_time());
+	}
 	after_handshake();
 }
 
 void Node::P2PProtocolBytecoin::on_msg_handshake(p2p::Handshake::Response &&req) {
 	m_node->m_peer_db->merge_peerlist_from_p2p(get_address(), req.local_peerlist, m_node->m_p2p.get_local_time());
 	m_node->m_peer_db->merge_peerlist_from_p2p(get_address(), req.peerlist, m_node->m_p2p.get_local_time());
+	if (config.p2p_proxy_enabled && req.node_data.version >= P2PProtocolVersion::ANONYMITY_ADDRESSES) {
+		std::vector<NetworkAddress> anonymity_peers;
+		anonymity_peers.reserve(req.anonymity_peerlist.size() + 1);
+		for (const auto &entry : req.anonymity_peerlist)
+			anonymity_peers.push_back(entry.to_network_address());
+		if (!req.node_data.anonymity_host.empty()) {
+			NetworkAddress advertised;
+			advertised.host = req.node_data.anonymity_host;
+			advertised.port = req.node_data.anonymity_port;
+			anonymity_peers.push_back(advertised);
+		}
+		m_node->m_peer_db->merge_peerlist_from_p2p(
+		    get_address(), anonymity_peers, m_node->m_p2p.get_local_time());
+	}
 	after_handshake();
 }
 

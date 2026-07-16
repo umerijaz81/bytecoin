@@ -52,8 +52,12 @@ bool P2PClient::connect(const NetworkAddress &target, const NetworkAddress *prox
 		socks5_timer.cancel();
 		socks5_state = Socks5State::READY;
 		socks5_output.clear();
+		if (!target.host.empty())
+			return false;  // Anonymity domains are proxy-only and must never reach a resolver.
 		return sock.connect(common::ip_address_to_string(target.ip), target.port);
 	}
+	if (!p2p::Socks5::is_numeric_target(target) && !p2p::Socks5::is_anonymity_target(target))
+		return false;
 	socks5_state  = Socks5State::GREETING_WRITE;
 	socks5_output = p2p::Socks5::greeting();
 	socks5_timer.once(30);
@@ -91,7 +95,7 @@ bool P2PClient::advance_socks5() {
 		}
 		if (socks5_state == Socks5State::GREETING_READ) {
 			p2p::Socks5::validate_method(socks5_input);
-			socks5_output = p2p::Socks5::connect_ipv4(address);
+			socks5_output = p2p::Socks5::connect_target(address);
 			socks5_input.clear();
 			socks5_state = Socks5State::CONNECT_WRITE;
 			continue;
@@ -271,6 +275,8 @@ void P2P::accept_all() {
 }
 
 bool P2P::connect_one(const NetworkAddress &address) {
+	if (!address.host.empty() && !m_config.p2p_proxy_enabled)
+		return false;
 	const bool incoming = false;
 	if (!next_client[incoming]) {
 		next_client[incoming] =
@@ -284,7 +290,7 @@ bool P2P::connect_one(const NetworkAddress &address) {
 	}
 	P2PClient *who                 = next_client[incoming].get();
 	clients[incoming][who]         = std::move(next_client[incoming]);
-	m_log(logging::DEBUGGING) << "Connecting to=" << common::ip_address_and_port_to_string(address.ip, address.port);
+	m_log(logging::DEBUGGING) << "Connecting to=" << address.to_string();
 	who->set_protocol(c_factory(who));
 	return true;
 }

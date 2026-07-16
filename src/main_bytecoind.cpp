@@ -27,9 +27,9 @@ Options:
   --p2p-bind-address=<ip:port>           IP and port for P2P network protocol [default: 0.0.0.0:8080].
   --p2p-external-port=<port>             External port for P2P network protocol, if port forwarding used with NAT [default: 8080].
   --bytecoind-bind-address=<ip:port>     IP and port for bytecoind RPC API [default: 127.0.0.1:8081].
-  --seed-node-address=<ip:port>          Specify node (one or more) to start connecting to.
-  --priority-node-address=<ip:port>      Specify node (one or more) to connect to and attempt to keep the connection open.
-  --exclusive-node-address=<ip:port>     Specify node (one or more) to exclusive connect to, ignoring all other nodes.
+  --seed-node-address=<address:port>     Specify numeric/onion/I2P node (one or more) to start connecting to.
+  --priority-node-address=<address:port> Specify numeric/onion/I2P node (one or more) to keep connected.
+  --exclusive-node-address=<address:port> Specify numeric/onion/I2P node(s), ignoring all others.
   --data-folder=<folder-path>            Folder for blockchain, logs and peer DB [default: %appdata%/bytecoin].
   --backup-blockchain=<folder-path>      Perform hot backup of blockchain into specified backup data folder, then exit.
   --net=<main|stage|test>                Configure for mainnet or testnet [default: main].
@@ -40,6 +40,7 @@ Options:
   --archive                              Work as an archive node [default: off].
   --disable-dandelion                    Disable Dandelion++ stem relay and diffuse transactions immediately.
   --p2p-proxy=<ip:port>                  Route all outbound P2P connections through a no-auth SOCKS5 proxy.
+  --p2p-advertise-anonymity-address=<host:port> Advertise a canonical v3 onion/I2P service to v6 peers.
   --paranoid-checks                      Perform consensus checks for blocks in checkpoints range (very slow sync))";
 
 int main(int argc, const char *argv[]) try {

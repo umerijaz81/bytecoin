@@ -3,6 +3,7 @@
 
 #include "PeerDB.hpp"
 #include "Core/Config.hpp"
+#include "Socks5.hpp"
 
 #include <time.h>
 #include <iostream>
@@ -22,6 +23,7 @@ using namespace platform;
 namespace seria {
 void ser_members(PeerDB::Entry &v, ISeria &s) {
 	ser_members(static_cast<PeerlistEntry &>(v), s);
+	seria_kv_optional("anonymity_host", v.address.host, s);
 	seria_kv("shuffle_random", v.shuffle_random, s);
 	seria_kv("next_connection_attempt", v.next_connection_attempt, s);
 }
@@ -30,7 +32,7 @@ void ser_members(PeerDB::Entry &v, ISeria &s) {
 static const std::string GRAY_LIST("graylist/");
 static const std::string WHITE_LIST("whitelist/");
 
-static const std::string version_current = "3";
+static const std::string version_current = "4";
 
 static Timestamp fix_time_delta(Timestamp delta) {
 	return std::max<Timestamp>(1, delta / platform::get_time_multiplier_for_tests());
@@ -72,19 +74,19 @@ void PeerDB::read_db(const std::string &prefix, peers_indexed &list) {
 }
 
 void PeerDB::update_db(const std::string &prefix, const Entry &entry) {
-	auto key = prefix + common::ip_address_and_port_to_string(entry.address.ip, entry.address.port);
+	auto key = prefix + entry.address.to_string();
 	db.put(key, seria::to_binary(entry), false);
 }
 
 void PeerDB::del_db(const std::string &prefix, const NetworkAddress &addr) {
-	auto key = prefix + common::ip_address_and_port_to_string(addr.ip, addr.port);
+	auto key = prefix + addr.to_string();
 	db.del(key, false);
 }
 
 void PeerDB::print() {
 	auto &by_time_index = whitelist.get<by_addr>();
 	for (auto it = by_time_index.begin(); it != by_time_index.end(); ++it) {
-		std::string a = common::ip_address_and_port_to_string(it->address.ip, it->address.port);
+		std::string a = it->address.to_string();
 		std::cout << a << " b=" << it->ban_until << " na=" << it->next_connection_attempt << " ls=" << it->last_seen
 		          << std::endl;
 	}
@@ -168,6 +170,25 @@ std::vector<NetworkAddress> PeerDB::get_peerlist_to_p2p(const NetworkAddress &fo
 	return bs_head;
 }
 
+std::vector<AnonymityNetworkAddress> PeerDB::get_anonymity_peerlist_to_p2p(Timestamp now, size_t depth) {
+	std::vector<AnonymityNetworkAddress> result;
+	unban(now);
+	auto &by_time_index = whitelist.get<by_ban_until>();
+	auto fin = by_time_index.lower_bound(boost::make_tuple(Timestamp(1), Timestamp(0), 0));
+	for (auto it = by_time_index.begin(); it != fin; ++it) {
+		if (is_seed(it->address) || !p2p::Socks5::is_anonymity_target(it->address))
+			continue;
+		AnonymityNetworkAddress advertised;
+		advertised.host = it->address.host;
+		advertised.port = it->address.port;
+		result.push_back(advertised);
+		if (result.size() >= depth)
+			break;
+	}
+	std::shuffle(result.begin(), result.end(), crypto::random_engine<size_t>{});
+	return result;
+}
+
 std::vector<PeerlistEntryLegacy> PeerDB::get_peerlist_to_p2p_legacy(const NetworkAddress &for_addr,
     Timestamp now,
     size_t depth) {
@@ -240,6 +261,10 @@ bool PeerDB::add_incoming_peer(const NetworkAddress &addr, Timestamp now) {
 
 bool PeerDB::add_incoming_peer_impl(const NetworkAddress &addr, Timestamp now) {
 	if (addr.port == 0)  // client does not want to be in peer lists
+		return false;
+	if (!p2p::Socks5::is_numeric_target(addr) && !p2p::Socks5::is_anonymity_target(addr))
+		return false;
+	if (!addr.host.empty() && !config.p2p_proxy_enabled)
 		return false;
 	auto &by_addr_index = whitelist.get<by_addr>();
 	auto git            = by_addr_index.find(addr);

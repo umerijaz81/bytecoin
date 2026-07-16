@@ -2,13 +2,16 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "Config.hpp"
+#include <algorithm>
 #include <boost/algorithm/string.hpp>
 #include <iostream>
 #include "CryptoNoteConfig.hpp"
 #include "common/Base64.hpp"
 #include "common/CommandLine.hpp"
 #include "common/Math.hpp"
+#include "common/StringTools.hpp"
 #include "p2p/P2pProtocolDefinitions.hpp"
+#include "p2p/Socks5.hpp"
 #include "platform/PathTools.hpp"
 #include "platform/Time.hpp"
 #include "rpc_api.hpp"
@@ -21,8 +24,21 @@ static void parse_peer_and_add_to_container(const std::string &str,
     std::vector<NetworkAddress> &container,
     const std::string &option) {
 	NetworkAddress na{};
-	ewrap(common::parse_ip_address_and_port(str, &na.ip, &na.port),
-	    Config::ConfigError("Command line option " + option + " has wrong value '" + str + "', should be ip:port"));
+	try {
+		common::parse_ip_address_and_port(str, &na.ip, &na.port);
+	} catch (const std::exception &) {
+		std::string host;
+		std::string port;
+		if (!common::split_string(str, ":", host, port))
+			throw Config::ConfigError("Command line option " + option + " has wrong value '" + str +
+			                          "', should be ip:port, v3-onion:port, or b32-i2p:port");
+		ewrap(na.port = common::integer_cast<uint16_t>(port),
+		    Config::ConfigError("Command line option " + option + " port must be in range 1..65535"));
+		if (na.port == 0 || !p2p::Socks5::is_anonymity_domain(host))
+			throw Config::ConfigError("Command line option " + option +
+			                          " hostname must be a canonical v3 .onion or .b32.i2p address");
+		na.host = host;
+	}
 	container.push_back(na);
 }
 static void parse_peer_and_add_to_container(common::CommandLine &cmd,
@@ -81,9 +97,17 @@ Config::Config(common::CommandLine &cmd)
 		std::vector<NetworkAddress> proxy;
 		parse_peer_and_add_to_container(pa, proxy, "--p2p-proxy");
 		p2p_proxy = proxy.front();
-		if (p2p_proxy.port == 0)
-			throw ConfigError("Command line option --p2p-proxy port must be nonzero");
+		if (!p2p::Socks5::is_numeric_target(p2p_proxy))
+			throw ConfigError("Command line option --p2p-proxy must be a numeric IPv4 address with nonzero port");
 		p2p_proxy_enabled = true;
+	}
+	if (const char *pa = cmd.get("--p2p-advertise-anonymity-address")) {
+		std::vector<NetworkAddress> advertised;
+		parse_peer_and_add_to_container(pa, advertised, "--p2p-advertise-anonymity-address");
+		if (!p2p::Socks5::is_anonymity_target(advertised.front()))
+			throw ConfigError("--p2p-advertise-anonymity-address requires a canonical onion/I2P hostname");
+		p2p_advertised_anonymity_address = advertised.front();
+		p2p_advertise_anonymity          = true;
 	}
 	if (net == "test") {
 		network_id.data[0] += 1;
@@ -176,6 +200,11 @@ Config::Config(common::CommandLine &cmd)
 			common::parse_ip_address_and_port(sn, &addr.ip, &addr.port);
 			seed_nodes.push_back(addr);
 		}
+	const auto requires_proxy = [](const NetworkAddress &address) { return !address.host.empty(); };
+	if ((!p2p_proxy_enabled && (std::any_of(seed_nodes.begin(), seed_nodes.end(), requires_proxy) ||
+	                               std::any_of(priority_nodes.begin(), priority_nodes.end(), requires_proxy))) ||
+	    (p2p_advertise_anonymity && !p2p_proxy_enabled))
+		throw ConfigError("Onion/I2P P2P addresses require --p2p-proxy; direct or DNS fallback is forbidden");
 	std::sort(seed_nodes.begin(), seed_nodes.end());
 	std::sort(priority_nodes.begin(), priority_nodes.end());
 

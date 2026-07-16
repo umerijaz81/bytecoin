@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "test_jade_consensus.hpp"
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -228,6 +229,8 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	// 8. Dandelion++ is negotiated as P2P v5 and its one-descriptor stem message is canonical.
 	{
 		invariant(P2PProtocolVersion::DANDELION == 5, "Dandelion P2P version changed unexpectedly");
+		invariant(P2PProtocolVersion::ANONYMITY_ADDRESSES == 6,
+		    "anonymity-address P2P version changed unexpectedly");
 		p2p::StemTransaction::Notify stem;
 		stem.transaction_desc.hash = crypto::rand<Hash>();
 		stem.transaction_desc.fee = 1234;
@@ -286,6 +289,31 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(p2p::Socks5::is_anonymity_domain(onion_host) &&
 		              p2p::Socks5::connect_anonymity_domain(onion_host, 18080).at(3) == 3,
 		    "SOCKS5 onion framing is not canonical");
+		p2p::Handshake::Response identity_response;
+		identity_response.node_data.version = P2PProtocolVersion::ANONYMITY_ADDRESSES;
+		identity_response.node_data.anonymity_host = onion_host;
+		identity_response.node_data.anonymity_port = 18080;
+		AnonymityNetworkAddress shared_identity;
+		shared_identity.host = onion_host;
+		shared_identity.port = 18081;
+		identity_response.anonymity_peerlist.push_back(shared_identity);
+		const BinaryArray identity_wire = seria::to_binary_kv(identity_response);
+		p2p::Handshake::Response decoded_identity;
+		seria::from_binary_kv(decoded_identity, identity_wire);
+		invariant(decoded_identity.node_data.version == P2PProtocolVersion::ANONYMITY_ADDRESSES &&
+		              decoded_identity.node_data.anonymity_host == onion_host &&
+		              decoded_identity.node_data.anonymity_port == 18080 &&
+		              decoded_identity.anonymity_peerlist.size() == 1 &&
+		              decoded_identity.anonymity_peerlist.front().host == onion_host &&
+		              decoded_identity.anonymity_peerlist.front().port == 18081,
+		    "versioned anonymity identity did not round-trip");
+		p2p::Handshake::Response legacy_identity_response;
+		legacy_identity_response.node_data.version = P2PProtocolVersion::DANDELION;
+		const BinaryArray legacy_identity_wire = seria::to_binary_kv(legacy_identity_response);
+		const std::string anonymity_key = "anonymity_peerlist";
+		invariant(std::search(legacy_identity_wire.begin(), legacy_identity_wire.end(), anonymity_key.begin(),
+		              anonymity_key.end()) == legacy_identity_wire.end(),
+		    "empty v5 handshake unexpectedly emitted the v6 anonymity peer list");
 		p2p::Socks5::validate_method(common::BinaryArray{5, 0});
 		const common::BinaryArray ipv4_reply{5, 0, 0, 1, 127, 0, 0, 1, 0x23, 0x28};
 		invariant(p2p::Socks5::connect_reply_size(ipv4_reply) == ipv4_reply.size(),

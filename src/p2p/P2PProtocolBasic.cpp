@@ -4,6 +4,7 @@
 #include "P2PProtocolBasic.hpp"
 #include <iostream>
 #include "Core/Config.hpp"
+#include "Socks5.hpp"
 #include "platform/Time.hpp"
 
 using namespace cn;
@@ -79,12 +80,33 @@ Timestamp P2PProtocolBasic::get_local_time() const { return platform::now_unix_t
 
 BasicNodeData P2PProtocolBasic::get_my_node_data() const {
 	BasicNodeData node_data;
-	node_data.version    = P2PProtocolVersion::DANDELION;
+	node_data.version    = P2PProtocolVersion::ANONYMITY_ADDRESSES;
 	node_data.local_time = get_local_time();
 	node_data.peer_id    = my_unique_number;
 	node_data.my_port    = config.p2p_external_port;
 	node_data.network_id = config.network_id;
+	if (config.p2p_advertise_anonymity) {
+		node_data.anonymity_host = config.p2p_advertised_anonymity_address.host;
+		node_data.anonymity_port = config.p2p_advertised_anonymity_address.port;
+	}
 	return node_data;
+}
+
+static bool valid_anonymity_identity(const BasicNodeData &node_data) {
+	if (node_data.anonymity_host.empty() && node_data.anonymity_port == 0)
+		return true;
+	NetworkAddress address;
+	address.host = node_data.anonymity_host;
+	address.port = node_data.anonymity_port;
+	return node_data.version >= P2PProtocolVersion::ANONYMITY_ADDRESSES &&
+	       p2p::Socks5::is_anonymity_target(address);
+}
+
+static bool valid_anonymity_peerlist(const std::vector<AnonymityNetworkAddress> &peerlist) {
+	for (const auto &entry : peerlist)
+		if (!p2p::Socks5::is_anonymity_target(entry.to_network_address()))
+			return false;
+	return true;
 }
 
 void P2PProtocolBasic::on_connect() {
@@ -151,16 +173,29 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Request &&req) {
 		disconnect("202 old version");
 		return;
 	}
+	if (!valid_anonymity_identity(req.node_data)) {
+		disconnect("202 invalid advertised anonymity identity");
+		return;
+	}
 	// on self-connect, incoming side replies so that outgoing side can add to ban
 	p2p::Handshake::Response msg;
 	msg.payload_data   = get_my_sync_data();
 	msg.node_data      = get_my_node_data();
+	if (req.node_data.version < P2PProtocolVersion::ANONYMITY_ADDRESSES) {
+		msg.node_data.anonymity_host.clear();
+		msg.node_data.anonymity_port = 0;
+	}
 	msg.local_peerlist = get_legacy_peers_to_share();
 	if (msg.local_peerlist.size() > p2p::Handshake::Response::MAX_SEND_PEER_COUNT)
 		msg.local_peerlist.resize(p2p::Handshake::Response::MAX_SEND_PEER_COUNT);
 	msg.peerlist = get_peers_to_share();
 	if (msg.peerlist.size() > p2p::Handshake::Response::MAX_SEND_PEER_COUNT)
 		msg.peerlist.resize(p2p::Handshake::Response::MAX_SEND_PEER_COUNT);
+	if (req.node_data.version >= P2PProtocolVersion::ANONYMITY_ADDRESSES) {
+		msg.anonymity_peerlist = get_anonymity_peers_to_share();
+		if (msg.anonymity_peerlist.size() > p2p::Handshake::Response::MAX_SEND_PEER_COUNT)
+			msg.anonymity_peerlist.resize(p2p::Handshake::Response::MAX_SEND_PEER_COUNT);
+	}
 
 	BinaryArray raw_msg = LevinProtocol::send(msg);
 	send(std::move(raw_msg));
@@ -179,6 +214,8 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Response &&req) {
 		return disconnect("p2p::Handshake response from incoming node");
 	if (req.node_data.network_id != config.network_id)
 		return disconnect("202 wrong network");
+	if (!valid_anonymity_identity(req.node_data))
+		return disconnect("202 invalid advertised anonymity identity");
 	// self-connect, incoming side replies so that outgoing side can add to ban
 	if (req.node_data.peer_id == my_unique_number)
 		return disconnect("203 self-connect");
@@ -187,11 +224,17 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Response &&req) {
 		return disconnect("204 max_local_peer_count");
 	if (req.peerlist.size() > p2p::Handshake::Response::MAX_PEER_COUNT)
 		return disconnect("204 max_peer_count");
+	if ((req.node_data.version < P2PProtocolVersion::ANONYMITY_ADDRESSES &&
+	        !req.anonymity_peerlist.empty()) ||
+	    req.anonymity_peerlist.size() > p2p::Handshake::Response::MAX_PEER_COUNT ||
+	    !valid_anonymity_peerlist(req.anonymity_peerlist))
+		return disconnect("204 invalid anonymity_peerlist");
 	peer_unique_number = req.node_data.peer_id;
 	set_peer_sync_data(req.payload_data);
 	std::cout << "P2p p2p::Handshake response version=" << int(req.node_data.version)
 	          << " unique_number=" << req.node_data.peer_id << " current_height=" << req.payload_data.current_height
 	          << " local_peerlist.size=" << req.local_peerlist.size() << " peerlist.size=" << req.peerlist.size()
+	          << " anonymity_peerlist.size=" << req.anonymity_peerlist.size()
 	          << " from " << get_address() << std::endl;
 	on_msg_handshake(std::move(req));
 }

@@ -4,20 +4,18 @@ on:
   push:
     paths:
       - ".github/workflows/network-privacy.yml"
-      - "src/p2p/Dandelion.hpp"
-      - "src/p2p/Socks5.hpp"
-      - "src/Core/Node.cpp"
-      - "src/Core/Node.hpp"
-      - "src/Core/Node_P2PProtocolBytecoin.cpp"
+      - "src/common/Ipv4Address.*"
+      - "src/Core/Config.*"
+      - "src/Core/Node*"
+      - "src/p2p/**"
       - "tests/network/**"
   pull_request:
     paths:
       - ".github/workflows/network-privacy.yml"
-      - "src/p2p/Dandelion.hpp"
-      - "src/p2p/Socks5.hpp"
-      - "src/Core/Node.cpp"
-      - "src/Core/Node.hpp"
-      - "src/Core/Node_P2PProtocolBytecoin.cpp"
+      - "src/common/Ipv4Address.*"
+      - "src/Core/Config.*"
+      - "src/Core/Node*"
+      - "src/p2p/**"
       - "tests/network/**"
 
 permissions:

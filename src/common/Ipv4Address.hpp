@@ -12,10 +12,13 @@ namespace common {
 
 struct NetworkAddress {
 	BinaryArray ip;  // 4 or 16 bytes, depending on version
+	std::string host;  // Canonical proxy-resolved anonymity hostname; empty for numeric addresses.
 	uint16_t port = 0;
 
 	std::string to_string() const;
 	int compare(const NetworkAddress &other) const {
+		if (host != other.host)
+			return host < other.host ? -1 : 1;
 		if (ip != other.ip)
 			return ip < other.ip ? -1 : 1;
 		if (port != other.port)

@@ -171,6 +171,7 @@ protected:
 		CoreSyncData get_my_sync_data() const override;
 		std::vector<NetworkAddress> get_peers_to_share() const override;
 		std::vector<PeerlistEntryLegacy> get_legacy_peers_to_share() const override;
+		std::vector<AnonymityNetworkAddress> get_anonymity_peers_to_share() const override;
 
 		void on_first_message_after_handshake() override;
 		void on_msg_handshake(p2p::Handshake::Request &&) override;

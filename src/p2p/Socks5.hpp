@@ -53,6 +53,22 @@ struct Socks5 {
 		return result;
 	}
 
+	static bool is_numeric_target(const common::NetworkAddress &target) {
+		return target.host.empty() && target.ip.size() == 4 && target.port != 0;
+	}
+
+	static bool is_anonymity_target(const common::NetworkAddress &target) {
+		return target.ip.empty() && target.port != 0 && is_anonymity_domain(target.host);
+	}
+
+	static common::BinaryArray connect_target(const common::NetworkAddress &target) {
+		if (is_anonymity_target(target))
+			return connect_anonymity_domain(target.host, target.port);
+		if (is_numeric_target(target))
+			return connect_ipv4(target);
+		throw std::runtime_error("SOCKS5 target must be exactly one canonical numeric or anonymity address");
+	}
+
 	static void validate_method(const common::BinaryArray &reply) {
 		if (reply.size() != 2 || reply[0] != 5 || reply[1] != 0)
 			throw std::runtime_error("SOCKS5 proxy rejected no-authentication method");

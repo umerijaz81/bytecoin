@@ -83,6 +83,15 @@ void ser_members(BasicNodeData &v, seria::ISeria &s) {
 	seria_kv("peer_id", v.peer_id, s);
 	seria_kv("local_time", v.local_time, s);
 	seria_kv("my_port", v.my_port, s);
+	if (s.is_input() || !v.anonymity_host.empty() || v.anonymity_port != 0) {
+		seria_kv_optional("anonymity_host", v.anonymity_host, s);
+		seria_kv_optional("anonymity_port", v.anonymity_port, s);
+	}
+}
+
+void ser_members(AnonymityNetworkAddress &v, seria::ISeria &s) {
+	seria_kv("host", v.host, s);
+	seria_kv("port", v.port, s);
 }
 
 void ser_kv_plus1(common::StringView name, Height &v, seria::ISeria &s) {
@@ -114,6 +123,8 @@ void ser_members(p2p::Handshake::Response &v, seria::ISeria &s) {
 	seria_kv("node_data", v.node_data, s);
 	seria_kv("payload_data", v.payload_data, s);
 	seria_kv("peerlist", v.peerlist, s);
+	if (s.is_input() || !v.anonymity_peerlist.empty())
+		seria_kv_optional("anonymity_peerlist", v.anonymity_peerlist, s);
 	serialize_as_binary(v.local_peerlist, "local_peerlist", s);
 }
 

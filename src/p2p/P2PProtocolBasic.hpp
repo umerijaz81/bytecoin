@@ -69,6 +69,9 @@ protected:
 	virtual std::vector<PeerlistEntryLegacy> get_legacy_peers_to_share() const {
 		return std::vector<PeerlistEntryLegacy>();
 	}
+	virtual std::vector<AnonymityNetworkAddress> get_anonymity_peers_to_share() const {
+		return std::vector<AnonymityNetworkAddress>();
+	}
 
 	void set_peer_sync_data(CoreSyncData cd) { peer_sync_data = cd; }
 

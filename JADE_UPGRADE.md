@@ -74,8 +74,9 @@ re-architecting.
   persistent worker VMs, bounds initialization/hash thread counts, supports require-or-fail large pages
   and retains an explicit single-thread light mode. Native x86-64/ARM64 full-memory equality and a real
   two-branch epoch reorganization are CI-gated. See `docs/RandomX-Transition.md`.
-- **Remaining:** independent consensus review, RISC-V gate stabilization, published throughput/power
-  benchmarks, deeper randomized reorg/long-sync qualification and public testnet activation/soak.
+- **Remaining:** independent consensus review, published throughput/power benchmarks on native
+  qualification hardware, deeper randomized reorg/long-sync qualification and public testnet
+  activation/soak. The RV64GC v2 vectors are CI-gated under QEMU.
 
 ### Phase 6 — Post-quantum crypto-agility (addresses Q-1)
 - **Implemented seam:** Jade V5 serializes a stable one-byte `TransactionSignatureScheme` identifier
@@ -97,9 +98,11 @@ re-architecting.
   immediate loop/disconnect recovery. V4 peers retain diffusion compatibility. The default is on;
   `--disable-dandelion` opts out. See `docs/Dandelion-Relay.md` for the state machine and limitations.
 - **Tor/I2P proxy (implemented, validation pending):** `--p2p-proxy=<ip:port>` routes every outbound
-  P2P connection through a no-auth SOCKS5 proxy with numeric targets, no direct fallback and a bounded
-  handshake. Remaining: Tor/I2P integration tests, hidden-service peer identities and independent
-  DNS/direct-leak validation. See `docs/SOCKS5-Proxy.md`.
+  P2P connection through a no-auth SOCKS5 proxy with no direct fallback and a bounded handshake.
+  Protocol v6 adds canonical onion/I2P seed, priority, advertised-service and persistent peer-DB
+  identities without changing the v1-v5 numeric encoding. Remaining: real Tor/I2P multi-node process,
+  reconnect/shutdown and independent packet-capture DNS/direct-leak validation. See
+  `docs/SOCKS5-Proxy.md`.
 
 ## Build / test (this environment)
 

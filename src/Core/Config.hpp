@@ -104,6 +104,8 @@ public:
 	uint8_t dandelion_fluff_probability_percent            = 10;
 	bool p2p_proxy_enabled                                  = false;
 	NetworkAddress p2p_proxy;
+	bool p2p_advertise_anonymity                            = false;
+	NetworkAddress p2p_advertised_anonymity_address;
 
 	size_t rpc_sync_blocks_max_count;
 	size_t rpc_sync_blocks_max_size;
