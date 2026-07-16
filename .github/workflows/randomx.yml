@@ -6,12 +6,14 @@ on:
       - ".github/workflows/randomx.yml"
       - "src/crypto/RandomX.*"
       - "tests/hash/test_randomx.*"
+      - "tests/randomx/**"
       - "vendor/randomx/**"
   pull_request:
     paths:
       - ".github/workflows/randomx.yml"
       - "src/crypto/RandomX.*"
       - "tests/hash/test_randomx.*"
+      - "tests/randomx/**"
       - "vendor/randomx/**"
 
 permissions:
@@ -26,10 +28,13 @@ jobs:
         include:
           - os: ubuntu-latest
             executable: build-randomx/randomx-tests
+            mode_executable: build-randomx-modes/randomx-mode-tests
           - os: macos-latest
             executable: build-randomx/randomx-tests
+            mode_executable: build-randomx-modes/randomx-mode-tests
           - os: windows-latest
             executable: build-randomx/Release/randomx-tests.exe
+            mode_executable: build-randomx-modes/Release/randomx-mode-tests.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -42,3 +47,10 @@ jobs:
       - name: Run RandomX v2 vectors
         shell: bash
         run: ./${{ matrix.executable }} --v2
+      - name: Configure Bytecoin full-memory mode test
+        run: cmake -S tests/randomx -B build-randomx-modes
+      - name: Build Bytecoin full-memory mode test
+        run: cmake --build build-randomx-modes --config Release --target randomx-mode-tests
+      - name: Run light/full-memory equality and concurrency test
+        shell: bash
+        run: ./${{ matrix.mode_executable }}

@@ -15,6 +15,7 @@
 #include "common/Varint.hpp"
 #include "crypto/crypto.hpp"
 #include "logging/ConsoleLogger.hpp"
+#include "platform/PathTools.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
 #include "seria/KVBinaryInputStream.hpp"
@@ -191,6 +192,8 @@ void test_blockchain(common::CommandLine &cmd) {
 		Config randomx_config(cmd);
 		randomx_config.data_folder = "../tests/scratchpad-randomx";
 		randomx_config.net         = "test";
+		invariant(platform::create_folders_if_necessary(randomx_config.data_folder),
+		    "Could not create RandomX test data folder");
 		BlockChain::DB::delete_db(randomx_config.data_folder + "/blockchain");
 		Currency randomx_currency(randomx_config);
 		randomx_currency.upgrade_heights.at(3) = 2;
