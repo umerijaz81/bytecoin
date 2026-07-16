@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -381,6 +382,58 @@ export fn balance(public left: u16, private shift: u16) -> u16 {
             compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
             self.assertEqual((bundle / "halo2-vk-descriptor.bin").stat().st_size, 101)
             verifier.verify_bundle(bundle, backend)
+
+    @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
+    def test_composite_parameters_calls_index_and_return_create_real_proof(self):
+        source = b"""record Pair {
+  left: u16;
+  right: u16;
+}
+fn choose(private values: [u16; 3], private index: u64) -> u16 {
+  let output: u16 = values[index];
+  return output;
+}
+export fn balance(public header: bytes<2>, private pair: Pair, private index: u64) -> [u16; 2] {
+  let marker: bytes<2> = hex"0c0d";
+  let copied: Pair = Pair { left: pair.left, right: pair.right };
+  let values: [u16; 3] = [copied.left, copied.right, 9];
+  let chosen: u16 = choose(values, index);
+  if false {
+    let bad_index: u64 = 3;
+    let hidden: u16 = values[bad_index];
+    let hidden_pair: Pair = Pair { left: hidden, right: hidden };
+    assert(hidden_pair.left > chosen);
+  } else {
+    assert(chosen <= 9);
+  }
+  let output: [u16; 2] = [chosen, copied.left];
+  return output;
+}
+"""
+        backend = pathlib.Path(os.environ["ONYX_COMPILER_BACKEND"])
+        field = lambda value: int(value).to_bytes(32, "little").hex()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source, vectors=[
+                {"function": "balance", "inputs": ["0a0b", [5, 7], 1], "expected": [7, 5]},
+                {"function": "balance", "inputs": ["0a0b", [5, 7], 3], "expect_failure": True},
+            ])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
+            verifier.verify_bundle(bundle, backend)
+            witness = ",".join(map(field, [10, 11, 5, 7, 1]))
+            public = ",".join(map(field, [10, 11, 7, 5]))
+            proof = subprocess.run([str(backend), "prove", "12", witness, public],
+                input=(bundle / "program.onxir").read_bytes(), capture_output=True, check=True, timeout=120)
+            self.assertRegex(proof.stdout.decode().strip(), r"^[0-9a-f]+$")
+            wrong_public = ",".join(map(field, [10, 11, 7, 6]))
+            rejected = subprocess.run([str(backend), "prove", "12", witness, wrong_public],
+                input=(bundle / "program.onxir").read_bytes(), capture_output=True, timeout=120)
+            self.assertNotEqual(rejected.returncode, 0)
+            bad_index_witness = ",".join(map(field, [10, 11, 5, 7, 3]))
+            rejected = subprocess.run([str(backend), "prove", "12", bad_index_witness, public],
+                input=(bundle / "program.onxir").read_bytes(), capture_output=True, timeout=120)
+            self.assertNotEqual(rejected.returncode, 0)
 
 
 if __name__ == "__main__":

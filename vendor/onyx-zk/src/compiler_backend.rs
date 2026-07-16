@@ -18,6 +18,8 @@ use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+mod compiler_composites;
+
 const IR_DOMAIN: &[u8] = b"ONXIR\x01";
 const DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.compiler-halo2-descriptor.v1";
 const MAX_IR_BYTES: usize = 64 * 1024 * 1024;
@@ -96,7 +98,7 @@ struct Function {
     name: String,
     exported: bool,
     parameters: Vec<Parameter>,
-    return_type: ScalarType,
+    return_types: Vec<ScalarType>,
     instructions: Vec<Instruction>,
 }
 
@@ -244,6 +246,11 @@ fn opcode(value: u8) -> Result<Opcode, CompilerBackendError> {
 
 impl CompilerProgram {
     pub fn decode(ir: &[u8]) -> Result<Self, CompilerBackendError> {
+        compiler_composites::decode_composite_program(ir)
+    }
+
+    #[allow(dead_code)]
+    fn decode_legacy_scalar(ir: &[u8]) -> Result<Self, CompilerBackendError> {
         if ir.len() > MAX_IR_BYTES {
             return Err(CompilerBackendError::LimitExceeded);
         }
@@ -401,7 +408,7 @@ impl CompilerProgram {
                 name,
                 exported,
                 parameters,
-                return_type,
+                return_types: vec![return_type],
                 instructions,
             });
         }
@@ -432,7 +439,7 @@ impl CompilerProgram {
             .iter()
             .filter(|p| p.visibility == Visibility::Public)
             .count()
-            + 1
+            + self.function.return_types.len()
     }
 
     fn estimated_rows(&self) -> Result<usize, CompilerBackendError> {
@@ -567,7 +574,7 @@ fn inline_export(
                     output.push(Instruction {
                         opcode: Opcode::Constant,
                         result: Some(zero),
-                        kind: function.return_type,
+                        kind: function.return_types[0],
                         operands: Vec::new(),
                         guard: None,
                         immediate: Some(0),
@@ -577,7 +584,7 @@ fn inline_export(
                     output.push(Instruction {
                         opcode: Opcode::Select,
                         result: Some(selected),
-                        kind: function.return_type,
+                        kind: function.return_types[0],
                         operands: vec![guard, returned, zero],
                         guard: None,
                         immediate: None,
@@ -609,7 +616,7 @@ fn inline_export(
     instructions.push(Instruction {
         opcode: Opcode::Return,
         result: None,
-        kind: export.return_type,
+        kind: export.return_types[0],
         operands: vec![returned],
         guard: None,
         immediate: None,
@@ -619,7 +626,7 @@ fn inline_export(
         name: export.name.clone(),
         exported: true,
         parameters: export.parameters.clone(),
-        return_type: export.return_type,
+        return_types: export.return_types.clone(),
         instructions,
     })
 }
@@ -1534,7 +1541,7 @@ impl Circuit<Fp> for CompilerCircuit {
         let mut public_index = 0usize;
         let mut values: Vec<Option<AssignedCell<Fp, Fp>>> =
             Vec::with_capacity(self.program.function.instructions.len());
-        let mut returned: Option<AssignedCell<Fp, Fp>> = None;
+        let mut returned: Vec<AssignedCell<Fp, Fp>> = Vec::new();
         for (instruction_index, instruction) in
             self.program.function.instructions.iter().enumerate()
         {
@@ -1757,15 +1764,18 @@ impl Circuit<Fp> for CompilerCircuit {
                 parameter_index += 1;
             }
             if instruction.opcode == Opcode::Return {
-                returned = Some(assigned.clone());
+                returned.push(assigned.clone());
             }
             values.push(Some(assigned));
         }
-        layouter.constrain_instance(
-            returned.ok_or(Error::Synthesis)?.cell(),
-            config.instance,
-            public_index,
-        )
+        if returned.len() != self.program.function.return_types.len() {
+            return Err(Error::Synthesis);
+        }
+        for returned in returned {
+            layouter.constrain_instance(returned.cell(), config.instance, public_index)?;
+            public_index += 1;
+        }
+        Ok(())
     }
 }
 

@@ -37,8 +37,9 @@ unreachable until the release gates below are independently satisfied.
    dynamic shifts and field nonzero division are constraint-enforced. Acyclic direct helper calls are signature-checked
    and deterministically inlined into a single export. Guarded execution uses safe-operand selection, canonical
    inactive values, assertion implication and transitive call guards without disabling arithmetic constraints.
-   Composites, multiple exports and intrinsics still require
-   backend lowering and type-specific proof vectors. Structured fuzzing, audit and testnet gates also remain. Unknown or
+   Arrays, records and fixed bytes flatten across parameters, returns, calls, guards, constructors, projections and
+   bounded dynamic indexing, with real multi-leaf proof vectors. Multiple exports and intrinsics still require backend
+   lowering and type-specific proof vectors. Structured fuzzing, audit and testnet gates also remain. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative

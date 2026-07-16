@@ -61,15 +61,15 @@ the call graph, recomputes expanded instruction/constraint/row/column/witness/me
 checks every artifact digest, recompiles from the normalized package in a fresh absolute path and
 requires every output byte to match.
 
-## Halo2 scalar and integer alpha backend
+## Halo2 scalar, integer and composite alpha backend
 
 `vendor/onyx-zk/src/compiler_backend.rs` independently decodes canonical `ONXIR` inside the pinned
 Rust/Halo2 dependency boundary. Its executable profile accepts exactly one call-free exported
 function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. A package may contain
 acyclic direct helper calls: the backend independently verifies earlier-target signatures and deterministically
 inlines their parameters, constraints, assertions and return values into the single exported circuit. Packages
-with multiple exports remain rejected until the proof API has an explicit entry selector. It rejects composites,
-intrinsics until their circuit gadgets are implemented. Guarded control flow is normalized independently in
+with multiple exports remain rejected until the proof API has an explicit entry selector. Intrinsics remain rejected
+until their circuit gadgets are implemented. Guarded control flow is normalized independently in
 the backend: guarded operands select constraint-safe neutral values, the original arithmetic gadget remains
 fully enabled, and its result is selected against the canonical type-zero. Guarded assertions become Boolean
 implications, and call guards propagate through every inlined callee constraint. Thus inactive division-by-zero,
@@ -81,6 +81,14 @@ inverse witness, and assertion gates. Unsigned values are bit-decomposed and rec
 add/subtract/multiply fail on overflow or underflow, ordering uses a range-constrained borrow,
 division/remainder enforce the complete nonzero Euclidean relation, and dynamic shifts constrain the
 shift count and power-of-two construction. Field division requires a nonzero denominator inverse.
+
+Canonical arrays, name-sorted nonrecursive records and fixed byte strings are flattened recursively into
+ordered scalar leaves. This applies to public/private parameters, return values, direct-call arguments and
+results, guarded values, byte literals, constructors and record projections. Dynamic array indexing asserts the
+`u64` index bound and uses an equality/selection network for every leaf, so no host-side unchecked lookup enters
+the circuit. Public composite parameters and returns expose their leaves in canonical layout order. The bounded
+backend `prove` command accepts canonical 32-byte Pasta encodings and is used by integration tests to create a
+real composite proof and reject a mutated return leaf.
 
 The Rust backend also exposes bounded `create_compiler_proof` and `verify_compiler_proof` APIs. Proof
 creation requires every declared parameter plus the public parameters and return value in canonical
@@ -95,7 +103,7 @@ descriptor containing the circuit size, profile digest, IR digest and a domain-s
 the pinned Halo2 verifying key. Passing `--backend-executable` to the frontend embeds that descriptor
 and backend measurements. Verification then requires an explicitly supplied backend executable,
 regenerates the VK descriptor from bundled IR, recompiles the whole bundle and byte-compares it. The
-descriptor remains `scalar-alpha-not-registrable`; unsupported IR cannot omit constraints silently.
+descriptor remains `composite-alpha-not-registrable`; unsupported IR cannot omit constraints silently.
 
 The locked three-platform core workflow runs positive reproduction plus negative manifest, source,
 IR, resource, call-graph and unsupported-language tests. `tests/onyx_compiler/golden-v1.json` freezes
@@ -103,8 +111,8 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 
 ## Remaining activation boundary
 
-The scalar and checked-integer subset now lowers to Halo2 and independently regenerates its descriptor,
-but the complete language does not. Arrays, records, byte strings, multiple exports and
-cryptographic intrinsics still require circuit lowering, type-specific proof vectors and backend measurements.
+The scalar, checked-integer and composite subset now lowers to Halo2 and independently regenerates its descriptor,
+but the complete language does not. Multiple exports and cryptographic intrinsics still require circuit lowering,
+type-specific proof vectors and backend measurements.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.

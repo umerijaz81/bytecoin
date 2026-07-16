@@ -1286,7 +1286,7 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
     if backend_executable is not None:
         descriptor = backend_descriptor(backend_executable, ir, circuit_k)
         metadata["resources"]["backend_measurements"] = {
-            "backend": "halo2-ipa-pasta-compiler-scalar-alpha",
+            "backend": "halo2-ipa-pasta-compiler-composite-alpha",
             "circuit_k": circuit_k,
             "descriptor_bytes": len(descriptor),
         }
@@ -1339,7 +1339,7 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
             provenance["halo2_backend"] = {
                 "circuit_k": circuit_k,
                 "descriptor_sha256": sha256(descriptor),
-                "status": "scalar-alpha-not-registrable",
+                "status": "composite-alpha-not-registrable",
             }
         (temporary / "provenance.json").write_bytes(canonical_json(provenance))
         files = []
