@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   upstream-v2-tests:
-    name: upstream v2 tests (${{ matrix.os }})
+    name: v2 and full-memory tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -54,3 +54,27 @@ jobs:
       - name: Run light/full-memory equality and concurrency test
         shell: bash
         run: ./${{ matrix.mode_executable }}
+
+  riscv64-v2-vectors:
+    name: upstream v2 vectors (riscv64/QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install RISC-V cross toolchain and emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-user
+      - name: Configure pinned RandomX for RV64GC
+        run: >-
+          cmake -S vendor/randomx -B build-randomx-riscv64
+          -DCMAKE_SYSTEM_NAME=Linux
+          -DCMAKE_SYSTEM_PROCESSOR=riscv64
+          -DCMAKE_C_COMPILER=riscv64-linux-gnu-gcc
+          -DCMAKE_CXX_COMPILER=riscv64-linux-gnu-g++
+      - name: Build RISC-V upstream tests
+        run: cmake --build build-randomx-riscv64 --parallel 2 --target randomx-tests
+      - name: Run RandomX v2 vectors under QEMU
+        run: qemu-riscv64 -L /usr/riscv64-linux-gnu build-randomx-riscv64/randomx-tests --v2
