@@ -29,10 +29,16 @@ continue to interoperate through the existing transaction diffusion message.
 
 Dandelion++ raises the cost of simple first-spy source correlation. It does not hide node IP addresses,
 defeat a sufficiently dense Sybil observer, or replace Tor/I2P. Outbound P2P can be routed through a
-SOCKS5 proxy with `--p2p-proxy`; see `docs/SOCKS5-Proxy.md`. The current implementation still needs
-socket-level adversarial multi-node topology tests, long-running sanitizer fuzzing, testnet soak and
-independent review before release. The delivery score limits repeated use of unreliable live peers;
-it is not Sybil resistance and does not infer operator, subnet or autonomous-system identity.
+SOCKS5 proxy with `--p2p-proxy`; see `docs/SOCKS5-Proxy.md`. The policy gate runs a deterministic
+64-peer, 20,000-transaction campaign with sixteen self-reflecting/disconnecting adversarial peers. It
+proves every pending stem recovers to fluff, every live peer remains eligible, connection replacement
+resets reputation, score bounds/decay hold and repeated failures receive materially less traffic. It
+passed on Linux, macOS and Windows in GitHub Actions run `29523898138`.
+
+The implementation still needs socket-level multi-daemon transaction topology tests, long-running
+sanitizer fuzzing, testnet soak and independent review before release. The delivery score limits
+repeated use of unreliable live peers; it is not Sybil resistance and does not infer operator, subnet
+or autonomous-system identity.
 
 The protocol constants are intentionally conservative defaults, not consensus rules. Changing them
 does not change transaction validity, but wire-version changes must remain negotiated to preserve

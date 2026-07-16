@@ -27,12 +27,18 @@ Run `tests --randomx` for the repository-specific v2 known-answer vector and cac
 Jade test verifies the fork/version boundary and delayed epoch rule; `tests --blockchain` includes the
 branch-derived seed/reorganization integration. CI also runs pinned upstream v2 vectors plus the
 full-memory equality test on x86-64 and ARM64, contains a RISC-V/QEMU vector gate, and repeatedly
-reorganizes competing branches through two distinct delayed-seed epochs. Remaining
-release qualification includes independent review, longer/deeper randomized reorg and sync runs,
-corrupt-template tests, published mining throughput/power benchmarks and public testnet soak.
+reorganizes competing branches through distinct delayed-seed epochs. A deterministic pseudo-random
+campaign additionally forces fourteen active-branch switches, commits both branches, reopens the
+database and reorganizes onto the previously inactive persisted branch while checking the exact seed
+ancestor after every switch. Remaining release qualification includes independent review, still
+longer public sync/reorg soak, corrupt-template process tests, published mining throughput/power
+benchmarks and public testnet soak.
 
 The repeated two-epoch branch test passed in the full consensus job on 2026-07-16 (GitHub Actions
 run `29514198541`).
+
+The randomized multi-epoch persistence/reopen campaign passed on 2026-07-16 in GitHub Actions run
+`29524086109`.
 
 The RISC-V gate cross-compiles the pinned upstream suite as RV64GC with a vector-crypto-capable GNU
 toolchain, then executes the v2 vectors under QEMU. It passed alongside all three native jobs on
@@ -56,6 +62,7 @@ throughput benchmarks.
 
 The consensus integration suite lowers only the test instance's activation/epoch parameters, mines
 two branches that fork before their seed block, and repeatedly grows and reorganizes both branches
-through two different seed epochs. This exercises the actual block serializer, validator, retained
-side chains and ancestor lookup. The production defaults and dormant activation height remain
-unchanged.
+through different seed epochs. It also persists and reloads the active and retained side-chain state
+before another forced reorganization. This exercises the actual block serializer, validator, SQLite
+commit/reopen path, retained side chains and ancestor lookup. The production defaults and dormant
+activation height remain unchanged.

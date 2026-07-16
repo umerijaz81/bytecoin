@@ -38,8 +38,9 @@ unreachable until the release gates below are independently satisfied.
 1. The negotiated Dandelion++ relay now has epoch rotation, stem-loop prevention, randomized
    embargo/fluff recovery, hop limits, disconnect recovery, legacy-peer fallback, bounded delivery
    scoring/decay and weighted randomized peer rotation. A selected peer's own fluff reflection cannot
-   cancel its embargo. Remaining: multi-node adversarial topology simulation, fuzz soak and independent
-   network-privacy review.
+   cancel its embargo. A deterministic 64-peer/20,000-transaction adversarial campaign is CI-gated
+   across all three platforms. Remaining: socket-level multi-daemon transaction topology, fuzz soak
+   and independent network-privacy review.
 2. Fail-closed no-auth SOCKS5 outbound transport is implemented with numeric proxy/peer addresses,
    bounded negotiation and no local destination lookup. Canonical v3 onion and I2P b32 destination
    framing is fail-closed, and protocol v6 carries canonical proxy-only onion/I2P identities through
@@ -52,8 +53,10 @@ unreachable until the release gates below are independently satisfied.
    delayed branch-derived seed epochs, explicit template negotiation and a repository KAT. Shared
    full-memory datasets, persistent multithread workers, strict light/large-page policy, native
    x86-64/ARM64 equality, RV64GC v2 vectors under QEMU and an actual branch-seed epoch reorganization
-   are CI-gated. Remaining: independent review, deeper randomized reorg/long-sync tests, published
-   throughput/power benchmarks on native qualification hardware and public soak.
+   are CI-gated. A fourteen-switch randomized multi-epoch campaign persists both branches, reopens the
+   database and reorganizes onto the retained branch while checking every selected seed ancestor.
+   Remaining: independent review, longer public long-sync/reorg soak, corrupt-template process tests,
+   published throughput/power benchmarks on native qualification hardware and public soak.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.
 5. Jade V5 now binds a stable explicit authorization-scheme identifier into its signed prefix and
