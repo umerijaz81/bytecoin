@@ -1,11 +1,11 @@
 //! Deterministic Halo2 lowering boundary for canonical `ONXIR` v1.
 //!
-//! This first backend profile deliberately accepts only one call-free scalar function over Pasta
-//! fields and booleans. Unsupported integer/composite/control-flow instructions fail closed. The
+//! This backend profile deliberately accepts only one call-free scalar function over Pasta fields,
+//! booleans, and checked unsigned integers. Unsupported composite/control-flow instructions fail closed. The
 //! circuit shape retains the decoded program in `without_witnesses`, so key generation commits to
 //! opcode/selector placement rather than to runtime witnesses.
 
-use ff::Field;
+use ff::{Field, PrimeField};
 use halo2_proofs::circuit::{AssignedCell, Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::pasta::{EqAffine, Fp};
 use halo2_proofs::plonk::{
@@ -27,7 +27,17 @@ const MAX_PROOF_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScalarType {
     Bool,
+    Integer(u8),
     Field,
+}
+
+impl ScalarType {
+    fn integer_bits(self) -> Option<u8> {
+        match self {
+            Self::Integer(bits) => Some(bits),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,9 +62,17 @@ enum Opcode {
     Or,
     Equal,
     NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
     Add,
     Subtract,
     Multiply,
+    Divide,
+    Remainder,
+    ShiftLeft,
+    ShiftRight,
     Assert,
     Return,
 }
@@ -173,6 +191,10 @@ impl<'a> Reader<'a> {
 fn scalar_type(text: &str) -> Result<ScalarType, CompilerBackendError> {
     match text {
         "bool" => Ok(ScalarType::Bool),
+        "u8" => Ok(ScalarType::Integer(8)),
+        "u16" => Ok(ScalarType::Integer(16)),
+        "u32" => Ok(ScalarType::Integer(32)),
+        "u64" => Ok(ScalarType::Integer(64)),
         "field" => Ok(ScalarType::Field),
         _ => Err(CompilerBackendError::UnsupportedType),
     }
@@ -193,12 +215,20 @@ fn opcode(value: u8) -> Result<Opcode, CompilerBackendError> {
         5 => Ok(Opcode::Or),
         6 => Ok(Opcode::Equal),
         7 => Ok(Opcode::NotEqual),
+        8 => Ok(Opcode::Less),
+        9 => Ok(Opcode::LessEqual),
+        10 => Ok(Opcode::Greater),
+        11 => Ok(Opcode::GreaterEqual),
         12 => Ok(Opcode::Add),
         13 => Ok(Opcode::Subtract),
         14 => Ok(Opcode::Multiply),
+        15 => Ok(Opcode::Divide),
+        16 => Ok(Opcode::Remainder),
+        17 => Ok(Opcode::ShiftLeft),
+        18 => Ok(Opcode::ShiftRight),
         26 => Ok(Opcode::Assert),
         27 => Ok(Opcode::Return),
-        8..=11 | 15..=25 => Err(CompilerBackendError::UnsupportedInstruction),
+        19..=25 => Err(CompilerBackendError::UnsupportedInstruction),
         _ => Err(CompilerBackendError::InvalidEncoding),
     }
 }
@@ -354,6 +384,57 @@ impl CompilerProgram {
             .count()
             + 1
     }
+
+    fn estimated_rows(&self) -> Result<usize, CompilerBackendError> {
+        self.function.instructions.iter().try_fold(
+            self.function.instructions.len() + 16,
+            |rows, instruction| {
+                let result_range = instruction
+                    .result
+                    .and_then(|_| instruction.kind.integer_bits())
+                    .map_or(0, usize::from);
+                let ordering_rows = if matches!(
+                    instruction.opcode,
+                    Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual
+                ) {
+                    instruction
+                        .operands
+                        .first()
+                        .and_then(|operand| {
+                            self.function.instructions[*operand].kind.integer_bits()
+                        })
+                        .map_or(0, |bits| usize::from(bits) + 1)
+                } else {
+                    0
+                };
+                let division_rows =
+                    if matches!(instruction.opcode, Opcode::Divide | Opcode::Remainder)
+                        && instruction.kind.integer_bits().is_some()
+                    {
+                        2 * usize::from(instruction.kind.integer_bits().unwrap()) + 3
+                    } else {
+                        0
+                    };
+                let shift_rows =
+                    if matches!(instruction.opcode, Opcode::ShiftLeft | Opcode::ShiftRight) {
+                        let bits = usize::from(instruction.kind.integer_bits().unwrap());
+                        let power_bits =
+                            instruction.kind.integer_bits().unwrap().trailing_zeros() as usize;
+                        bits + bits
+                            + power_bits
+                            + if instruction.opcode == Opcode::ShiftRight {
+                                2 * bits + 4
+                            } else {
+                                2
+                            }
+                    } else {
+                        0
+                    };
+                rows.checked_add(result_range + ordering_rows + division_rows + shift_rows)
+                    .ok_or(CompilerBackendError::LimitExceeded)
+            },
+        )
+    }
 }
 
 fn validate_types(
@@ -385,6 +466,9 @@ fn validate_types(
                 if !instruction.operands.is_empty()
                     || instruction.immediate.is_none()
                     || (instruction.kind == ScalarType::Bool && instruction.immediate.unwrap() > 1)
+                    || instruction.kind.integer_bits().is_some_and(|bits| {
+                        bits < 64 && instruction.immediate.unwrap() >= (1u64 << bits)
+                    })
                 {
                     return Err(CompilerBackendError::InvalidProgram);
                 }
@@ -409,12 +493,45 @@ fn validate_types(
                     return Err(CompilerBackendError::InvalidProgram);
                 }
             }
-            Opcode::Add | Opcode::Subtract | Opcode::Multiply => require(
-                &operand_types,
-                &[ScalarType::Field, ScalarType::Field],
-                instruction.kind,
-                ScalarType::Field,
-            )?,
+            Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => {
+                if operand_types.len() != 2
+                    || operand_types[0] != operand_types[1]
+                    || operand_types[0].integer_bits().is_none()
+                    || instruction.kind != ScalarType::Bool
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
+            Opcode::Add | Opcode::Subtract | Opcode::Multiply => {
+                if operand_types != [instruction.kind, instruction.kind]
+                    || (instruction.kind != ScalarType::Field
+                        && instruction.kind.integer_bits().is_none())
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
+            Opcode::Divide => {
+                if operand_types != [instruction.kind, instruction.kind]
+                    || (instruction.kind != ScalarType::Field
+                        && instruction.kind.integer_bits().is_none())
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
+            Opcode::Remainder => {
+                if operand_types != [instruction.kind, instruction.kind]
+                    || instruction.kind.integer_bits().is_none()
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
+            Opcode::ShiftLeft | Opcode::ShiftRight => {
+                if operand_types != [instruction.kind, instruction.kind]
+                    || instruction.kind.integer_bits().is_none()
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
             Opcode::Assert => require(
                 &operand_types,
                 &[ScalarType::Bool],
@@ -476,6 +593,7 @@ struct CompilerConfig {
     right: Column<Advice>,
     output: Column<Advice>,
     inverse: Column<Advice>,
+    auxiliary: Column<Advice>,
     instance: Column<Instance>,
     add: Selector,
     sub: Selector,
@@ -487,6 +605,314 @@ struct CompilerConfig {
     equal: Selector,
     not_equal: Selector,
     assert: Selector,
+    range_step: Selector,
+    less: Selector,
+    not_less: Selector,
+    field_divide: Selector,
+    integer_divide: Selector,
+    zero: Selector,
+    shift_power: Selector,
+}
+
+fn canonical_u64(value: &Fp) -> Option<u64> {
+    let representation = value.to_repr();
+    let bytes = representation.as_ref();
+    if bytes[8..].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    Some(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+}
+
+fn two_pow(bits: u8) -> Fp {
+    (0..bits).fold(Fp::one(), |value, _| value + value)
+}
+
+fn decompose_integer(
+    layouter: &mut impl Layouter<Fp>,
+    config: &CompilerConfig,
+    cell: &AssignedCell<Fp, Fp>,
+    bits: u8,
+    label: String,
+) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
+    let integer = cell.value().map(|value| canonical_u64(value).unwrap_or(0));
+    let mut decomposition = layouter.assign_region(
+        || label.clone(),
+        |mut region| {
+            let mut decomposition = Vec::with_capacity(usize::from(bits));
+            let mut accumulator = region.assign_advice_from_constant(
+                || "range accumulator zero",
+                config.left,
+                0,
+                Fp::zero(),
+            )?;
+            for row in 0..usize::from(bits) {
+                if row != 0 {
+                    accumulator = accumulator.copy_advice(
+                        || "range accumulator",
+                        &mut region,
+                        config.left,
+                        row,
+                    )?;
+                }
+                let bit_index = usize::from(bits) - row - 1;
+                let bit = integer.map(|value| Fp::from((value >> bit_index) & 1));
+                decomposition.push(region.assign_advice(
+                    || "range bit",
+                    config.right,
+                    row,
+                    || bit,
+                )?);
+                config.range_step.enable(&mut region, row)?;
+                accumulator = if row + 1 == usize::from(bits) {
+                    cell.copy_advice(|| "range checked value", &mut region, config.output, row)?
+                } else {
+                    region.assign_advice(
+                        || "next range accumulator",
+                        config.output,
+                        row,
+                        || {
+                            accumulator
+                                .value()
+                                .zip(bit)
+                                .map(|(acc, bit)| *acc * Fp::from(2) + bit)
+                        },
+                    )?
+                };
+            }
+            Ok(decomposition)
+        },
+    )?;
+    decomposition.reverse();
+    Ok(decomposition)
+}
+
+fn range_check(
+    layouter: &mut impl Layouter<Fp>,
+    config: &CompilerConfig,
+    cell: &AssignedCell<Fp, Fp>,
+    bits: u8,
+    label: String,
+) -> Result<(), Error> {
+    decompose_integer(layouter, config, cell, bits, label).map(|_| ())
+}
+
+fn constrain_ordering(
+    layouter: &mut impl Layouter<Fp>,
+    config: &CompilerConfig,
+    left: &AssignedCell<Fp, Fp>,
+    right: &AssignedCell<Fp, Fp>,
+    result: &AssignedCell<Fp, Fp>,
+    bits: u8,
+    inverted: bool,
+    label: String,
+) -> Result<(), Error> {
+    let difference = left.value().zip(right.value()).map(|(left, right)| {
+        let left = canonical_u64(left).unwrap_or(0);
+        let right = canonical_u64(right).unwrap_or(0);
+        let mask = if bits == 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
+        Fp::from(left.wrapping_sub(right) & mask)
+    });
+    let difference_cell = layouter.assign_region(
+        || label.clone(),
+        |mut region| {
+            left.copy_advice(|| "ordered left", &mut region, config.left, 0)?;
+            right.copy_advice(|| "ordered right", &mut region, config.right, 0)?;
+            result.copy_advice(|| "ordered result", &mut region, config.inverse, 0)?;
+            region.assign_advice_from_constant(
+                || "integer modulus",
+                config.auxiliary,
+                0,
+                two_pow(bits),
+            )?;
+            if inverted {
+                config.not_less.enable(&mut region, 0)?;
+            } else {
+                config.less.enable(&mut region, 0)?;
+            }
+            region.assign_advice(|| "ordered difference", config.output, 0, || difference)
+        },
+    )?;
+    range_check(
+        layouter,
+        config,
+        &difference_cell,
+        bits,
+        format!("{label} difference range"),
+    )
+}
+
+fn constrain_integer_division(
+    layouter: &mut impl Layouter<Fp>,
+    config: &CompilerConfig,
+    numerator: &AssignedCell<Fp, Fp>,
+    denominator: &AssignedCell<Fp, Fp>,
+    result: &AssignedCell<Fp, Fp>,
+    bits: u8,
+    result_is_remainder: bool,
+    label: String,
+) -> Result<(), Error> {
+    let quotient = numerator
+        .value()
+        .zip(denominator.value())
+        .map(|(numerator, denominator)| {
+            let numerator = canonical_u64(numerator).unwrap_or(0);
+            let denominator = canonical_u64(denominator).unwrap_or(0);
+            Fp::from(if denominator == 0 {
+                0
+            } else {
+                numerator / denominator
+            })
+        });
+    let remainder = numerator
+        .value()
+        .zip(denominator.value())
+        .map(|(numerator, denominator)| {
+            let numerator = canonical_u64(numerator).unwrap_or(0);
+            let denominator = canonical_u64(denominator).unwrap_or(0);
+            Fp::from(if denominator == 0 {
+                0
+            } else {
+                numerator % denominator
+            })
+        });
+    let denominator_inverse = denominator
+        .value()
+        .map(|denominator| Option::<Fp>::from(denominator.invert()).unwrap_or(Fp::zero()));
+    let (quotient_cell, remainder_cell) = layouter.assign_region(
+        || label.clone(),
+        |mut region| {
+            numerator.copy_advice(|| "division numerator", &mut region, config.left, 0)?;
+            denominator.copy_advice(|| "division denominator", &mut region, config.right, 0)?;
+            let (quotient_cell, remainder_cell) = if result_is_remainder {
+                (
+                    region.assign_advice(|| "division quotient", config.output, 0, || quotient)?,
+                    result.copy_advice(|| "division remainder", &mut region, config.inverse, 0)?,
+                )
+            } else {
+                (
+                    result.copy_advice(|| "division quotient", &mut region, config.output, 0)?,
+                    region.assign_advice(
+                        || "division remainder",
+                        config.inverse,
+                        0,
+                        || remainder,
+                    )?,
+                )
+            };
+            region.assign_advice(
+                || "division denominator inverse",
+                config.auxiliary,
+                0,
+                || denominator_inverse,
+            )?;
+            config.integer_divide.enable(&mut region, 0)?;
+            Ok((quotient_cell, remainder_cell))
+        },
+    )?;
+    let companion = if result_is_remainder {
+        &quotient_cell
+    } else {
+        &remainder_cell
+    };
+    range_check(
+        layouter,
+        config,
+        companion,
+        bits,
+        format!("{label} companion range"),
+    )?;
+    let true_cell = layouter.assign_region(
+        || format!("{label} remainder bound truth"),
+        |mut region| region.assign_advice_from_constant(|| "true", config.output, 0, Fp::one()),
+    )?;
+    constrain_ordering(
+        layouter,
+        config,
+        &remainder_cell,
+        denominator,
+        &true_cell,
+        bits,
+        false,
+        format!("{label} remainder bound"),
+    )
+}
+
+fn constrain_shift(
+    layouter: &mut impl Layouter<Fp>,
+    config: &CompilerConfig,
+    value: &AssignedCell<Fp, Fp>,
+    count: &AssignedCell<Fp, Fp>,
+    result: &AssignedCell<Fp, Fp>,
+    bits: u8,
+    right_shift: bool,
+    label: String,
+) -> Result<(), Error> {
+    let count_bits =
+        decompose_integer(layouter, config, count, bits, format!("{label} count bits"))?;
+    let active_bits = bits.trailing_zeros() as usize;
+    for (index, bit) in count_bits.iter().enumerate().skip(active_bits) {
+        layouter.assign_region(
+            || format!("{label} count high bit {index}"),
+            |mut region| {
+                bit.copy_advice(|| "invalid shift bit", &mut region, config.left, 0)?;
+                config.zero.enable(&mut region, 0)
+            },
+        )?;
+    }
+    let mut power = layouter.assign_region(
+        || format!("{label} power one"),
+        |mut region| {
+            region.assign_advice_from_constant(|| "shift power one", config.output, 0, Fp::one())
+        },
+    )?;
+    for (index, bit) in count_bits.iter().take(active_bits).enumerate() {
+        power = layouter.assign_region(
+            || format!("{label} power bit {index}"),
+            |mut region| {
+                power.copy_advice(|| "previous shift power", &mut region, config.left, 0)?;
+                bit.copy_advice(|| "shift count bit", &mut region, config.right, 0)?;
+                let multiplier = two_pow(1u8 << index) - Fp::one();
+                region.assign_advice_from_constant(
+                    || "shift power multiplier",
+                    config.auxiliary,
+                    0,
+                    multiplier,
+                )?;
+                config.shift_power.enable(&mut region, 0)?;
+                let next = power
+                    .value()
+                    .zip(bit.value())
+                    .map(|(power, bit)| *power * (Fp::one() + *bit * multiplier));
+                region.assign_advice(|| "next shift power", config.output, 0, || next)
+            },
+        )?;
+    }
+    if right_shift {
+        constrain_integer_division(
+            layouter,
+            config,
+            value,
+            &power,
+            result,
+            bits,
+            false,
+            format!("{label} right division"),
+        )
+    } else {
+        layouter.assign_region(
+            || format!("{label} left multiplication"),
+            |mut region| {
+                value.copy_advice(|| "shift value", &mut region, config.left, 0)?;
+                power.copy_advice(|| "shift power", &mut region, config.right, 0)?;
+                result.copy_advice(|| "shift result", &mut region, config.output, 0)?;
+                config.mul.enable(&mut region, 0)
+            },
+        )
+    }
 }
 
 impl Circuit<Fp> for CompilerCircuit {
@@ -505,9 +931,10 @@ impl Circuit<Fp> for CompilerCircuit {
         let right = meta.advice_column();
         let output = meta.advice_column();
         let inverse = meta.advice_column();
+        let auxiliary = meta.advice_column();
         let constants = meta.fixed_column();
         let instance = meta.instance_column();
-        for column in [left, right, output] {
+        for column in [left, right, output, inverse, auxiliary] {
             meta.enable_equality(column);
         }
         meta.enable_equality(instance);
@@ -522,6 +949,13 @@ impl Circuit<Fp> for CompilerCircuit {
         let equal = meta.selector();
         let not_equal = meta.selector();
         let assert = meta.selector();
+        let range_step = meta.selector();
+        let less = meta.selector();
+        let not_less = meta.selector();
+        let field_divide = meta.selector();
+        let integer_divide = meta.selector();
+        let zero = meta.selector();
+        let shift_power = meta.selector();
         meta.create_gate("compiler add", |meta| {
             let q = meta.query_selector(add);
             let a = meta.query_advice(left, Rotation::cur());
@@ -600,11 +1034,83 @@ impl Circuit<Fp> for CompilerCircuit {
             let a = meta.query_advice(left, Rotation::cur());
             vec![q * (a - halo2_proofs::plonk::Expression::Constant(Fp::one()))]
         });
+        meta.create_gate("compiler unsigned range step", |meta| {
+            let q = meta.query_selector(range_step);
+            let accumulator = meta.query_advice(left, Rotation::cur());
+            let bit = meta.query_advice(right, Rotation::cur());
+            let next = meta.query_advice(output, Rotation::cur());
+            let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
+            let two = halo2_proofs::plonk::Expression::Constant(Fp::from(2));
+            vec![
+                q.clone() * (accumulator * two + bit.clone() - next),
+                q * bit.clone() * (bit - one),
+            ]
+        });
+        for (selector, inverted) in [(less, false), (not_less, true)] {
+            meta.create_gate(
+                if inverted {
+                    "compiler unsigned not-less"
+                } else {
+                    "compiler unsigned less"
+                },
+                |meta| {
+                    let q = meta.query_selector(selector);
+                    let a = meta.query_advice(left, Rotation::cur());
+                    let b = meta.query_advice(right, Rotation::cur());
+                    let difference = meta.query_advice(output, Rotation::cur());
+                    let result = meta.query_advice(inverse, Rotation::cur());
+                    let modulus = meta.query_advice(auxiliary, Rotation::cur());
+                    let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
+                    let borrow = if inverted { one - result } else { result };
+                    vec![q * (a - b + borrow * modulus - difference)]
+                },
+            );
+        }
+        meta.create_gate("compiler field divide", |meta| {
+            let q = meta.query_selector(field_divide);
+            let numerator = meta.query_advice(left, Rotation::cur());
+            let denominator = meta.query_advice(right, Rotation::cur());
+            let quotient = meta.query_advice(output, Rotation::cur());
+            let denominator_inverse = meta.query_advice(inverse, Rotation::cur());
+            let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
+            vec![
+                q.clone() * (denominator.clone() * quotient - numerator),
+                q * (denominator * denominator_inverse - one),
+            ]
+        });
+        meta.create_gate("compiler integer divide", |meta| {
+            let q = meta.query_selector(integer_divide);
+            let numerator = meta.query_advice(left, Rotation::cur());
+            let denominator = meta.query_advice(right, Rotation::cur());
+            let quotient = meta.query_advice(output, Rotation::cur());
+            let remainder = meta.query_advice(inverse, Rotation::cur());
+            let denominator_inverse = meta.query_advice(auxiliary, Rotation::cur());
+            let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
+            vec![
+                q.clone() * (quotient * denominator.clone() + remainder - numerator),
+                q * (denominator * denominator_inverse - one),
+            ]
+        });
+        meta.create_gate("compiler zero", |meta| {
+            let q = meta.query_selector(zero);
+            let value = meta.query_advice(left, Rotation::cur());
+            vec![q * value]
+        });
+        meta.create_gate("compiler shift power", |meta| {
+            let q = meta.query_selector(shift_power);
+            let previous = meta.query_advice(left, Rotation::cur());
+            let bit = meta.query_advice(right, Rotation::cur());
+            let next = meta.query_advice(output, Rotation::cur());
+            let multiplier = meta.query_advice(auxiliary, Rotation::cur());
+            let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
+            vec![q * (previous * (one + bit * multiplier) - next)]
+        });
         CompilerConfig {
             left,
             right,
             output,
             inverse,
+            auxiliary,
             instance,
             add,
             sub,
@@ -616,6 +1122,13 @@ impl Circuit<Fp> for CompilerCircuit {
             equal,
             not_equal,
             assert,
+            range_step,
+            less,
+            not_less,
+            field_divide,
+            integer_divide,
+            zero,
+            shift_power,
         }
     }
 
@@ -701,6 +1214,67 @@ impl Circuit<Fp> for CompilerCircuit {
                             Opcode::Multiply => config.mul.enable(&mut region, 0)?, _ => unreachable!() }
                         region.assign_advice(|| "binary output", config.output, 0, || value)
                     }
+                    Opcode::Divide | Opcode::Remainder => {
+                        let a = copy(&operands[0], config.left, &mut region)?;
+                        let b = copy(&operands[1], config.right, &mut region)?;
+                        if instruction.kind == ScalarType::Field {
+                            let inverse = b.value().map(|value| {
+                                Option::<Fp>::from(value.invert()).unwrap_or(Fp::zero())
+                            });
+                            region.assign_advice(
+                                || "field denominator inverse",
+                                config.inverse,
+                                0,
+                                || inverse,
+                            )?;
+                            config.field_divide.enable(&mut region, 0)?;
+                            region.assign_advice(
+                                || "field quotient",
+                                config.output,
+                                0,
+                                || a.value().zip(inverse).map(|(a, inverse)| *a * inverse),
+                            )
+                        } else {
+                            let value = a.value().zip(b.value()).map(|(a, b)| {
+                                let a = canonical_u64(a).unwrap_or(0);
+                                let b = canonical_u64(b).unwrap_or(0);
+                                Fp::from(if b == 0 {
+                                    0
+                                } else if instruction.opcode == Opcode::Divide {
+                                    a / b
+                                } else {
+                                    a % b
+                                })
+                            });
+                            region.assign_advice(
+                                || "integer division output",
+                                config.output,
+                                0,
+                                || value,
+                            )
+                        }
+                    }
+                    Opcode::ShiftLeft | Opcode::ShiftRight => {
+                        let a = copy(&operands[0], config.left, &mut region)?;
+                        let b = copy(&operands[1], config.right, &mut region)?;
+                        let value = a.value().zip(b.value()).map(|(a, b)| {
+                            let a = canonical_u64(a).unwrap_or(0);
+                            let b = canonical_u64(b).unwrap_or(u64::MAX);
+                            Fp::from(if b >= u64::from(instruction.kind.integer_bits().unwrap()) {
+                                0
+                            } else if instruction.opcode == Opcode::ShiftLeft {
+                                a.checked_shl(b as u32).unwrap_or(0)
+                            } else {
+                                a >> b
+                            })
+                        });
+                        region.assign_advice(
+                            || "integer shift output",
+                            config.output,
+                            0,
+                            || value,
+                        )
+                    }
                     Opcode::Equal | Opcode::NotEqual => {
                         let a = copy(&operands[0], config.left, &mut region)?;
                         let b = copy(&operands[1], config.right, &mut region)?;
@@ -714,10 +1288,88 @@ impl Circuit<Fp> for CompilerCircuit {
                         else { config.not_equal.enable(&mut region, 0)?; }
                         region.assign_advice(|| "comparison", config.output, 0, || output)
                     }
+                    Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => {
+                        config.boolean.enable(&mut region, 0)?;
+                        let output = operands[0].value().zip(operands[1].value()).map(|(left, right)| {
+                            let left = canonical_u64(left).unwrap_or(0);
+                            let right = canonical_u64(right).unwrap_or(0);
+                            Fp::from(match instruction.opcode {
+                                Opcode::Less => left < right,
+                                Opcode::LessEqual => left <= right,
+                                Opcode::Greater => left > right,
+                                Opcode::GreaterEqual => left >= right,
+                                _ => unreachable!(),
+                            } as u64)
+                        });
+                        region.assign_advice(|| "ordered comparison", config.output, 0, || output)
+                    }
                     Opcode::Assert => { config.assert.enable(&mut region, 0)?; copy(&operands[0], config.left, &mut region) }
                     Opcode::Return => copy(&operands[0], config.output, &mut region),
                 }
             })?;
+            if instruction.result.is_some() {
+                if let Some(bits) = instruction.kind.integer_bits() {
+                    range_check(
+                        &mut layouter,
+                        &config,
+                        &assigned,
+                        bits,
+                        format!("compiler u{bits} range {instruction_index}"),
+                    )?;
+                }
+            }
+            if matches!(
+                instruction.opcode,
+                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual
+            ) {
+                let bits = self.program.function.instructions[instruction.operands[0]]
+                    .kind
+                    .integer_bits()
+                    .ok_or(Error::Synthesis)?;
+                let (left, right, inverted) = match instruction.opcode {
+                    Opcode::Less => (&operands[0], &operands[1], false),
+                    Opcode::LessEqual => (&operands[1], &operands[0], true),
+                    Opcode::Greater => (&operands[1], &operands[0], false),
+                    Opcode::GreaterEqual => (&operands[0], &operands[1], true),
+                    _ => unreachable!(),
+                };
+                constrain_ordering(
+                    &mut layouter,
+                    &config,
+                    left,
+                    right,
+                    &assigned,
+                    bits,
+                    inverted,
+                    format!("compiler ordering {instruction_index}"),
+                )?;
+            }
+            if matches!(instruction.opcode, Opcode::Divide | Opcode::Remainder)
+                && instruction.kind.integer_bits().is_some()
+            {
+                constrain_integer_division(
+                    &mut layouter,
+                    &config,
+                    &operands[0],
+                    &operands[1],
+                    &assigned,
+                    instruction.kind.integer_bits().unwrap(),
+                    instruction.opcode == Opcode::Remainder,
+                    format!("compiler integer division {instruction_index}"),
+                )?;
+            }
+            if matches!(instruction.opcode, Opcode::ShiftLeft | Opcode::ShiftRight) {
+                constrain_shift(
+                    &mut layouter,
+                    &config,
+                    &operands[0],
+                    &operands[1],
+                    &assigned,
+                    instruction.kind.integer_bits().unwrap(),
+                    instruction.opcode == Opcode::ShiftRight,
+                    format!("compiler shift {instruction_index}"),
+                )?;
+            }
             if instruction.opcode == Opcode::Parameter {
                 if self.program.function.parameters[parameter_index].visibility
                     == Visibility::Public
@@ -770,7 +1422,7 @@ fn checked_program(ir: &[u8], k: u32) -> Result<CompilerProgram, CompilerBackend
         return Err(CompilerBackendError::LimitExceeded);
     }
     let program = CompilerProgram::decode(ir)?;
-    if program.function.instructions.len() + 8 > (1usize << k) {
+    if program.estimated_rows()? > (1usize << k) {
         return Err(CompilerBackendError::LimitExceeded);
     }
     Ok(program)
@@ -800,6 +1452,13 @@ pub fn create_compiler_proof(
             && !matches!(witness.parameters[parameter_index], value if value == Fp::zero() || value == Fp::one())
         {
             return Err(CompilerBackendError::InvalidWitness);
+        }
+        if let Some(bits) = parameter.kind.integer_bits() {
+            let integer = canonical_u64(&witness.parameters[parameter_index])
+                .ok_or(CompilerBackendError::InvalidWitness)?;
+            if bits < 64 && integer >= (1u64 << bits) {
+                return Err(CompilerBackendError::InvalidWitness);
+            }
         }
         if parameter.visibility == Visibility::Public {
             if witness.parameters[parameter_index] != public_inputs[public_index] {
@@ -919,37 +1578,62 @@ mod tests {
         out
     }
     fn multiplication_ir() -> Vec<u8> {
+        arithmetic_ir("field", 14)
+    }
+
+    fn arithmetic_ir(kind: &str, arithmetic_opcode: u8) -> Vec<u8> {
         let mut ir = IR_DOMAIN.to_vec();
         ir.extend_from_slice(&[7u8; 32]);
         ir.push(1);
-        ir.extend(text("multiply"));
+        ir.extend(text("arithmetic"));
         ir.push(1);
         ir.push(2);
-        for (visibility, name) in [(1u8, "public_value"), (2u8, "secret")] {
+        for (visibility, name) in [(1u8, "left"), (2u8, "right")] {
             ir.push(visibility);
             ir.extend(text(name));
-            ir.extend(text("field"));
+            ir.extend(text(kind));
         }
-        ir.extend(text("field"));
+        ir.extend(text(kind));
         ir.push(4);
+        ir.extend(instruction(1, Some(0), kind, &[], None, "public:left"));
+        ir.extend(instruction(1, Some(1), kind, &[], None, "private:right"));
         ir.extend(instruction(
-            1,
-            Some(0),
-            "field",
-            &[],
+            arithmetic_opcode,
+            Some(2),
+            kind,
+            &[0, 1],
             None,
-            "public:public_value",
+            "",
         ));
+        ir.extend(instruction(27, None, kind, &[2], None, ""));
+        ir
+    }
+
+    fn comparison_ir(kind: &str, comparison_opcode: u8) -> Vec<u8> {
+        let mut ir = IR_DOMAIN.to_vec();
+        ir.extend_from_slice(&[9u8; 32]);
+        ir.push(1);
+        ir.extend(text("comparison"));
+        ir.push(1);
+        ir.push(2);
+        for (visibility, name) in [(1u8, "left"), (2u8, "right")] {
+            ir.push(visibility);
+            ir.extend(text(name));
+            ir.extend(text(kind));
+        }
+        ir.extend(text("bool"));
+        ir.push(4);
+        ir.extend(instruction(1, Some(0), kind, &[], None, "public:left"));
+        ir.extend(instruction(1, Some(1), kind, &[], None, "private:right"));
         ir.extend(instruction(
-            1,
-            Some(1),
-            "field",
-            &[],
+            comparison_opcode,
+            Some(2),
+            "bool",
+            &[0, 1],
             None,
-            "private:secret",
+            "",
         ));
-        ir.extend(instruction(14, Some(2), "field", &[0, 1], None, ""));
-        ir.extend(instruction(27, None, "field", &[2], None, ""));
+        ir.extend(instruction(27, None, "bool", &[2], None, ""));
         ir
     }
 
@@ -988,16 +1672,208 @@ mod tests {
             CompilerProgram::decode(&overlong),
             Err(CompilerBackendError::NonCanonicalInteger)
         ));
-        let mut integer = multiplication_ir();
-        let position = integer
+        let mut unsupported = multiplication_ir();
+        let position = unsupported
             .windows(5)
             .position(|window| window == b"field")
             .unwrap();
-        integer.splice(position..position + 5, b"u64".iter().copied());
+        unsupported.splice(position..position + 5, b"u128".iter().copied());
         assert!(matches!(
-            CompilerProgram::decode(&integer),
+            CompilerProgram::decode(&unsupported),
             Err(CompilerBackendError::UnsupportedType)
         ));
+    }
+
+    #[test]
+    fn checked_unsigned_arithmetic_rejects_overflow_and_underflow() {
+        for (opcode, left, right, expected) in
+            [(12, 250, 5, 255), (13, 250, 5, 245), (14, 12, 20, 240)]
+        {
+            let ir = arithmetic_ir("u8", opcode);
+            let program = CompilerProgram::decode(&ir).unwrap();
+            let circuit = CompilerCircuit {
+                program,
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(left), Fp::from(right)],
+                }),
+            };
+            MockProver::run(8, &circuit, vec![vec![Fp::from(left), Fp::from(expected)]])
+                .unwrap()
+                .assert_satisfied();
+        }
+
+        for (opcode, left, right) in [(12, 250, 6), (13, 5, 6), (14, 16, 16)] {
+            let ir = arithmetic_ir("u8", opcode);
+            let circuit = CompilerCircuit {
+                program: CompilerProgram::decode(&ir).unwrap(),
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(left), Fp::from(right)],
+                }),
+            };
+            assert!(
+                MockProver::run(8, &circuit, vec![vec![Fp::from(left), Fp::zero()]])
+                    .unwrap()
+                    .verify()
+                    .is_err()
+            );
+        }
+
+        let ir = arithmetic_ir("u8", 12);
+        let public = [Fp::from(250), Fp::from(255)];
+        let proof = create_compiler_proof(
+            &ir,
+            8,
+            CompilerWitness {
+                parameters: vec![Fp::from(250), Fp::from(5)],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof(&ir, 8, &public, &proof).unwrap();
+    }
+
+    #[test]
+    fn unsigned_ordering_is_range_bound_at_equality_and_width_edges() {
+        for (opcode, left, right, expected) in [
+            (8, 0u64, 255u64, 1u64),
+            (8, 255, 0, 0),
+            (9, 17, 17, 1),
+            (10, 17, 17, 0),
+            (10, 255, 0, 1),
+            (11, 0, 255, 0),
+        ] {
+            let ir = comparison_ir("u8", opcode);
+            let circuit = CompilerCircuit {
+                program: CompilerProgram::decode(&ir).unwrap(),
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(left), Fp::from(right)],
+                }),
+            };
+            MockProver::run(8, &circuit, vec![vec![Fp::from(left), Fp::from(expected)]])
+                .unwrap()
+                .assert_satisfied();
+            assert!(MockProver::run(
+                8,
+                &circuit,
+                vec![vec![Fp::from(left), Fp::from(1 - expected)]],
+            )
+            .unwrap()
+            .verify()
+            .is_err());
+        }
+
+        let ir = comparison_ir("u64", 9);
+        let public = [Fp::from(u64::MAX), Fp::one()];
+        let proof = create_compiler_proof(
+            &ir,
+            9,
+            CompilerWitness {
+                parameters: vec![Fp::from(u64::MAX), Fp::from(u64::MAX)],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof(&ir, 9, &public, &proof).unwrap();
+    }
+
+    #[test]
+    fn integer_and_field_division_enforce_nonzero_euclidean_witnesses() {
+        for (opcode, expected) in [(15, 35u64), (16, 5u64)] {
+            let ir = arithmetic_ir("u8", opcode);
+            let circuit = CompilerCircuit {
+                program: CompilerProgram::decode(&ir).unwrap(),
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(250), Fp::from(7)],
+                }),
+            };
+            MockProver::run(8, &circuit, vec![vec![Fp::from(250), Fp::from(expected)]])
+                .unwrap()
+                .assert_satisfied();
+
+            let zero_denominator = CompilerCircuit {
+                program: CompilerProgram::decode(&ir).unwrap(),
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(250), Fp::zero()],
+                }),
+            };
+            assert!(
+                MockProver::run(8, &zero_denominator, vec![vec![Fp::from(250), Fp::zero()]],)
+                    .unwrap()
+                    .verify()
+                    .is_err()
+            );
+        }
+
+        let field_ir = arithmetic_ir("field", 15);
+        let field_circuit = CompilerCircuit {
+            program: CompilerProgram::decode(&field_ir).unwrap(),
+            witness: Some(CompilerWitness {
+                parameters: vec![Fp::from(6), Fp::from(2)],
+            }),
+        };
+        MockProver::run(8, &field_circuit, vec![vec![Fp::from(6), Fp::from(3)]])
+            .unwrap()
+            .assert_satisfied();
+
+        let ir = arithmetic_ir("u8", 15);
+        let public = [Fp::from(250), Fp::from(35)];
+        let proof = create_compiler_proof(
+            &ir,
+            8,
+            CompilerWitness {
+                parameters: vec![Fp::from(250), Fp::from(7)],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof(&ir, 8, &public, &proof).unwrap();
+    }
+
+    #[test]
+    fn dynamic_shifts_bind_counts_results_and_overflow() {
+        for (opcode, left, count, expected) in
+            [(17, 3u64, 2u64, 12u64), (18, 255, 4, 15), (18, 1, 0, 1)]
+        {
+            let ir = arithmetic_ir("u8", opcode);
+            let circuit = CompilerCircuit {
+                program: CompilerProgram::decode(&ir).unwrap(),
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(left), Fp::from(count)],
+                }),
+            };
+            MockProver::run(8, &circuit, vec![vec![Fp::from(left), Fp::from(expected)]])
+                .unwrap()
+                .assert_satisfied();
+        }
+
+        for (opcode, left, count) in [(17, 240u64, 1u64), (17, 1, 8), (18, 1, 8)] {
+            let ir = arithmetic_ir("u8", opcode);
+            let circuit = CompilerCircuit {
+                program: CompilerProgram::decode(&ir).unwrap(),
+                witness: Some(CompilerWitness {
+                    parameters: vec![Fp::from(left), Fp::from(count)],
+                }),
+            };
+            assert!(
+                MockProver::run(8, &circuit, vec![vec![Fp::from(left), Fp::zero()]])
+                    .unwrap()
+                    .verify()
+                    .is_err()
+            );
+        }
+
+        let ir = arithmetic_ir("u64", 18);
+        let public = [Fp::from(u64::MAX), Fp::from(0x00ff_ffff_ffff_ffff)];
+        let proof = create_compiler_proof(
+            &ir,
+            10,
+            CompilerWitness {
+                parameters: vec![Fp::from(u64::MAX), Fp::from(8)],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof(&ir, 10, &public, &proof).unwrap();
     }
 
     #[test]

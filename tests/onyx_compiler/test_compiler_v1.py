@@ -349,6 +349,28 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
             self.assertEqual((bundle / "halo2-vk-descriptor.bin").stat().st_size, 101)
             verifier.verify_bundle(bundle, backend)
 
+    @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
+    def test_checked_integer_bundle_is_accepted_by_halo2_backend(self):
+        source = b"""export fn balance(public left: u16, private shift: u16) -> u16 {
+  let factor: u16 = 2;
+  let divisor: u16 = 3;
+  let product: u16 = left * factor;
+  let quotient: u16 = product / divisor;
+  let output: u16 = quotient >> shift;
+  assert(output <= quotient);
+  return output;
+}
+"""
+        backend = pathlib.Path(os.environ["ONYX_COMPILER_BACKEND"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [9, 2], "expected": 1}])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
+            self.assertEqual((bundle / "halo2-vk-descriptor.bin").stat().st_size, 101)
+            verifier.verify_bundle(bundle, backend)
+
 
 if __name__ == "__main__":
     unittest.main()

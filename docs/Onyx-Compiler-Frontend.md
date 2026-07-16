@@ -61,15 +61,18 @@ the call graph, recomputes expanded instruction/constraint/row/column/witness/me
 checks every artifact digest, recompiles from the normalized package in a fresh absolute path and
 requires every output byte to match.
 
-## Halo2 scalar alpha backend
+## Halo2 scalar and integer alpha backend
 
 `vendor/onyx-zk/src/compiler_backend.rs` independently decodes canonical `ONXIR` inside the pinned
-Rust/Halo2 dependency boundary. Its first executable profile accepts exactly one call-free exported
-function over Pasta `field` and `bool` values. It rejects integers, composites, calls, guards and
-intrinsics until their circuit gadgets are implemented. The circuit constrains public parameters and
+Rust/Halo2 dependency boundary. Its executable profile accepts exactly one call-free exported
+function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. It rejects composites,
+calls, guards and intrinsics until their circuit gadgets are implemented. The circuit constrains public parameters and
 the returned value as instances, copies every operand through Halo2 equality constraints, range-checks
 booleans, and implements field add/subtract/multiply, boolean not/and/or, equality/inequality with an
-inverse witness, and assertion gates.
+inverse witness, and assertion gates. Unsigned values are bit-decomposed and reconstruction-bound;
+add/subtract/multiply fail on overflow or underflow, ordering uses a range-constrained borrow,
+division/remainder enforce the complete nonzero Euclidean relation, and dynamic shifts constrain the
+shift count and power-of-two construction. Field division requires a nonzero denominator inverse.
 
 The Rust backend also exposes bounded `create_compiler_proof` and `verify_compiler_proof` APIs. Proof
 creation requires every declared parameter plus the public parameters and return value in canonical
@@ -92,8 +95,8 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 
 ## Remaining activation boundary
 
-The scalar subset now lowers to Halo2 and independently regenerates its descriptor, but the complete
-language does not. Checked integers, arrays, records, byte strings, guarded control flow, calls and
+The scalar and checked-integer subset now lowers to Halo2 and independently regenerates its descriptor,
+but the complete language does not. Arrays, records, byte strings, guarded control flow, calls and
 cryptographic intrinsics still require circuit lowering, type-specific proof vectors and backend measurements.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.
