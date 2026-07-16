@@ -36,6 +36,7 @@ public:
 	const Currency &currency;
 	AccountAddress address;
 	crypto::CryptoNightContext cryptoContext;
+	crypto::RandomXContext randomxContext;
 	std::vector<KeyPair> checkpoint_keypairs;
 
 	TestMiner(BlockChainState &block_chain, const Currency &currency) : block_chain(block_chain), currency(currency) {
@@ -71,17 +72,23 @@ public:
 		uint32_t nonce = crypto::rand<uint32_t>();
 		//		block.nonce.resize(4);
 		auto body_proxy = get_body_proxy_from_template(block);
+		Hash pow_seed{};
+		const Height candidate_height = parent.height + 1;
+		if (currency.uses_randomx(block.major_version, candidate_height))
+			pow_seed = block_chain.get_ancestor_hash(parent, currency.randomx_seed_height(candidate_height));
 		while (true) {
 			common::uint_le_to_bytes(block.root_block.nonce, 4, nonce);
 			//			block.nonce    = block.root_block.nonce;
 			BinaryArray ba = currency.get_block_pow_hashing_data(block, body_proxy);
-			Hash hash      = cryptoContext.cn_slow_hash(ba.data(), ba.size());
+			Hash hash = currency.uses_randomx(block.major_version, candidate_height) ?
+			                randomxContext.hash(pow_seed, ba.data(), ba.size()) :
+			                cryptoContext.cn_slow_hash(ba.data(), ba.size());
 			if (check_hash(hash, difficulty))
 				break;
 			nonce += 1;
 		}
 		RawBlock rb;
-		MinedBlockDesc desc{block, seria::to_binary(block), get_block_hash(block, body_proxy), parent.height + 1};
+		MinedBlockDesc desc{block, seria::to_binary(block), get_block_hash(block, body_proxy), candidate_height};
 		return desc;
 	}
 	void add_mined_block(const MinedBlockDesc &desc, bool log = true) {
@@ -176,6 +183,38 @@ void test_blockchain(common::CommandLine &cmd) {
 	test_miner.add_checkpoint(1, std::numeric_limits<uint64_t>::max(), Hash{}, 0);
 
 	invariant(block_chain.get_tip_bid() == big_plus_1_desc.hash, "");
+
+	// Exercise the real RandomX validator across an epoch-boundary reorganization. Both branches
+	// fork before height 8, so their height-8 seed blocks differ. A height-10 side-chain block is
+	// valid only if validation resolves the delayed seed from that block's own parent branch.
+	{
+		Config randomx_config(cmd);
+		randomx_config.data_folder = "../tests/scratchpad-randomx";
+		randomx_config.net         = "test";
+		BlockChain::DB::delete_db(randomx_config.data_folder + "/blockchain");
+		Currency randomx_currency(randomx_config);
+		randomx_currency.upgrade_heights.at(3) = 2;
+		randomx_currency.randomx_switch_height = 2;
+		randomx_currency.randomx_seed_epoch    = 8;
+		randomx_currency.randomx_seed_lag      = 2;
+		BlockChainState randomx_chain(logger, randomx_config, randomx_currency, false);
+		TestMiner randomx_miner(randomx_chain, randomx_currency);
+
+		const auto fork = randomx_miner.test_grow_chain(randomx_chain.get_tip_bid(), 7);
+		const auto main_seed = randomx_miner.test_grow_chain(fork.hash, 1);
+		const auto main_tip = randomx_miner.test_grow_chain(main_seed.hash, 3);
+		invariant(main_tip.height == 11 && randomx_chain.get_tip_bid() == main_tip.hash,
+		    "RandomX main branch did not reach the expected epoch boundary");
+
+		const auto side_seed = randomx_miner.test_grow_chain(fork.hash, 1);
+		invariant(side_seed.hash != main_seed.hash, "RandomX fork did not create distinct seed blocks");
+		const auto side_tip = randomx_miner.test_grow_chain(side_seed.hash, 4);
+		invariant(side_tip.height == 12 && randomx_chain.get_tip_bid() == side_tip.hash,
+		    "RandomX side branch did not validate and reorganize across its seed epoch");
+		invariant(randomx_chain.get_ancestor_hash(randomx_chain.get_tip(), 8) == side_seed.hash,
+		    "RandomX reorganized tip did not retain the side-branch seed");
+		std::cout << "---- RandomX branch-derived epoch reorganization: OK" << std::endl;
+	}
 }
 
 // Sometimes in the future we will test consistency with simple model

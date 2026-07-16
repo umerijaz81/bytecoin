@@ -1,0 +1,45 @@
+name: Consensus integration
+
+on:
+  push:
+    paths:
+      - ".github/workflows/consensus-integration.yml"
+      - "CMakeLists.txt"
+      - "src/Core/BlockChain*"
+      - "src/Core/Currency.*"
+      - "src/crypto/RandomX.*"
+      - "tests/blockchain/**"
+      - "vendor/randomx/**"
+  pull_request:
+    paths:
+      - ".github/workflows/consensus-integration.yml"
+      - "CMakeLists.txt"
+      - "src/Core/BlockChain*"
+      - "src/Core/Currency.*"
+      - "src/crypto/RandomX.*"
+      - "tests/blockchain/**"
+      - "vendor/randomx/**"
+
+permissions:
+  contents: read
+
+jobs:
+  randomx-reorg:
+    name: RandomX epoch reorg (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libboost-dev libssl-dev libudev-dev
+      - name: Configure consensus tests
+        run: cmake -S . -B build-consensus -DUSE_SQLITE=ON -DONYX_ZK=OFF
+      - name: Build consensus tests
+        run: cmake --build build-consensus --parallel 2 --target tests
+      - name: Run blockchain and RandomX reorganization tests
+        working-directory: build-consensus
+        run: ../bin/tests --blockchain

@@ -81,6 +81,8 @@ Currency::Currency(const Config &config)
     , onyx_block_version(BLOCK_VERSION_ONYX)
     , onyx_transaction_version(TRANSACTION_VERSION_ONYX)
     , randomx_switch_height(RANDOMX_SWITCH_HEIGHT)
+    , randomx_seed_epoch(RANDOMX_SEED_EPOCH)
+    , randomx_seed_lag(RANDOMX_SEED_LAG)
     , upgrade_vote_minor(9)
     , upgrade_desired_major(4)
     , upgrade_voting_window(UPGRADE_VOTING_WINDOW)
@@ -165,9 +167,10 @@ bool Currency::uses_randomx(uint8_t block_major_version, Height height) const {
 }
 
 Height Currency::randomx_seed_height(Height height) const {
-	if (height <= RANDOMX_SEED_LAG)
+	invariant(randomx_seed_epoch != 0, "RandomX seed epoch must not be zero");
+	if (height <= randomx_seed_lag)
 		return 0;
-	return ((height - RANDOMX_SEED_LAG) / RANDOMX_SEED_EPOCH) * RANDOMX_SEED_EPOCH;
+	return ((height - randomx_seed_lag) / randomx_seed_epoch) * randomx_seed_epoch;
 }
 
 Height Currency::timestamp_check_window(uint8_t block_major_version) const {
