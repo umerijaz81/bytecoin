@@ -431,7 +431,7 @@ def verify_bundle(root: pathlib.Path, backend_executable: pathlib.Path | None = 
         backend = provenance.get("halo2_backend")
         measurements = resources["backend_measurements"]
         if not isinstance(backend, dict) or not isinstance(measurements, dict) or \
-                backend.get("status") != "composite-alpha-not-registrable":
+                backend.get("status") != "compiler-alpha-not-registrable":
             raise VerificationError("invalid Halo2 alpha provenance")
         descriptor = descriptor_path.read_bytes()
         if len(descriptor) != measurements.get("descriptor_bytes") or \

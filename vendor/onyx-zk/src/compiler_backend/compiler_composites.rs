@@ -215,7 +215,6 @@ fn raw_opcode(value: u8) -> Result<RawOpcode, CompilerBackendError> {
         21 => Ok(RawOpcode::Index),
         22 => Ok(RawOpcode::Record),
         23 => Ok(RawOpcode::Field),
-        24 => Err(CompilerBackendError::UnsupportedInstruction),
         value => opcode(value).map(RawOpcode::Scalar),
     }
 }
@@ -505,6 +504,19 @@ fn validate_raw(
                     .ok_or(CompilerBackendError::InvalidProgram)?;
                 if &operand_types != expected
                     || &instruction.kind != result
+                    || instruction.immediate.is_some()
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
+            RawOpcode::Scalar(Opcode::Intrinsic) => {
+                let expected = match instruction.text.as_str() {
+                    "poseidon_hash" | "merkle_root" => 2,
+                    "nullifier" => 3,
+                    _ => return Err(CompilerBackendError::InvalidProgram),
+                };
+                if operand_types != vec![Layout::Scalar(ScalarType::Field); expected]
+                    || instruction.kind != Layout::Scalar(ScalarType::Field)
                     || instruction.immediate.is_some()
                 {
                     return Err(CompilerBackendError::InvalidProgram);
@@ -847,14 +859,18 @@ fn flatten(
             }
             RawOpcode::Scalar(opcode) => {
                 let kind = instruction.kind.scalar().unwrap();
-                vec![emit(
+                let result = emit(
                     output,
                     opcode,
                     kind,
                     operands.into_iter().map(|operand| operand[0]).collect(),
                     guard,
                     instruction.immediate,
-                )?]
+                )?;
+                if opcode == Opcode::Intrinsic {
+                    output[result].text = instruction.text.clone();
+                }
+                vec![result]
             }
         };
         if instruction.result.is_some() {

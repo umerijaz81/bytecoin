@@ -255,7 +255,7 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
             with self.assertRaisesRegex(compiler_v1.CompileError, "E_INSTRUCTION_LIMIT|E_RESOURCE_LIMIT"):
                 compiler_v1.compile_sources(compiler_v1.load_package(package))
 
-    def test_negative_vector_cannot_hide_an_unsupported_intrinsic_evaluator(self):
+    def test_poseidon_reference_evaluator_is_deterministic(self):
         source = b"""export fn balance(public left: field, private right: field) -> field {
   let output: field = poseidon_hash(left, right);
   return output;
@@ -263,10 +263,12 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
 """
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
+            expected = compiler_v1.poseidon_hash2(1, 2)
             package = create_package(root / "package", source,
-                vectors=[{"function": "balance", "inputs": [1, 2], "expect_failure": True}])
-            with self.assertRaisesRegex(compiler_v1.CompileError, "E_VECTOR_UNSUPPORTED"):
-                compiler_v1.write_bundle(compiler_v1.load_package(package), root / "bundle")
+                vectors=[{"function": "balance", "inputs": [1, 2], "expected": expected}])
+            compiler_v1.write_bundle(compiler_v1.load_package(package), root / "bundle")
+            verifier.verify_bundle(root / "bundle")
+            self.assertEqual(expected, compiler_v1.poseidon_hash2(1, 2))
 
     def test_content_addressed_dependency_is_bundled_and_reproduced(self):
         library_source = b"""fn math__add_one(private value: u64) -> u64 {
@@ -434,6 +436,33 @@ export fn balance(public header: bytes<2>, private pair: Pair, private index: u6
             rejected = subprocess.run([str(backend), "prove", "12", bad_index_witness, public],
                 input=(bundle / "program.onxir").read_bytes(), capture_output=True, timeout=120)
             self.assertNotEqual(rejected.returncode, 0)
+
+    @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
+    def test_versioned_intrinsics_match_reference_and_create_real_proof(self):
+        source = b"""export fn balance(public key: field, private rho: field, private position: field) -> field {
+  let plain: field = poseidon_hash(key, rho);
+  let root: field = merkle_root(key, rho);
+  let output: field = nullifier(key, rho, position);
+  assert(plain != root);
+  return output;
+}
+"""
+        backend = pathlib.Path(os.environ["ONYX_COMPILER_BACKEND"])
+        expected = compiler_v1.poseidon_hash2(3, compiler_v1.poseidon_hash2(
+            compiler_v1.poseidon_hash2(5, 7), 11))
+        field = lambda value: int(value).to_bytes(32, "little").hex()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [5, 7, 11], "expected": expected}])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 13)
+            verifier.verify_bundle(bundle, backend)
+            witness = ",".join(map(field, [5, 7, 11]))
+            public = ",".join(map(field, [5, expected]))
+            proof = subprocess.run([str(backend), "prove", "13", witness, public],
+                input=(bundle / "program.onxir").read_bytes(), capture_output=True, check=True, timeout=180)
+            self.assertRegex(proof.stdout.decode().strip(), r"^[0-9a-f]+$")
 
 
 if __name__ == "__main__":

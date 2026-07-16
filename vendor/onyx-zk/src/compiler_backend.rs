@@ -6,6 +6,8 @@
 //! opcode/selector placement rather than to runtime witnesses.
 
 use ff::{Field, PrimeField};
+use halo2_gadgets::poseidon::primitives::{ConstantLength, P128Pow5T3};
+use halo2_gadgets::poseidon::{Hash as PoseidonHash, Pow5Chip, Pow5Config};
 use halo2_proofs::circuit::{AssignedCell, Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::pasta::{EqAffine, Fp};
 use halo2_proofs::plonk::{
@@ -77,6 +79,7 @@ enum Opcode {
     ShiftLeft,
     ShiftRight,
     Call,
+    Intrinsic,
     Select,
     Assert,
     Return,
@@ -236,10 +239,11 @@ fn opcode(value: u8) -> Result<Opcode, CompilerBackendError> {
         16 => Ok(Opcode::Remainder),
         17 => Ok(Opcode::ShiftLeft),
         18 => Ok(Opcode::ShiftRight),
+        24 => Ok(Opcode::Intrinsic),
         25 => Ok(Opcode::Call),
         26 => Ok(Opcode::Assert),
         27 => Ok(Opcode::Return),
-        19..=24 => Err(CompilerBackendError::UnsupportedInstruction),
+        19..=23 => Err(CompilerBackendError::UnsupportedInstruction),
         _ => Err(CompilerBackendError::InvalidEncoding),
     }
 }
@@ -487,8 +491,20 @@ impl CompilerProgram {
                     } else {
                         0
                     };
-                rows.checked_add(result_range + ordering_rows + division_rows + shift_rows)
-                    .ok_or(CompilerBackendError::LimitExceeded)
+                let intrinsic_rows = if instruction.opcode == Opcode::Intrinsic {
+                    match instruction.text.as_str() {
+                        "poseidon_hash" => 96,
+                        "merkle_root" => 192,
+                        "nullifier" => 288,
+                        _ => return Err(CompilerBackendError::InvalidProgram),
+                    }
+                } else {
+                    0
+                };
+                rows.checked_add(
+                    result_range + ordering_rows + division_rows + shift_rows + intrinsic_rows,
+                )
+                .ok_or(CompilerBackendError::LimitExceeded)
             },
         )
     }
@@ -882,6 +898,18 @@ fn validate_types(
                     return Err(CompilerBackendError::InvalidProgram);
                 }
             }
+            Opcode::Intrinsic => {
+                let expected = match instruction.text.as_str() {
+                    "poseidon_hash" | "merkle_root" => 2,
+                    "nullifier" => 3,
+                    _ => return Err(CompilerBackendError::InvalidProgram),
+                };
+                if operand_types != vec![ScalarType::Field; expected]
+                    || instruction.kind != ScalarType::Field
+                {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
             Opcode::Select => {
                 if operand_types != [ScalarType::Bool, instruction.kind, instruction.kind] {
                     return Err(CompilerBackendError::InvalidProgram);
@@ -942,7 +970,7 @@ struct CompilerCircuit {
     witness: Option<CompilerWitness>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct CompilerConfig {
     left: Column<Advice>,
     right: Column<Advice>,
@@ -968,6 +996,8 @@ struct CompilerConfig {
     zero: Selector,
     shift_power: Selector,
     select: Selector,
+    poseidon: Pow5Config<Fp, 3, 2>,
+    poseidon_state: [Column<Advice>; 3],
 }
 
 fn canonical_u64(value: &Fp) -> Option<u64> {
@@ -1271,6 +1301,90 @@ fn constrain_shift(
     }
 }
 
+fn compiler_hash2(
+    config: &CompilerConfig,
+    mut layouter: impl Layouter<Fp>,
+    first: &AssignedCell<Fp, Fp>,
+    second: &AssignedCell<Fp, Fp>,
+) -> Result<AssignedCell<Fp, Fp>, Error> {
+    let message = layouter.assign_region(
+        || "compiler intrinsic message",
+        |mut region| {
+            Ok([
+                first.copy_advice(
+                    || "intrinsic first",
+                    &mut region,
+                    config.poseidon_state[0],
+                    0,
+                )?,
+                second.copy_advice(
+                    || "intrinsic second",
+                    &mut region,
+                    config.poseidon_state[1],
+                    0,
+                )?,
+            ])
+        },
+    )?;
+    PoseidonHash::<_, _, P128Pow5T3, ConstantLength<2>, 3, 2>::init(
+        Pow5Chip::construct(config.poseidon.clone()),
+        layouter.namespace(|| "compiler intrinsic init"),
+    )?
+    .hash(layouter.namespace(|| "compiler intrinsic hash"), message)
+}
+
+fn compiler_intrinsic(
+    config: &CompilerConfig,
+    mut layouter: impl Layouter<Fp>,
+    name: &str,
+    operands: &[AssignedCell<Fp, Fp>],
+) -> Result<AssignedCell<Fp, Fp>, Error> {
+    let inner = compiler_hash2(
+        config,
+        layouter.namespace(|| format!("{name} inner")),
+        &operands[0],
+        &operands[1],
+    )?;
+    match name {
+        "poseidon_hash" => Ok(inner),
+        "merkle_root" => {
+            let tag = layouter.assign_region(
+                || "Merkle node tag",
+                |mut region| {
+                    region.assign_advice_from_constant(|| "tag", config.output, 0, Fp::from(2))
+                },
+            )?;
+            compiler_hash2(
+                config,
+                layouter.namespace(|| "domain-separated Merkle node"),
+                &tag,
+                &inner,
+            )
+        }
+        "nullifier" => {
+            let positioned = compiler_hash2(
+                config,
+                layouter.namespace(|| "nullifier position"),
+                &inner,
+                &operands[2],
+            )?;
+            let tag = layouter.assign_region(
+                || "nullifier tag",
+                |mut region| {
+                    region.assign_advice_from_constant(|| "tag", config.output, 0, Fp::from(3))
+                },
+            )?;
+            compiler_hash2(
+                config,
+                layouter.namespace(|| "domain-separated nullifier"),
+                &tag,
+                &positioned,
+            )
+        }
+        _ => Err(Error::Synthesis),
+    }
+}
+
 impl Circuit<Fp> for CompilerCircuit {
     type Config = CompilerConfig;
     type FloorPlanner = SimpleFloorPlanner;
@@ -1295,6 +1409,18 @@ impl Circuit<Fp> for CompilerCircuit {
         }
         meta.enable_equality(instance);
         meta.enable_constant(constants);
+        let poseidon_state = std::array::from_fn(|_| meta.advice_column());
+        let poseidon_partial_sbox = meta.advice_column();
+        let poseidon_rc_a = std::array::from_fn(|_| meta.fixed_column());
+        let poseidon_rc_b = std::array::from_fn(|_| meta.fixed_column());
+        meta.enable_constant(poseidon_rc_b[0]);
+        let poseidon = Pow5Chip::configure::<P128Pow5T3>(
+            meta,
+            poseidon_state,
+            poseidon_partial_sbox,
+            poseidon_rc_a,
+            poseidon_rc_b,
+        );
         let add = meta.selector();
         let sub = meta.selector();
         let mul = meta.selector();
@@ -1496,6 +1622,8 @@ impl Circuit<Fp> for CompilerCircuit {
             zero,
             shift_power,
             select,
+            poseidon,
+            poseidon_state,
         }
     }
 
@@ -1550,7 +1678,15 @@ impl Circuit<Fp> for CompilerCircuit {
                 .iter()
                 .map(|index| values[*index].clone().unwrap())
                 .collect();
-            let assigned = layouter.assign_region(|| format!("compiler instruction {instruction_index}"), |mut region| {
+            let assigned = if instruction.opcode == Opcode::Intrinsic {
+                compiler_intrinsic(
+                    &config,
+                    layouter.namespace(|| format!("compiler intrinsic {instruction_index}")),
+                    &instruction.text,
+                    &operands,
+                )?
+            } else {
+                layouter.assign_region(|| format!("compiler instruction {instruction_index}"), |mut region| {
                 let copy = |cell: &AssignedCell<Fp, Fp>, column, region: &mut halo2_proofs::circuit::Region<'_, Fp>| {
                     cell.copy_advice(|| "operand", region, column, 0)
                 };
@@ -1642,7 +1778,7 @@ impl Circuit<Fp> for CompilerCircuit {
                             || value,
                         )
                     }
-                    Opcode::Call => return Err(Error::Synthesis),
+                    Opcode::Call | Opcode::Intrinsic => return Err(Error::Synthesis),
                     Opcode::Select => {
                         let guard = copy(&operands[0], config.left, &mut region)?;
                         let when_true = copy(&operands[1], config.right, &mut region)?;
@@ -1690,7 +1826,8 @@ impl Circuit<Fp> for CompilerCircuit {
                     Opcode::Assert => { config.assert.enable(&mut region, 0)?; copy(&operands[0], config.left, &mut region) }
                     Opcode::Return => copy(&operands[0], config.output, &mut region),
                 }
-            })?;
+                })?
+            };
             if instruction.result.is_some() {
                 if let Some(bits) = instruction.kind.integer_bits() {
                     range_check(

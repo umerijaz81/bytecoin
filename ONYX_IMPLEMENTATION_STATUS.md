@@ -31,15 +31,16 @@ unreachable until the release gates below are independently satisfied.
    canonical nonrecursive construction and field access; fixed byte strings use exact-length lowercase
    hex literals. Content-addressed libraries are lock/tree-digest verified, namespace isolated,
    deterministically topologically ordered and embedded for offline reproduction. Remaining:
-   the first call-free Pasta-field/boolean/checked-unsigned-integer subset has deterministic Halo2 gates, pinned verifying-key
+   the Pasta-field/boolean/checked-unsigned-integer language has deterministic Halo2 gates, pinned verifying-key
    descriptor regeneration, real randomized proof creation/verification, IR/profile key binding and
    positive/negative proof vectors. Integer range, overflow/underflow, ordering, Euclidean division/remainder,
    dynamic shifts and field nonzero division are constraint-enforced. Acyclic direct helper calls are signature-checked
    and deterministically inlined into a single export. Guarded execution uses safe-operand selection, canonical
    inactive values, assertion implication and transitive call guards without disabling arithmetic constraints.
    Arrays, records and fixed bytes flatten across parameters, returns, calls, guards, constructors, projections and
-   bounded dynamic indexing, with real multi-leaf proof vectors. Multiple exports and intrinsics still require backend
-   lowering and type-specific proof vectors. Structured fuzzing, audit and testnet gates also remain. Unknown or
+   bounded dynamic indexing, with real multi-leaf proof vectors. Versioned Poseidon, domain-separated Merkle-node and
+   position-bound nullifier intrinsics match an independent Grain/MDS evaluator and real proof vectors. Explicit
+   multi-export selection still requires backend lowering. Structured fuzzing, audit and testnet gates also remain. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative

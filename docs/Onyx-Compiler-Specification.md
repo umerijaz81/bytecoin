@@ -61,6 +61,12 @@ Control flow is limited to:
 are rejected. A function may access only its parameters and local values. Compiler intrinsics are
 versioned and selected from the target profile; an unknown intrinsic is an error.
 
+The non-registrable compiler-v1 profile currently fixes three Pasta-field intrinsics using
+`P128Pow5T3` and the two-input constant-length domain: `poseidon_hash(a,b) = H(a,b)`,
+`merkle_root(left,right) = H(2,H(left,right))`, and
+`nullifier(key,rho,position) = H(3,H(H(key,rho),position))`. Tags `2` and `3` match the approved
+membership circuit. Any signature or domain change requires a new target-profile digest.
+
 ## 4. Canonical Onyx IR v1
 
 The compiler lowers typed source into a single-static-assignment, acyclic control-flow graph. Values

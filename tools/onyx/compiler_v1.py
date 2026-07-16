@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -665,8 +666,90 @@ INTEGER_BITS = {"u8": 8, "u16": 16, "u32": 32, "u64": 64}
 INTRINSICS = {
     "poseidon_hash": (("field", "field"), "field", 64),
     "merkle_root": (("field", "field"), "field", 96),
-    "nullifier": (("field", "field"), "field", 80),
+    "nullifier": (("field", "field", "field"), "field", 160),
 }
+
+
+class _PoseidonGrain:
+    def __init__(self):
+        self.state = [1] * 80
+        def set_bits(offset: int, length: int, value: int) -> None:
+            for index in range(length):
+                self.state[offset + length - 1 - index] = (value >> index) & 1
+        set_bits(0, 2, 1)       # prime-order field
+        set_bits(2, 4, 0)       # x^alpha S-box
+        set_bits(6, 12, 255)    # Pasta field bit length
+        set_bits(18, 12, 3)     # width
+        set_bits(30, 10, 8)     # full rounds
+        set_bits(40, 10, 56)    # partial rounds
+        self.next_bit = 80
+        for _ in range(20):
+            self._load_next_8_bits()
+            self.next_bit = 80
+
+    def _load_next_8_bits(self) -> None:
+        value = 0
+        for index in range(8):
+            value |= (self.state[index + 62] ^ self.state[index + 51] ^
+                      self.state[index + 38] ^ self.state[index + 23] ^
+                      self.state[index + 13] ^ self.state[index]) << index
+        self.state = self.state[8:] + self.state[:8]
+        self.next_bit -= 8
+        for index in range(8):
+            self.state[self.next_bit + index] = (value >> index) & 1
+
+    def _bit(self) -> int:
+        if self.next_bit == 80:
+            self._load_next_8_bits()
+        result = self.state[self.next_bit]
+        self.next_bit += 1
+        return result
+
+    def _self_shrinking_bit(self) -> int:
+        while self._bit() == 0:
+            self._bit()
+        return self._bit()
+
+    def _candidate(self) -> int:
+        return sum(self._self_shrinking_bit() << (254 - index) for index in range(255))
+
+    def field(self) -> int:
+        while True:
+            value = self._candidate()
+            if value < PASTA_FP_MODULUS:
+                return value
+
+    def field_without_rejection(self) -> int:
+        return self._candidate() % PASTA_FP_MODULUS
+
+
+@functools.lru_cache(maxsize=1)
+def _poseidon_constants():
+    grain = _PoseidonGrain()
+    rounds = tuple(tuple(grain.field() for _ in range(3)) for _ in range(64))
+    while True:
+        values = [grain.field_without_rejection() for _ in range(6)]
+        if len(set(values)) == 6:
+            break
+    xs, ys = values[:3], values[3:]
+    mds = tuple(tuple(pow((left + right) % PASTA_FP_MODULUS, -1, PASTA_FP_MODULUS)
+                      for right in ys) for left in xs)
+    return rounds, mds
+
+
+def poseidon_hash2(first: int, second: int) -> int:
+    rounds, mds = _poseidon_constants()
+    state = [first, second, 2 << 64]
+    for round_index, constants in enumerate(rounds):
+        state = [(value + constant) % PASTA_FP_MODULUS
+                 for value, constant in zip(state, constants)]
+        if round_index < 4 or round_index >= 60:
+            state = [pow(value, 5, PASTA_FP_MODULUS) for value in state]
+        else:
+            state[0] = pow(state[0], 5, PASTA_FP_MODULUS)
+        state = [sum(mds[row][column] * state[column] for column in range(3)) % PASTA_FP_MODULUS
+                 for row in range(3)]
+    return state[0]
 
 
 class Lowerer:
@@ -1189,7 +1272,15 @@ def evaluate_function(function: CompiledFunction, inputs: list, functions: dict[
         elif instruction.opcode == "call":
             value = evaluate_function(functions[instruction.text], operands, functions)
         elif instruction.opcode == "intrinsic":
-            raise UnsupportedEvaluation("reference evaluator has no intrinsic backend")
+            if instruction.text == "poseidon_hash":
+                value = poseidon_hash2(operands[0], operands[1])
+            elif instruction.text == "merkle_root":
+                value = poseidon_hash2(2, poseidon_hash2(operands[0], operands[1]))
+            elif instruction.text == "nullifier":
+                value = poseidon_hash2(3, poseidon_hash2(poseidon_hash2(
+                    operands[0], operands[1]), operands[2]))
+            else:
+                raise UnsupportedEvaluation("reference evaluator has no intrinsic backend")
         elif instruction.opcode == "assert":
             if not operands[0]:
                 raise ExecutionFailure("assertion failed")
@@ -1286,7 +1377,7 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
     if backend_executable is not None:
         descriptor = backend_descriptor(backend_executable, ir, circuit_k)
         metadata["resources"]["backend_measurements"] = {
-            "backend": "halo2-ipa-pasta-compiler-composite-alpha",
+            "backend": "halo2-ipa-pasta-compiler-alpha",
             "circuit_k": circuit_k,
             "descriptor_bytes": len(descriptor),
         }
@@ -1339,7 +1430,7 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
             provenance["halo2_backend"] = {
                 "circuit_k": circuit_k,
                 "descriptor_sha256": sha256(descriptor),
-                "status": "composite-alpha-not-registrable",
+                "status": "compiler-alpha-not-registrable",
             }
         (temporary / "provenance.json").write_bytes(canonical_json(provenance))
         files = []

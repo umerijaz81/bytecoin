@@ -61,15 +61,14 @@ the call graph, recomputes expanded instruction/constraint/row/column/witness/me
 checks every artifact digest, recompiles from the normalized package in a fresh absolute path and
 requires every output byte to match.
 
-## Halo2 scalar, integer and composite alpha backend
+## Halo2 compiler alpha backend
 
 `vendor/onyx-zk/src/compiler_backend.rs` independently decodes canonical `ONXIR` inside the pinned
 Rust/Halo2 dependency boundary. Its executable profile accepts exactly one call-free exported
 function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. A package may contain
 acyclic direct helper calls: the backend independently verifies earlier-target signatures and deterministically
 inlines their parameters, constraints, assertions and return values into the single exported circuit. Packages
-with multiple exports remain rejected until the proof API has an explicit entry selector. Intrinsics remain rejected
-until their circuit gadgets are implemented. Guarded control flow is normalized independently in
+with multiple exports remain rejected until the proof API has an explicit entry selector. Guarded control flow is normalized independently in
 the backend: guarded operands select constraint-safe neutral values, the original arithmetic gadget remains
 fully enabled, and its result is selected against the canonical type-zero. Guarded assertions become Boolean
 implications, and call guards propagate through every inlined callee constraint. Thus inactive division-by-zero,
@@ -90,6 +89,14 @@ the circuit. Public composite parameters and returns expose their leaves in cano
 backend `prove` command accepts canonical 32-byte Pasta encodings and is used by integration tests to create a
 real composite proof and reject a mutated return leaf.
 
+The versioned intrinsic set uses the pinned Orchard/Pasta `P128Pow5T3` permutation and `ConstantLength<2>`
+domain. `poseidon_hash(a,b)` is the plain two-input hash; `merkle_root(left,right)` is
+`H(2,H(left,right))`; and `nullifier(key,rho,position)` is `H(3,H(H(key,rho),position))`, matching
+the membership circuit's node/nullifier tags. The original two-input alpha nullifier signature was corrected
+before registration because it could not bind note position. A separate bounded Python Grain-LFSR/MDS reference
+implementation reproduces the pinned constants and evaluator vectors; real Halo2 proofs cross-check all three
+intrinsics against it.
+
 The Rust backend also exposes bounded `create_compiler_proof` and `verify_compiler_proof` APIs. Proof
 creation requires every declared parameter plus the public parameters and return value in canonical
 order, rejects arity, boolean and public-witness mismatches before proving, and self-verifies the
@@ -103,7 +110,7 @@ descriptor containing the circuit size, profile digest, IR digest and a domain-s
 the pinned Halo2 verifying key. Passing `--backend-executable` to the frontend embeds that descriptor
 and backend measurements. Verification then requires an explicitly supplied backend executable,
 regenerates the VK descriptor from bundled IR, recompiles the whole bundle and byte-compares it. The
-descriptor remains `composite-alpha-not-registrable`; unsupported IR cannot omit constraints silently.
+descriptor remains `compiler-alpha-not-registrable`; unsupported IR cannot omit constraints silently.
 
 The locked three-platform core workflow runs positive reproduction plus negative manifest, source,
 IR, resource, call-graph and unsupported-language tests. `tests/onyx_compiler/golden-v1.json` freezes
@@ -112,7 +119,7 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 ## Remaining activation boundary
 
 The scalar, checked-integer and composite subset now lowers to Halo2 and independently regenerates its descriptor,
-but the complete language does not. Multiple exports and cryptographic intrinsics still require circuit lowering,
-type-specific proof vectors and backend measurements.
+but the complete language does not. Explicit multi-export selection still requires circuit lowering, proof vectors
+and backend measurements.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.
