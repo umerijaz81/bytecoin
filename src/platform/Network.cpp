@@ -865,7 +865,7 @@ bool TCPSocket::connect(const std::string &addr, uint16_t port) {
 			return false;
 #endif
 		} else {
-			boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address::from_string(ssl_addr.second), port);
+			boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(ssl_addr.second), port);
 			impl->socket.async_connect(endpoint, std::bind(&TCPSocket::Impl::handle_connect, impl, _1));
 		}
 	} catch (const std::exception &) {
@@ -1052,8 +1052,8 @@ UDPMulticast::UDPMulticast(const std::string &addr, uint16_t port, P_handler &&p
     : impl(std::make_shared<Impl>(this)), p_handler(std::move(p_handler)) {
 	try {
 		// Multiple processes can only bind to multicast socket if listen_ad is multicast addr
-		boost::asio::ip::address listen_ad = boost::asio::ip::address::from_string(addr);
-		boost::asio::ip::address group_ad  = boost::asio::ip::address::from_string(addr);
+		boost::asio::ip::address listen_ad = boost::asio::ip::make_address(addr);
+		boost::asio::ip::address group_ad  = boost::asio::ip::make_address(addr);
 		boost::asio::ip::udp::endpoint listen_endpoint(listen_ad, port);
 		impl->socket.open(listen_endpoint.protocol());
 		impl->socket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
@@ -1081,12 +1081,12 @@ void UDPMulticast::send(const std::string &addr, uint16_t port, const void *data
 	try {
 		// Multicast will not work on loopback
 		{
-		    //			boost::asio::ip::address local_ad = boost::asio::ip::address::from_string("127.0.0.1");
+		    //			boost::asio::ip::address local_ad = boost::asio::ip::make_address("127.0.0.1");
 		    //			boost::asio::ip::udp::endpoint local_ep(local_ad, port);
 		    //			boost::asio::ip::udp::socket local_socket(EventLoop::current()->io(), local_ep.protocol());
 		    //			local_socket.send_to(boost::asio::buffer(data, size), local_ep);
 		} {
-			boost::asio::ip::address ad = boost::asio::ip::address::from_string(addr);
+			boost::asio::ip::address ad = boost::asio::ip::make_address(addr);
 			boost::asio::ip::udp::endpoint ep(ad, port);
 			boost::asio::ip::udp::socket socket(EventLoop::current()->io(), ep.protocol());
 
@@ -1094,7 +1094,7 @@ void UDPMulticast::send(const std::string &addr, uint16_t port, const void *data
 			//			socket.set_option(boost::asio::ip::multicast::hops(2));
 			auto local_addresses = TCPAcceptor::local_addresses(true, false);
 			for (const auto &la : local_addresses) {
-				boost::asio::ip::address_v4 local_interface = boost::asio::ip::address_v4::from_string(la);
+				boost::asio::ip::address_v4 local_interface = boost::asio::ip::make_address_v4(la);
 				socket.set_option(boost::asio::ip::multicast::outbound_interface(local_interface));
 				socket.send_to(boost::asio::buffer(data, size), ep);
 			}
@@ -1127,7 +1127,7 @@ void UDPMulticast::send(const std::string &addr, uint16_t port, const void *data
 //}
 //
 // static int test_timers(){
-//	boost::asio::io_service io;
+//	boost::asio::io_context io;
 //	platform::EventLoop run_loop(io);
 //
 //	for(size_t i = 0; i != 50000; ++i)

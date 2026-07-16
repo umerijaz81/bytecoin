@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "IndexDB.hpp"
+#include <cstdio>
 #include <string.h>
 #include <iostream>
 #include "common/Invariant.hpp"
@@ -16,7 +17,7 @@ AsyncIndexDBOperation::AsyncIndexDBOperation(const std::string &full_name, O_han
 	//	std::cout << "AsyncIndexDBOperation open " << full_name << std::endl;
 	emscripten_fetch_attr_t attr;
 	emscripten_fetch_attr_init(&attr);
-	strcpy(attr.requestMethod, "GET");
+	std::snprintf(attr.requestMethod, sizeof(attr.requestMethod), "%s", "GET");
 	attr.attributes = EMSCRIPTEN_FETCH_NO_DOWNLOAD | EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
 	attr.userData   = this;
 	attr.onsuccess  = static_success;
@@ -31,7 +32,7 @@ AsyncIndexDBOperation::AsyncIndexDBOperation(
 	//	std::cout << "AsyncIndexDBOperation save " << full_name << std::endl;
 	emscripten_fetch_attr_t attr;
 	emscripten_fetch_attr_init(&attr);
-	strcpy(attr.requestMethod, "EM_IDB_STORE");
+	std::snprintf(attr.requestMethod, sizeof(attr.requestMethod), "%s", "EM_IDB_STORE");
 	attr.attributes      = EMSCRIPTEN_FETCH_REPLACE | EMSCRIPTEN_FETCH_PERSIST_FILE;
 	attr.requestData     = data;
 	attr.requestDataSize = size;

@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "Ipv4Address.hpp"
+#include <cstdio>
 #include "Math.hpp"
 #include "StringTools.hpp"
 #include "exception.hpp"
@@ -18,7 +19,7 @@ std::string ip_address_to_string(const BinaryArray &ip) {
 	if (ip.size() != 4)
 		return "?.?.?.?";
 	char buf[16]{};
-	sprintf(buf, "%u.%u.%u.%u", ip.data()[0], ip.data()[1], ip.data()[2], ip.data()[3]);
+	std::snprintf(buf, sizeof(buf), "%u.%u.%u.%u", ip.data()[0], ip.data()[1], ip.data()[2], ip.data()[3]);
 
 	return std::string(buf);
 }
@@ -38,7 +39,8 @@ std::string ip_address_and_port_to_string(const BinaryArray &ip, uint16_t port) 
 	if (ip.size() != 4)
 		return "?.?.?.?";
 	char buf[24]{};
-	sprintf(buf, "%u.%u.%u.%u:%u", ip.data()[0], ip.data()[1], ip.data()[2], ip.data()[3], port);
+	std::snprintf(
+	    buf, sizeof(buf), "%u.%u.%u.%u:%u", ip.data()[0], ip.data()[1], ip.data()[2], ip.data()[3], port);
 
 	return std::string(buf);
 }

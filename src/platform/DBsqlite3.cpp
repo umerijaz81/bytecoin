@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "DBsqlite3.hpp"
+#include <cstdio>
 #include <iostream>
 #include "PathTools.hpp"
 #include "common/Invariant.hpp"
@@ -247,7 +248,7 @@ void DBsqliteKV::del(const std::string &key, bool mustexist) {
 
 std::string DBsqliteKV::to_ascending_key(uint32_t key) {
 	char buf[32] = {};
-	sprintf(buf, "%08X", key);
+	std::snprintf(buf, sizeof(buf), "%08X", key);
 	return std::string(buf);
 }
 

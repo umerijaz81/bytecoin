@@ -126,7 +126,7 @@ void Trezor::add_connected(std::vector<std::unique_ptr<HardwareWallet>> *result)
 	//	if (error)
 	//		return;
 	try {
-		tcp::endpoint trezor_ep(boost::asio::ip::address::from_string("127.0.0.1"), 21325);
+		tcp::endpoint trezor_ep(boost::asio::ip::make_address("127.0.0.1"), 21325);
 		socket.connect(trezor_ep);
 		auto resp = trezor_post(socket, "/enumerate", "");
 		std::cout << resp.body << std::endl;
@@ -172,7 +172,7 @@ void Trezor::release() {
 Trezor::Trezor(const std::string &path) : m_path(path), m_socket(platform::EventLoop::current()->io()) {
 	//	GOOGLE_PROTOBUF_VERIFY_VERSION;
 
-	tcp::endpoint trezor_ep(boost::asio::ip::address::from_string("127.0.0.1"), 21325);
+	tcp::endpoint trezor_ep(boost::asio::ip::make_address("127.0.0.1"), 21325);
 	m_socket.connect(trezor_ep);
 
 	{

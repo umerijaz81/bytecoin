@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "DBmemory.hpp"
+#include <cstdio>
 #include <string.h>
 #include <iostream>
 #include "common/Invariant.hpp"
@@ -212,7 +213,7 @@ void DBmemory::del(const std::string &key, bool mustexist) {
 
 std::string DBmemory::to_ascending_key(uint32_t key) {
 	char buf[32] = {};
-	sprintf(buf, "%08X", key);
+	std::snprintf(buf, sizeof(buf), "%08X", key);
 	return std::string(buf);
 }
 
