@@ -44,7 +44,10 @@ unreachable until the release gates below are independently satisfied.
    bounded negotiation and no local destination lookup. Canonical v3 onion and I2P b32 destination
    framing is fail-closed, and protocol v6 carries canonical proxy-only onion/I2P identities through
    configuration, advertisement and peer-DB persistence without changing v1-v5 numeric encoding.
-   Remaining: Tor/I2P multi-node process tests, packet-capture leak testing and independent review.
+   The real Linux daemon is CI-qualified against an adversarial SOCKS5 process: successful relays are
+   source-distinguished from direct connections, proxy rejection has no direct fallback, and an onion
+   `getaddrinfo` tripwire proves there is no local destination lookup. Remaining: real Tor/I2P
+   multi-node service tests, cross-platform packet capture and independent review.
 3. A dormant, versioned RandomX v2.0.1 transition is integrated for node and bundled miner with
    delayed branch-derived seed epochs, explicit template negotiation and a repository KAT. Shared
    full-memory datasets, persistent multithread workers, strict light/large-page policy, native

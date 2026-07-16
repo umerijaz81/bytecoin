@@ -34,6 +34,14 @@ v1-v5 numeric address encoding unchanged. Only successfully connected identities
 white list; unverified advertisements remain gray. Peer DB v4 persists the hostname and clears the old
 numeric-only cache once during upgrade.
 
-Before release, run packet-capture DNS/direct-leak tests plus multi-node Tor/I2P connection,
-reconnect, timeout and shutdown tests on every supported platform. Canonical framing, persistence and
-protocol negotiation do not by themselves prove the external proxy/service configuration is private.
+The Linux CI process qualification builds and launches the real daemon against an adversarial SOCKS5
+server and TCP destination. It proves that a successful numeric connection carries a P2P handshake
+through the proxy, identifies and rejects any direct-fallback source, proves proxy rejection never
+reaches the destination, and uses an `LD_PRELOAD` `getaddrinfo` tripwire to prove a canonical onion
+hostname is sent intact without a local lookup. GitHub Actions run `29523281753` passed these cases on
+2026-07-16; the framing policy suite passed on Linux, macOS and Windows in the same run.
+
+Before release, repeat packet-capture DNS/direct-leak tests on every supported platform and run
+multi-node connection, reconnect, timeout and shutdown tests against real Tor and I2P service
+processes. The hermetic SOCKS5 qualification proves the daemon boundary, but it does not prove an
+operator's external proxy/service configuration is private or interoperable.

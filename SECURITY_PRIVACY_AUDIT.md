@@ -108,7 +108,9 @@ This reduces first-spy correlation but does not provide transport anonymity. A S
 host/network telemetry, or a small adversarial topology can still identify origins. The implementation
 also still requires multi-node adversarial simulation, sustained fuzzing, testnet soak, peer-scoring
 work and independent review. Outbound connections can now use the fail-closed numeric-address SOCKS5
-transport (`--p2p-proxy`), but Tor/I2P integration and leak testing remain release requirements.
+transport (`--p2p-proxy`). Real-daemon CI now proves successful SOCKS relay, rejection without direct
+fallback and no local onion lookup using a DNS tripwire. Real Tor/I2P interoperability,
+cross-platform packet capture and independent review remain release requirements.
 `--disable-dandelion` is an explicit privacy-reducing compatibility/debug option.
 
 ### MEDIUM / LOW
