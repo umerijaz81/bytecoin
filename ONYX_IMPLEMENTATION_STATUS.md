@@ -49,8 +49,10 @@ unreachable until the release gates below are independently satisfied.
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative
    vectors, cost budgets and an independent circuit review. A canonical non-circular program-context v1
    now binds transaction projections, ordered call identity, inclusion windows, optional state commitments
-   and application data into a frozen 22-field circuit ABI. The rollback-safe contextual state path validates
-   every ordered context before mutation. Generic envelope/proof composition and the standard circuits remain.
+   and application data into a frozen 22-field circuit ABI. A bounded canonical envelope now carries the
+   authorized transaction and exactly one context and proof per ordered call; authorization covers the complete
+   versioned proof bundle. The rollback-safe contextual state path validates every ordered context before mutation.
+   Exact registered base/program proof dispatch, executable proof composition and the standard circuits remain.
 
 ### O6 network, scaling and crypto agility
 

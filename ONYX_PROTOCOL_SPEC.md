@@ -185,6 +185,17 @@ function may append a versioned, typed application-specific suffix, but its regi
 the complete prefix-plus-suffix layout and its native decoder must derive those fields from the same bounded
 application-data bytes. The generic context layer never interprets an unregistered suffix.
 
+Contextual calls are carried in canonical contextual-transaction envelope version 1. The envelope contains
+the complete authorized transaction followed by exactly one length-delimited context for each ordered call;
+its domain-separated identifier therefore commits to authorization, proof bytes, and every context byte.
+The transaction backend is `halo2-ipa-pasta-onyx-context-v1`, and its proof field contains proof-bundle
+version 1: a bounded base-backend identifier, one nonempty base proof, and exactly one nonempty program proof
+per ordered call. Because the ordinary transaction authorization digest covers both backend and proof bytes,
+the spend and binding signatures authenticate the complete ordered bundle. The envelope and bundle decoders
+reject noncanonical varints, trailing data, count mismatches, unsupported versions, unsafe backend strings,
+empty proofs, and aggregate size overflow. This format defines carriage and authorization only; consensus must
+still dispatch the base proof and every program proof to exact registered verifiers before applying state.
+
 The first standard program is the private fungible-token transfer family. It supports fixed
 `(1..=2 spends, 1..=2 outputs)` shapes under backend
 `halo2-ipa-pasta-onyx-token-v1`. A shape-specific function id selects a deterministic VK descriptor

@@ -4,17 +4,26 @@ use halo2_proofs::pasta::Fp;
 use sha2::{Digest, Sha256};
 
 use crate::state::CanonicalField;
-use crate::transaction::{write_public_output, ProgramCall, TransactionPreimage, MAX_PROGRAMS};
+use crate::transaction::{
+    write_public_output, AuthorizedTransaction, ProgramCall, TransactionPreimage,
+    MAX_BACKEND_ID_BYTES, MAX_PROGRAMS, MAX_PROOF_BYTES,
+};
 use crate::types::{network_field, pack_32, write_varint, DecodeError, Reader, NETWORK_ID_BYTES};
 
 pub const PROGRAM_CONTEXT_VERSION: u8 = 1;
 pub const MAX_PROGRAM_PUBLIC_DATA_BYTES: usize = 4096;
+pub const MAX_PROGRAM_CONTEXT_BYTES: usize = 8192;
+pub const MAX_CONTEXTUAL_TRANSACTION_BYTES: usize = 512 * 1024;
+pub const CONTEXTUAL_TRANSACTION_VERSION: u8 = 1;
+pub const CONTEXTUAL_PROOF_BUNDLE_VERSION: u8 = 1;
+pub const CONTEXTUAL_PROGRAM_BACKEND: &str = "halo2-ipa-pasta-onyx-context-v1";
 pub const PROGRAM_CONTEXT_PUBLIC_INPUT_COUNT: usize = 22;
 pub const PROGRAM_CONTEXT_SCHEMA_HASH: [u8; 32] = [
     0x05, 0xb9, 0xfa, 0xf1, 0x49, 0xf9, 0xfa, 0x69, 0xd9, 0x41, 0x53, 0xd2, 0xf2, 0x2c, 0xe8, 0x5b,
     0xd5, 0x15, 0x28, 0x25, 0x6f, 0x0e, 0x25, 0xf1, 0x5a, 0x1e, 0xdf, 0xbd, 0x1a, 0xd5, 0xe9, 0x41,
 ];
 const CONTEXT_HASH_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.v1";
+const ENVELOPE_ID_DOMAIN: &[u8] = b"bytecoin.onyx.v6.contextual-transaction-id.v1";
 const PUBLIC_DATA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.public-data.v1";
 pub const PROGRAM_CONTEXT_SCHEMA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.schema.v1";
 pub const PROGRAM_CONTEXT_PUBLIC_INPUT_SCHEMA: &[u8] = b"network:field,anchor:field,valid_from:u64,expiry:u64,fee:u64,call_index:u8,program:field[2],function:u32,spends:field[2],outputs:field[2],calls:field[2],has_state:bool,prior:field[2],next:field[2],application:field[2]";
@@ -46,6 +55,19 @@ pub struct ProgramContext {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextualAuthorizedTransaction {
+    pub transaction: AuthorizedTransaction,
+    pub contexts: Vec<ProgramContext>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextualProofBundle {
+    pub base_backend_id: String,
+    pub base_proof: Vec<u8>,
+    pub program_proofs: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProgramContextError {
     Decode(DecodeError),
     InvalidCall,
@@ -53,6 +75,9 @@ pub enum ProgramContextError {
     PublicDataTooLarge,
     Transaction,
     BindingMismatch,
+    EnvelopeTooLarge,
+    InvalidContextCount,
+    InvalidProofBundle,
 }
 
 impl From<DecodeError> for ProgramContextError {
@@ -298,6 +323,212 @@ impl ProgramContext {
     }
 }
 
+impl ContextualAuthorizedTransaction {
+    fn validate_structure(&self) -> Result<(), ProgramContextError> {
+        if self.transaction.preimage.programs.is_empty()
+            || self.contexts.len() != self.transaction.preimage.programs.len()
+            || self.contexts.len() > MAX_PROGRAMS
+        {
+            return Err(ProgramContextError::InvalidContextCount);
+        }
+        self.transaction
+            .encode()
+            .map_err(|_| ProgramContextError::Transaction)?;
+        if self.transaction.backend_id != CONTEXTUAL_PROGRAM_BACKEND {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        let proof_bundle = ContextualProofBundle::decode(&self.transaction.proof)?;
+        if proof_bundle.program_proofs.len() != self.contexts.len() {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        for (index, context) in self.contexts.iter().enumerate() {
+            if usize::from(context.call_index) != index
+                || context
+                    .validate_binding(&self.transaction.preimage, context.valid_from_height)
+                    .is_err()
+            {
+                return Err(ProgramContextError::BindingMismatch);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_at_height(&self, block_height: u64) -> Result<(), ProgramContextError> {
+        self.validate_structure()?;
+        for context in &self.contexts {
+            context.validate_binding(&self.transaction.preimage, block_height)?;
+        }
+        Ok(())
+    }
+
+    pub fn proof_bundle(&self) -> Result<ContextualProofBundle, ProgramContextError> {
+        self.validate_structure()?;
+        ContextualProofBundle::decode(&self.transaction.proof)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, ProgramContextError> {
+        self.validate_structure()?;
+        let transaction = self
+            .transaction
+            .encode()
+            .map_err(|_| ProgramContextError::Transaction)?;
+        let mut encoded_contexts = Vec::with_capacity(self.contexts.len());
+        for context in &self.contexts {
+            let encoded = context.encode()?;
+            if encoded.len() > MAX_PROGRAM_CONTEXT_BYTES {
+                return Err(ProgramContextError::EnvelopeTooLarge);
+            }
+            encoded_contexts.push(encoded);
+        }
+        let mut out = Vec::with_capacity(
+            transaction.len() + encoded_contexts.iter().map(Vec::len).sum::<usize>() + 32,
+        );
+        out.push(CONTEXTUAL_TRANSACTION_VERSION);
+        write_varint(transaction.len() as u64, &mut out);
+        out.extend_from_slice(&transaction);
+        write_varint(encoded_contexts.len() as u64, &mut out);
+        for context in encoded_contexts {
+            write_varint(context.len() as u64, &mut out);
+            out.extend_from_slice(&context);
+        }
+        if out.len() > MAX_CONTEXTUAL_TRANSACTION_BYTES {
+            return Err(ProgramContextError::EnvelopeTooLarge);
+        }
+        Ok(out)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<Self, ProgramContextError> {
+        if input.is_empty() || input.len() > MAX_CONTEXTUAL_TRANSACTION_BYTES {
+            return Err(ProgramContextError::EnvelopeTooLarge);
+        }
+        let mut reader = Reader::new(input);
+        if reader.byte()? != CONTEXTUAL_TRANSACTION_VERSION {
+            return Err(DecodeError::WrongVersion.into());
+        }
+        let transaction_length = reader.varint()?;
+        if transaction_length == 0 || transaction_length > MAX_CONTEXTUAL_TRANSACTION_BYTES as u64 {
+            return Err(ProgramContextError::EnvelopeTooLarge);
+        }
+        let transaction = AuthorizedTransaction::decode(reader.take(transaction_length as usize)?)
+            .map_err(|_| ProgramContextError::Transaction)?;
+        let context_count = reader.varint()?;
+        if context_count == 0 || context_count > MAX_PROGRAMS as u64 {
+            return Err(ProgramContextError::InvalidContextCount);
+        }
+        let mut contexts = Vec::with_capacity(context_count as usize);
+        for _ in 0..context_count {
+            let length = reader.varint()?;
+            if length == 0 || length > MAX_PROGRAM_CONTEXT_BYTES as u64 {
+                return Err(ProgramContextError::EnvelopeTooLarge);
+            }
+            contexts.push(ProgramContext::decode(reader.take(length as usize)?)?);
+        }
+        if !reader.is_empty() {
+            return Err(DecodeError::TrailingData.into());
+        }
+        let envelope = Self {
+            transaction,
+            contexts,
+        };
+        envelope.validate_structure()?;
+        Ok(envelope)
+    }
+
+    pub fn id(&self) -> Result<[u8; 32], ProgramContextError> {
+        let encoded = self.encode()?;
+        let mut hash = Sha256::new();
+        hash.update(ENVELOPE_ID_DOMAIN);
+        hash.update((encoded.len() as u64).to_le_bytes());
+        hash.update(encoded);
+        Ok(hash.finalize().into())
+    }
+}
+
+impl ContextualProofBundle {
+    fn validate(&self) -> Result<(), ProgramContextError> {
+        if self.base_backend_id.is_empty()
+            || self.base_backend_id.len() > MAX_BACKEND_ID_BYTES
+            || !self
+                .base_backend_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            || self.base_proof.is_empty()
+            || self.base_proof.len() > MAX_PROOF_BYTES
+            || self.program_proofs.is_empty()
+            || self.program_proofs.len() > MAX_PROGRAMS
+            || self
+                .program_proofs
+                .iter()
+                .any(|proof| proof.is_empty() || proof.len() > MAX_PROOF_BYTES)
+        {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        Ok(())
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, ProgramContextError> {
+        self.validate()?;
+        let mut out = Vec::new();
+        out.push(CONTEXTUAL_PROOF_BUNDLE_VERSION);
+        write_varint(self.base_backend_id.len() as u64, &mut out);
+        out.extend_from_slice(self.base_backend_id.as_bytes());
+        write_varint(self.base_proof.len() as u64, &mut out);
+        out.extend_from_slice(&self.base_proof);
+        write_varint(self.program_proofs.len() as u64, &mut out);
+        for proof in &self.program_proofs {
+            write_varint(proof.len() as u64, &mut out);
+            out.extend_from_slice(proof);
+        }
+        if out.len() > MAX_PROOF_BYTES {
+            return Err(ProgramContextError::EnvelopeTooLarge);
+        }
+        Ok(out)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<Self, ProgramContextError> {
+        if input.is_empty() || input.len() > MAX_PROOF_BYTES {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        let mut reader = Reader::new(input);
+        if reader.byte()? != CONTEXTUAL_PROOF_BUNDLE_VERSION {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        let backend_length = reader.varint()?;
+        if backend_length == 0 || backend_length > MAX_BACKEND_ID_BYTES as u64 {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        let base_backend_id = String::from_utf8(reader.take(backend_length as usize)?.to_vec())
+            .map_err(|_| ProgramContextError::InvalidProofBundle)?;
+        let base_proof_length = reader.varint()?;
+        if base_proof_length == 0 || base_proof_length > MAX_PROOF_BYTES as u64 {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        let base_proof = reader.take(base_proof_length as usize)?.to_vec();
+        let proof_count = reader.varint()?;
+        if proof_count == 0 || proof_count > MAX_PROGRAMS as u64 {
+            return Err(ProgramContextError::InvalidProofBundle);
+        }
+        let mut program_proofs = Vec::with_capacity(proof_count as usize);
+        for _ in 0..proof_count {
+            let length = reader.varint()?;
+            if length == 0 || length > MAX_PROOF_BYTES as u64 {
+                return Err(ProgramContextError::InvalidProofBundle);
+            }
+            program_proofs.push(reader.take(length as usize)?.to_vec());
+        }
+        if !reader.is_empty() {
+            return Err(DecodeError::TrailingData.into());
+        }
+        let bundle = Self {
+            base_backend_id,
+            base_proof,
+            program_proofs,
+        };
+        bundle.validate()?;
+        Ok(bundle)
+    }
+}
+
 fn spends_digest(transaction: &TransactionPreimage) -> [u8; 32] {
     let mut bytes = Vec::with_capacity(transaction.spends.len() * 96 + 8);
     write_varint(transaction.spends.len() as u64, &mut bytes);
@@ -343,7 +574,7 @@ mod tests {
 
     use super::*;
     use crate::state::{CanonicalField, Nullifier};
-    use crate::transaction::{PublicOutput, PublicSpend};
+    use crate::transaction::{AuthorizedTransaction, PublicOutput, PublicSpend};
 
     fn field(value: u64) -> CanonicalField {
         CanonicalField::from_bytes(Fp::from(value).to_repr()).unwrap()
@@ -396,6 +627,27 @@ mod tests {
         .unwrap();
         transaction.programs[0].public_data_hash = context.hash().unwrap();
         (transaction, context)
+    }
+
+    fn envelope() -> ContextualAuthorizedTransaction {
+        let (preimage, context) = bound();
+        let proof = ContextualProofBundle {
+            base_backend_id: "halo2-ipa-pasta-onyx-1x1-v1".to_owned(),
+            base_proof: vec![13, 14, 15],
+            program_proofs: vec![vec![16, 17, 18]],
+        }
+        .encode()
+        .unwrap();
+        ContextualAuthorizedTransaction {
+            transaction: AuthorizedTransaction {
+                preimage,
+                backend_id: CONTEXTUAL_PROGRAM_BACKEND.to_owned(),
+                proof,
+                spend_signatures: vec![[19; 64]],
+                binding_signature: [20; 64],
+            },
+            contexts: vec![context],
+        }
     }
 
     #[test]
@@ -508,6 +760,94 @@ mod tests {
                 vec![0; MAX_PROGRAM_PUBLIC_DATA_BYTES + 1],
             ),
             Err(ProgramContextError::PublicDataTooLarge)
+        );
+    }
+
+    #[test]
+    fn contextual_envelope_round_trips_and_rechecks_height() {
+        let envelope = envelope();
+        let encoded = envelope.encode().unwrap();
+        assert_eq!(
+            ContextualAuthorizedTransaction::decode(&encoded),
+            Ok(envelope.clone())
+        );
+        envelope.validate_at_height(50).unwrap();
+        assert_eq!(
+            envelope.validate_at_height(49),
+            Err(ProgramContextError::InvalidHeightWindow)
+        );
+        assert_ne!(envelope.id().unwrap(), [0; 32]);
+    }
+
+    #[test]
+    fn contextual_envelope_rejects_missing_reordered_and_trailing_contexts() {
+        let envelope = envelope();
+        let mut missing = envelope.clone();
+        missing.contexts.clear();
+        assert_eq!(
+            missing.encode(),
+            Err(ProgramContextError::InvalidContextCount)
+        );
+        let mut wrong_index = envelope.clone();
+        wrong_index.contexts[0].call_index = 1;
+        assert_eq!(
+            wrong_index.encode(),
+            Err(ProgramContextError::BindingMismatch)
+        );
+        let mut trailing = envelope.encode().unwrap();
+        trailing.push(0);
+        assert_eq!(
+            ContextualAuthorizedTransaction::decode(&trailing),
+            Err(ProgramContextError::Decode(DecodeError::TrailingData))
+        );
+        assert_eq!(
+            ContextualAuthorizedTransaction::decode(&vec![0; MAX_CONTEXTUAL_TRANSACTION_BYTES + 1]),
+            Err(ProgramContextError::EnvelopeTooLarge)
+        );
+    }
+
+    #[test]
+    fn contextual_envelope_id_commits_authorization_bytes() {
+        let envelope = envelope();
+        let original = envelope.id().unwrap();
+        let mut changed = envelope;
+        let mut proof_bundle = changed.proof_bundle().unwrap();
+        proof_bundle.base_proof[0] ^= 1;
+        changed.transaction.proof = proof_bundle.encode().unwrap();
+        assert_ne!(changed.id().unwrap(), original);
+        proof_bundle.base_proof[0] ^= 1;
+        changed.transaction.proof = proof_bundle.encode().unwrap();
+        changed.transaction.binding_signature[0] ^= 1;
+        assert_ne!(changed.id().unwrap(), original);
+    }
+
+    #[test]
+    fn contextual_proof_bundle_is_ordered_bounded_and_canonical() {
+        let envelope = envelope();
+        let bundle = envelope.proof_bundle().unwrap();
+        assert_eq!(
+            ContextualProofBundle::decode(&bundle.encode().unwrap()),
+            Ok(bundle)
+        );
+        let mut wrong_count = envelope;
+        let mut bundle = wrong_count.proof_bundle().unwrap();
+        bundle.program_proofs.push(vec![1]);
+        wrong_count.transaction.proof = bundle.encode().unwrap();
+        assert_eq!(
+            wrong_count.encode(),
+            Err(ProgramContextError::InvalidProofBundle)
+        );
+        let mut trailing = ContextualProofBundle {
+            base_backend_id: "base".to_owned(),
+            base_proof: vec![1],
+            program_proofs: vec![vec![2]],
+        }
+        .encode()
+        .unwrap();
+        trailing.push(0);
+        assert_eq!(
+            ContextualProofBundle::decode(&trailing),
+            Err(ProgramContextError::Decode(DecodeError::TrailingData))
         );
     }
 }
