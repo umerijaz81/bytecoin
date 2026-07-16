@@ -307,6 +307,7 @@ void test_blockchain(common::CommandLine &cmd) {
 					invariant(histories[active].at(seed_height) != histories[other].at(seed_height),
 					    "RandomX randomized branches unexpectedly shared a post-fork seed");
 			}
+			randomx_chain.db_commit();
 		}
 
 		const size_t inactive = 1 - active;
