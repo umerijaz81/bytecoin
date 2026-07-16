@@ -1,0 +1,68 @@
+name: Sanitizer and fuzz regression
+
+on:
+  push:
+    paths:
+      - ".github/workflows/sanitizer-fuzz.yml"
+      - "CMakeLists.txt"
+      - "rust-toolchain.toml"
+      - "src/**"
+      - "tests/fuzz/**"
+      - "tools/fuzz/**"
+      - "vendor/onyx-zk/**"
+  pull_request:
+    paths:
+      - ".github/workflows/sanitizer-fuzz.yml"
+      - "CMakeLists.txt"
+      - "rust-toolchain.toml"
+      - "src/**"
+      - "tests/fuzz/**"
+      - "tools/fuzz/**"
+      - "vendor/onyx-zk/**"
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  libfuzzer:
+    name: ASan/UBSan/libFuzzer (Onyx enabled)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '900' || '90' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends clang libboost-dev libssl-dev libudev-dev
+      - name: Configure instrumented harness
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-fuzz -DUSE_SQLITE=ON -DONYX_ZK=ON -DSANITIZE=fuzzer,address,undefined
+      - name: Build instrumented harness
+        run: cmake --build build-fuzz --parallel 2 --target fuzzer
+      - name: Generate deterministic seed corpus
+        run: |
+          python3 -m unittest discover -s tests/fuzz -p "test_*.py"
+          python3 tools/fuzz/generate_seed_corpus.py build-fuzz-corpus
+      - name: Run bounded sanitizer campaign
+        run: |
+          mkdir -p build-fuzz-artifacts
+          ./bin/fuzzer build-fuzz-corpus -artifact_prefix=build-fuzz-artifacts/ -max_total_time="$FUZZ_SECONDS" -timeout=15 -rss_limit_mb=4096 -print_final_stats=1
+      - name: Preserve sanitizer findings
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7.0.1
+        with:
+          name: bytecoin-fuzz-findings-${{ github.sha }}
+          path: build-fuzz-artifacts/
+          if-no-files-found: warn
+          retention-days: 14

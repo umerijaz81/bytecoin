@@ -5,8 +5,12 @@ Configure with Clang/libFuzzer and sanitizers:
 ```text
 cmake -S . -B build-fuzz -DSANITIZE=fuzzer,address,undefined -DONYX_ZK=ON
 cmake --build build-fuzz --target fuzzer
-build-fuzz/fuzzer corpus/ -artifact_prefix=artifacts/
+bin/fuzzer corpus/ -artifact_prefix=artifacts/
 ```
+
+The project harness is emitted as `bin/fuzzer` by the default CMake layout.
+`tools/fuzz/generate_seed_corpus.py corpus` creates the same
+deterministic starter corpus used by CI.
 
 Each input starts with a one-byte selector followed by the bytes passed to the target parser. Restored
 selectors `0..16` cover Levin handshake, sync, relay, stem-relay, SOCKS5 and object messages; `128..137` cover consensus
@@ -25,6 +29,12 @@ The Onyx selectors use production depth 32 and circuit K 20. Random malformed da
 during bounded canonical decoding before proof work. Seed the corpus with valid test envelopes so the
 fuzzer can mutate deeper proof, signature, ciphertext and public-input paths. Run sustained campaigns
 under ASan/UBSan before any release; a compiling target is not evidence of adequate fuzz coverage.
+
+`.github/workflows/sanitizer-fuzz.yml` builds the complete Onyx-enabled harness with Clang,
+ASan, UBSan and libFuzzer. Pull requests and pushes run a bounded 90-second regression campaign;
+the weekly schedule runs for 15 minutes and retains crash artifacts. These jobs catch regressions but
+do not satisfy the release requirement for sustained, independently reviewed campaigns over the
+valid proof-envelope corpus.
 
 Keep crash artifacts and minimized regression inputs. Every confirmed issue must gain a deterministic
 unit/regression test before the fix is accepted.

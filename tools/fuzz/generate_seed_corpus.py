@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Generate the deterministic starter corpus for the Bytecoin libFuzzer harness."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+from pathlib import Path
+
+
+SELECTORS = tuple(range(17)) + tuple(range(128, 138)) + tuple(range(200, 206))
+
+
+def seeds() -> list[bytes]:
+    corpus = [bytes((selector,)) for selector in SELECTORS]
+    corpus.extend(
+        [
+            b"\x10\x05\x00",  # SOCKS5 no-auth method response
+            b"\x10\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x50",  # IPv4 CONNECT response
+            b"\x10\x05\x00\x00\x03\x03i2p\x00\x50",  # domain CONNECT response
+            b"\xc8null",
+            b"\xc8{}",
+            b"\xc8[]",
+            b"\xc8{\"jsonrpc\":\"2.0\",\"id\":1}",
+            b"\xc9invalid-address",
+            b"\xca\x01",  # malformed Onyx envelopes retain their version byte
+            b"\xcb\x01",
+            b"\xcc\x01",
+            b"\xcd\x01",
+        ]
+    )
+    return corpus
+
+
+def write_corpus(output: Path) -> int:
+    output.mkdir(parents=True, exist_ok=True)
+    for seed in seeds():
+        name = hashlib.sha256(seed).hexdigest()
+        (output / name).write_bytes(seed)
+    return len({hashlib.sha256(seed).hexdigest() for seed in seeds()})
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output", type=Path)
+    args = parser.parse_args()
+    count = write_corpus(args.output)
+    print(f"generated {count} deterministic fuzz seeds in {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
