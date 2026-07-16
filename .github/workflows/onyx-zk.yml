@@ -44,6 +44,9 @@ jobs:
       - name: Build versioned Python SDK wheel without network access
         if: matrix.shard == 'core'
         run: python -m pip wheel --no-deps --no-build-isolation sdk/onyx/python -w build/onyx-sdk-wheel
+      - name: Verify Python SDK wheel contents and metadata
+        if: matrix.shard == 'core'
+        run: python sdk/onyx/python/verify_wheel.py build/onyx-sdk-wheel
       - name: Test optimized proof shard without network access
         env:
           CARGO_INCREMENTAL: "0"
