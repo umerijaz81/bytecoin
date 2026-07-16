@@ -57,7 +57,9 @@ jobs:
 
   riscv64-v2-vectors:
     name: upstream v2 vectors (riscv64/QEMU)
-    runs-on: ubuntu-latest
+    # GCC 14 added the ratified RISC-V vector-crypto intrinsic API used by
+    # upstream RandomX. Ubuntu 26.04 supplies a new-enough cross compiler.
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -66,16 +68,15 @@ jobs:
       - name: Install RISC-V cross toolchain and emulator
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends clang gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-user
+          sudo apt-get install --no-install-recommends gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-user
+          riscv64-linux-gnu-g++ --version
       - name: Configure pinned RandomX for RV64GC
         run: >-
           cmake -S vendor/randomx -B build-randomx-riscv64
           -DCMAKE_SYSTEM_NAME=Linux
           -DCMAKE_SYSTEM_PROCESSOR=riscv64
-          -DCMAKE_C_COMPILER=clang
-          -DCMAKE_CXX_COMPILER=clang++
-          -DCMAKE_C_COMPILER_TARGET=riscv64-linux-gnu
-          -DCMAKE_CXX_COMPILER_TARGET=riscv64-linux-gnu
+          -DCMAKE_C_COMPILER=riscv64-linux-gnu-gcc
+          -DCMAKE_CXX_COMPILER=riscv64-linux-gnu-g++
       - name: Build RISC-V upstream tests
         run: cmake --build build-randomx-riscv64 --parallel 2 --target randomx-tests
       - name: Run RandomX v2 vectors under QEMU
