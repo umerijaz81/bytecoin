@@ -4,7 +4,7 @@
 offline capped-token descriptor helper and a fail-closed wallet RPC codec. It deliberately does not
 hide wallet RPC or transaction relay behind implicit network behavior.
 
-Build the wheel without downloading dependencies:
+Build the deterministic wheel without downloading dependencies or requiring setuptools:
 
 ```text
 python -m pip wheel --no-deps --no-build-isolation sdk/onyx/python

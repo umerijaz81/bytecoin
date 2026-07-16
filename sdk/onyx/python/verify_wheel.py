@@ -17,7 +17,7 @@ EXPECTED_FILES = {
 }
 
 
-def verify(wheel_directory: pathlib.Path) -> None:
+def verify(wheel_directory: pathlib.Path) -> pathlib.Path:
     wheels = list(wheel_directory.glob("*.whl"))
     if len(wheels) != 1:
         raise RuntimeError(f"expected exactly one wheel, found {len(wheels)}")
@@ -58,9 +58,14 @@ def verify(wheel_directory: pathlib.Path) -> None:
             raise RuntimeError("wheel RPC profile differs from the v1 source contract")
 
     print(f"verified {wheels[0]}")
+    return wheels[0]
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: verify_wheel.py WHEEL_DIRECTORY")
-    verify(pathlib.Path(sys.argv[1]))
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("usage: verify_wheel.py WHEEL_DIRECTORY [REBUILD_DIRECTORY]")
+    verified = [verify(pathlib.Path(argument)) for argument in sys.argv[1:]]
+    if len(verified) == 2 and verified[0].read_bytes() != verified[1].read_bytes():
+        raise RuntimeError("independent SDK wheel builds are not byte-for-byte reproducible")
+    if len(verified) == 2:
+        print("independent SDK wheel builds are byte-for-byte reproducible")

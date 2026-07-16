@@ -1,6 +1,7 @@
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = []
+build-backend = "onyx_build_backend"
+backend-path = ["."]
 
 [project]
 name = "bytecoin-onyx-sdk"
@@ -16,13 +17,3 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Security :: Cryptography",
 ]
-
-[tool.setuptools]
-py-modules = ["onyx_sdk"]
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["bytecoin_onyx*"]
-
-[tool.setuptools.package-data]
-bytecoin_onyx = ["wallet_rpc_v1.json"]
