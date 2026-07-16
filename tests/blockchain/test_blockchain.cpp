@@ -4,6 +4,7 @@
 
 #include "test_blockchain.hpp"
 
+#include <array>
 #include <fstream>
 #include <vector>
 #include "Core/BlockChainState.hpp"
@@ -237,6 +238,103 @@ void test_blockchain(common::CommandLine &cmd) {
 		invariant(randomx_chain.get_ancestor_hash(randomx_chain.get_tip(), 16) == side_second_seed.hash,
 		    "RandomX side branch retained the wrong second-epoch seed");
 		std::cout << "---- RandomX repeated branch-derived epoch reorganizations: OK" << std::endl;
+	}
+
+	// Run a longer deterministic pseudo-random campaign with a smaller test-only epoch. Each round
+	// extends the inactive branch by a varying amount until it becomes strictly longer, forcing the
+	// validator to abandon its current cached seed and resolve the candidate's own retained ancestry.
+	// Reopen the database afterwards and force one more reorganization onto the previously inactive
+	// branch, covering persisted side-chain ancestry as well as the in-memory path.
+	{
+		Config randomx_config(cmd);
+		randomx_config.data_folder = "../tests/scratchpad-randomx-randomized";
+		randomx_config.net         = "test";
+		invariant(platform::create_folders_if_necessary(randomx_config.data_folder),
+		    "Could not create randomized RandomX test data folder");
+		BlockChain::DB::delete_db(randomx_config.data_folder + "/blockchain");
+		Currency randomx_currency(randomx_config);
+		randomx_currency.upgrade_heights.at(3) = 2;
+		randomx_currency.randomx_switch_height = 2;
+		randomx_currency.randomx_seed_epoch    = 4;
+		randomx_currency.randomx_seed_lag      = 1;
+
+		std::array<std::vector<Hash>, 2> histories;
+		std::array<Hash, 2> tips{};
+		std::array<Height, 2> heights{{0, 0}};
+		size_t active = 0;
+		{
+			BlockChainState randomx_chain(logger, randomx_config, randomx_currency, false);
+			TestMiner randomx_miner(randomx_chain, randomx_currency);
+			const Hash genesis = randomx_chain.get_tip_bid();
+			std::vector<Hash> common_history{genesis};
+			Hash common_tip = genesis;
+			for (Height height = 1; height <= 3; ++height) {
+				const auto block = randomx_miner.mine_block(common_tip);
+				randomx_miner.add_mined_block(block, false);
+				common_tip = block.hash;
+				common_history.push_back(block.hash);
+			}
+			histories[0] = histories[1] = common_history;
+			tips[0] = tips[1] = common_tip;
+			heights[0] = heights[1] = 3;
+
+			uint64_t state = 0x6a09e667f3bcc909ULL;
+			for (size_t round = 0; round != 14; ++round) {
+				const size_t target = round % 2;
+				const size_t other = 1 - target;
+				invariant(heights[target] <= heights[other],
+				    "RandomX campaign did not select the inactive branch");
+				state ^= state << 13;
+				state ^= state >> 7;
+				state ^= state << 17;
+				const Height growth = heights[other] - heights[target] + 1 + state % 3;
+				for (Height count = 0; count != growth; ++count) {
+					const auto block = randomx_miner.mine_block(tips[target]);
+					randomx_miner.add_mined_block(block, false);
+					tips[target] = block.hash;
+					heights[target] = block.height;
+					histories[target].push_back(block.hash);
+				}
+				active = target;
+				invariant(randomx_chain.get_tip_bid() == tips[active],
+				    "RandomX randomized branch did not become active");
+				const Height seed_height = randomx_currency.randomx_seed_height(heights[active]);
+				invariant(seed_height < histories[active].size() &&
+				              randomx_chain.get_ancestor_hash(randomx_chain.get_tip(), seed_height) ==
+				                  histories[active].at(seed_height),
+				    "RandomX randomized reorganization selected the wrong branch seed");
+				if (seed_height > 3 && seed_height < histories[other].size())
+					invariant(histories[active].at(seed_height) != histories[other].at(seed_height),
+					    "RandomX randomized branches unexpectedly shared a post-fork seed");
+			}
+		}
+
+		const size_t inactive = 1 - active;
+		{
+			BlockChainState reopened_chain(logger, randomx_config, randomx_currency, false);
+			invariant(reopened_chain.get_tip_bid() == tips[active],
+			    "RandomX active tip changed after database reopen");
+			api::BlockHeader retained_header;
+			invariant(reopened_chain.get_header(tips[inactive], &retained_header) &&
+			              retained_header.height == heights[inactive],
+			    "RandomX inactive branch was not retained across database reopen");
+			TestMiner reopened_miner(reopened_chain, randomx_currency);
+			const Height growth = heights[active] - heights[inactive] + 2;
+			for (Height count = 0; count != growth; ++count) {
+				const auto block = reopened_miner.mine_block(tips[inactive]);
+				reopened_miner.add_mined_block(block, false);
+				tips[inactive] = block.hash;
+				heights[inactive] = block.height;
+				histories[inactive].push_back(block.hash);
+			}
+			invariant(reopened_chain.get_tip_bid() == tips[inactive],
+			    "RandomX persisted inactive branch did not reorganize after database reopen");
+			const Height seed_height = randomx_currency.randomx_seed_height(heights[inactive]);
+			invariant(reopened_chain.get_ancestor_hash(reopened_chain.get_tip(), seed_height) ==
+			              histories[inactive].at(seed_height),
+			    "RandomX database-reopen reorganization selected the wrong persisted seed");
+		}
+		std::cout << "---- RandomX randomized multi-epoch reorg and reopen campaign: OK" << std::endl;
 	}
 }
 
