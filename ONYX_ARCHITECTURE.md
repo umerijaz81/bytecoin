@@ -109,6 +109,10 @@ language compiled to PLONKish circuits. Options, in order of preference:
 A custom circuit compiler is itself a multi-quarter sub-project and must not block the value-transfer
 phases.
 
+The fail-closed v1 language, canonical IR, resource-analysis and deterministic-key boundary is defined
+in `docs/Onyx-Compiler-Specification.md`. That document is a prerequisite specification, not an
+activation claim; the current implementation still accepts only compiled-in reviewed programs.
+
 ## 6. Consensus & node integration
 
 What is **reused** vs **replaced**:

@@ -23,10 +23,12 @@ unreachable until the release gates below are independently satisfied.
    packages where another native language has an identified maintainer. Both packages, golden
    request/response fixtures, compatibility policy, semantic versioning and byte-for-byte
    three-platform package reproduction are CI-gated.
-2. Decide whether arbitrary private programs are still in scope. If yes, write a separate compiler
-   specification (type system, bounded control flow, constraint semantics, canonical IR, verifier-key
-   reproducibility and resource analysis) before implementing an ACIR/Leo-like frontend. Unknown or
-   user-supplied circuits continue to fail closed until that compiler and verifier pipeline are audited.
+2. The arbitrary-private-program boundary is now frozen in
+   `docs/Onyx-Compiler-Specification.md`: it defines the bounded v1 type system and control flow,
+   canonical IR, explicit disclosure/state discipline, conservative resource analysis, deterministic
+   Halo2 lowering, verifier-key regeneration and reproducible artifact bundle. Remaining: implement
+   its parser, type checker, IR/resource verifier and backend, then complete its independent audit and
+   testnet gates. Unknown or user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative
    vectors, cost budgets and an independent circuit review.
