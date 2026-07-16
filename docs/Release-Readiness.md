@@ -42,6 +42,13 @@ The old Azure pipeline is intentionally disabled. It used retired runner images,
 floating dependency clones, an unsupported OpenSSL 1.1.1b snapshot and a long-lived PAT embedded in a
 remote URL. None of its artifacts meet the release boundary.
 
+`.github/workflows/reproducible-binaries.yml` is the first executable reproducibility qualification
+gate. It exports the same revision into two different absolute paths, requires `SOURCE_DATE_EPOCH`,
+remaps C++ and Rust source paths, disables nondeterministic linker identifiers, strips both builds,
+and compares the three Linux executables byte-for-byte. Its JSON manifest records hashes and
+toolchain identities. A green same-runner comparison is necessary evidence, but it is not the two
+independent environments or the Windows/macOS evidence required to mark the activation gate passed.
+
 ## Required release ceremony
 
 1. Freeze a reviewed commit and run all consensus, ZK, migration, reorg, fuzz and platform tests.

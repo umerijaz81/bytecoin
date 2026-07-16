@@ -8,19 +8,20 @@ unreachable until the release gates below are independently satisfied.
 
 | Gate | Implemented evidence | Remaining exit condition |
 |---|---|---|
-| O0 proof foundation | Exact-pinned vendored Halo2/Pasta crate, bounded panic-contained C ABI, CMake integration, locked offline three-platform workflow, primitive vectors, malformed-input tests, and a sanitizer fuzzer target with restored C++ parser/Onyx envelope selectors. | External dependency/proof-boundary review, sustained sanitizer fuzz campaigns and reproducible release artifacts. |
+| O0 proof foundation | Exact-pinned vendored Halo2/Pasta crate, bounded panic-contained C ABI, CMake integration, locked offline three-platform workflow, primitive vectors, malformed-input tests, and an automated ASan/UBSan/libFuzzer gate with deterministic C++ parser/Onyx envelope seeds. | External dependency/proof-boundary review, sustained independently reviewed fuzz campaigns over valid proof envelopes and reproducible release artifacts. |
 | O1 state model | Canonical notes/envelopes, encryption, commitment tree, retained anchors, nullifier set, bounded snapshots, atomic apply/undo, replay and reorg tests. | Independent consensus-state audit and long-running randomized differential/fuzz campaigns. |
 | O2 private transfer | Shape-bound Halo2 transfer circuits, spend and binding authorization, value conservation, expiry/network binding, negative mutation tests and cost limits. | Independent circuit audit and published laptop benchmarks at frozen release parameters. |
 | O3 wallet | Seed/key hierarchy, Onyx addresses, full viewing keys, scanning, historical witnesses, proving, recovery snapshots, pending reservations, native/token balances and wallet RPC. | End-to-end multi-node devnet recovery, backup, hardware-wallet and operator acceptance tests. |
 | O4 migration | One-way legacy-to-Onyx shield, legacy ownership signature, key-image replay prevention, atomic supply accounting, undo and supply-audit RPC. | Operational migration rehearsal, incident rollback procedure and independent supply-invariant audit. |
-| O5 standard programs | Canonical registry, activation/deactivation, cost accounting, funded capped-token deployment, private issuance, mixed token/native-fee transfers, wallet-derived registry state, status RPC, versioned ABI profile and deterministic descriptor SDK/vector boundary. | Language bindings and additional audited standard programs if retained in scope; external audit. |
+| O5 standard programs | Canonical registry, activation/deactivation, cost accounting, funded capped-token deployment, private issuance, mixed token/native-fee transfers, wallet-derived registry state, status RPC, versioned ABI profile, golden RPC fixtures, and a semantically versioned reproducible Python SDK wheel around the deterministic descriptor/RPC boundary. | Additional language bindings, arbitrary-program compiler pipeline and audited standard programs; external audit. |
 
 ## Remaining implementation work
 
 ### O5 developer platform
 
-1. Freeze a versioned public SDK package around the existing C ABI and wallet RPC, including language
-   bindings, golden request/response fixtures, compatibility policy and semantic versioning.
+1. Extend the frozen v1 SDK profile beyond the dependency-free Python package to the supported native
+   and web languages. The Python wheel, golden request/response fixtures, compatibility policy,
+   semantic versioning and byte-for-byte three-platform wheel reproduction are CI-gated.
 2. Decide whether arbitrary private programs are still in scope. If yes, write a separate compiler
    specification (type system, bounded control flow, constraint semantics, canonical IR, verifier-key
    reproducibility and resource analysis) before implementing an ACIR/Leo-like frontend. Unknown or

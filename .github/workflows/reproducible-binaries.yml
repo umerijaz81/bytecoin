@@ -1,0 +1,72 @@
+name: Reproducible platform binaries
+
+on:
+  push:
+    paths:
+      - ".github/workflows/reproducible-binaries.yml"
+      - "CMakeLists.txt"
+      - "rust-toolchain.toml"
+      - "src/**"
+      - "tools/release/verify_binary_reproducibility.py"
+      - "vendor/onyx-zk/**"
+      - "vendor/randomx/**"
+  pull_request:
+    paths:
+      - ".github/workflows/reproducible-binaries.yml"
+      - "CMakeLists.txt"
+      - "rust-toolchain.toml"
+      - "src/**"
+      - "tools/release/verify_binary_reproducibility.py"
+      - "vendor/onyx-zk/**"
+      - "vendor/randomx/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: two clean Linux builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install platform build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends clang libboost-dev libssl-dev libudev-dev
+      - name: Export two clean source trees
+        run: |
+          mkdir -p /tmp/bytecoin-repro/a /tmp/bytecoin-repro/b
+          git archive --format=tar HEAD | tar -xf - -C /tmp/bytecoin-repro/a
+          git archive --format=tar HEAD | tar -xf - -C /tmp/bytecoin-repro/b
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+      - name: Build and normalize both trees
+        env:
+          CC: clang
+          CXX: clang++
+          CARGO_INCREMENTAL: "0"
+        run: |
+          for tree in a b; do
+            root="/tmp/bytecoin-repro/$tree"
+            export RUSTFLAGS="--remap-path-prefix=$root=. -Ccodegen-units=1"
+            cmake -S "$root" -B "$root/build-release" -DUSE_SQLITE=ON -DONYX_ZK=ON -DREPRODUCIBLE_BUILD=ON
+            cmake --build "$root/build-release" --parallel 2 --target bytecoind walletd minerd
+            strip --strip-all "$root/bin/bytecoind" "$root/bin/walletd" "$root/bin/minerd"
+          done
+      - name: Compare executables and emit manifest
+        env:
+          CXX: clang++
+        run: |
+          python3 tools/release/verify_binary_reproducibility.py \
+            /tmp/bytecoin-repro/a/bin /tmp/bytecoin-repro/b/bin \
+            --revision "$GITHUB_SHA" --output dist/linux-reproducibility.json
+      - name: Upload reproducibility evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bytecoin-linux-reproducibility-${{ github.sha }}
+          path: dist/linux-reproducibility.json
+          if-no-files-found: error
+          compression-level: 0

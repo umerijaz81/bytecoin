@@ -2,6 +2,9 @@
 # Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 cmake_minimum_required(VERSION 3.0)
+if(REPRODUCIBLE_BUILD AND (NOT DEFINED ENV{SOURCE_DATE_EPOCH} OR NOT "$ENV{SOURCE_DATE_EPOCH}" MATCHES "^[0-9]+$"))
+    message(FATAL_ERROR "REPRODUCIBLE_BUILD requires a numeric SOURCE_DATE_EPOCH")
+endif()
 project(bytecoin)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_C_STANDARD 11)
@@ -10,10 +13,27 @@ add_definitions(-DCRYPTONOTE_NAME=\"${CRYPTONOTE_NAME}\" -DNDEBUG=1)
 message("SANITIZE adds clang sanitizer options. Examples thread or address,undefined or fuzzer,address,undefined")
 option(BETTER_DEBUG "Disables optimizations. We do not use standard debug/realease configurations because they change too much" OFF)
 option(CRYPTO128 "Uses faster crypto" OFF)
+option(REPRODUCIBLE_BUILD "Normalize build paths and nondeterministic linker metadata" OFF)
 # Onyx (V6) zero-knowledge backend (vendor/onyx-zk, Rust/Halo2). OFF by default so the C++-only
 # build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
 option(ONYX_ZK "Build the Onyx ZK backend (requires Rust/cargo)" OFF)
 get_filename_component(PARENT_DIR ${CMAKE_SOURCE_DIR} DIRECTORY)
+
+if(REPRODUCIBLE_BUILD)
+    message(STATUS "Reproducible build epoch: $ENV{SOURCE_DATE_EPOCH}")
+    if(MSVC)
+        add_compile_options(/Brepro "/pathmap:${CMAKE_SOURCE_DIR}=.")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /Brepro")
+    else()
+        add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=." "-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=.")
+        add_compile_options("-ffile-prefix-map=${CMAKE_BINARY_DIR}=build" "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=build")
+        if(APPLE)
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-no_uuid")
+        else()
+            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--build-id=none")
+        endif()
+    endif()
+endif()
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     option(USE_SQLITE "Builds with SQLite instead of LMDB. 4x slower, but works on 32-bit and mobile platforms" OFF)
