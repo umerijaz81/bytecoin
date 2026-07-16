@@ -456,6 +456,16 @@ class Parser:
         elif token == "(":
             left = self.expression()
             self.take(")")
+        elif token == "[":
+            elements = []
+            if not self.peek("]"):
+                while True:
+                    elements.append(self.expression())
+                    if not self.peek(","):
+                        break
+                    self.take()
+            self.take("]")
+            left = Expr("array", None, tuple(elements))
         elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token):
             if self.peek("("):
                 self.take()
@@ -472,6 +482,11 @@ class Parser:
                 left = Expr("name", token)
         else:
             raise CompileError("E_EXPRESSION", f"unexpected expression token {token!r}")
+        while self.peek("["):
+            self.take()
+            index = self.expression()
+            self.take("]")
+            left = Expr("index", None, (left, index))
         precedence = {"||": 1, "&&": 2, "==": 3, "!=": 3, "<": 4, "<=": 4, ">": 4, ">=": 4,
                       "<<": 5, ">>": 5, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7}
         while self.peek() in precedence and precedence[str(self.peek())] >= minimum:
@@ -594,6 +609,24 @@ class Lowerer:
                     raise CompileError("E_CALL_TYPE", f"wrong argument type for {name}")
                 operands.append(value)
             return target.return_type, self.emit("call", target.return_type, operands, text=name)
+        if expression.kind == "array":
+            if expected is None or expected.element is None or len(expression.args) != expected.length:
+                raise CompileError("E_ARRAY_TYPE", "array literal requires an exact fixed-array context")
+            operands = []
+            for element in expression.args:
+                actual, value = self.expression(element, expected.element)
+                if actual != expected.element:
+                    raise CompileError("E_ARRAY_ELEMENT", "array element type differs from its context")
+                operands.append(value)
+            return expected, self.emit("array", expected, operands)
+        if expression.kind == "index":
+            array_type, array = self.expression(expression.args[0])
+            if array_type.element is None:
+                raise CompileError("E_INDEX_TYPE", "indexing requires a fixed array")
+            index_type, index = self.expression(expression.args[1], Type("u64"))
+            if index_type.name != "u64":
+                raise CompileError("E_INDEX_TYPE", "array index requires u64")
+            return array_type.element, self.emit("index", array_type.element, (array, index), immediate=array_type.length)
         raise CompileError("E_EXPRESSION_KIND", "unknown expression kind")
 
     def statements(self, statements: tuple[Statement, ...], guard: int | None = None, nested=False) -> None:
@@ -667,7 +700,7 @@ class Lowerer:
 
 OPCODES = {name: index for index, name in enumerate((
     "parameter", "const", "not", "and", "or", "eq", "ne", "lt", "le", "gt", "ge",
-    "add", "sub", "mul", "div", "rem", "shl", "shr", "intrinsic", "call", "assert", "return"
+    "add", "sub", "mul", "div", "rem", "shl", "shr", "array", "index", "intrinsic", "call", "assert", "return"
 ), 1)}
 
 
@@ -745,7 +778,14 @@ def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], byt
                     constraint_weights[instruction.text], "expanded call constraints")
             else:
                 expanded = checked_add(expanded, 1, "expanded instructions")
-                cost = 1 + (INTRINSICS[instruction.text][2] if instruction.opcode == "intrinsic" else 0)
+                if instruction.opcode == "intrinsic":
+                    cost = 1 + INTRINSICS[instruction.text][2]
+                elif instruction.opcode == "array":
+                    cost = 1 + len(instruction.operands)
+                elif instruction.opcode == "index":
+                    cost = 1 + 2 * int(instruction.immediate or 0)
+                else:
+                    cost = 1
                 constraints_for_function = checked_add(constraints_for_function, cost, "constraint estimate")
         expanded_weights[function.source.name] = expanded
         constraint_weights[function.source.name] = constraints_for_function

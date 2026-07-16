@@ -157,6 +157,21 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
             resources = json.loads((bundle / "resources.json").read_text("utf-8"))
             self.assertGreater(resources["expanded_instructions"], resources["ir_instructions"])
 
+    def test_fixed_array_construction_and_bounded_index_are_verified(self):
+        source = b"""export fn balance(public network: u32, private amount: u64) -> u64 {
+  let values: [u64; 3] = [amount, amount, amount];
+  let index: u64 = 1;
+  let output: u64 = values[index];
+  return output;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source)
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle)
+            verifier.verify_bundle(bundle)
+
     def test_unbounded_and_unsafe_language_constructs_fail_closed(self):
         bad_sources = (
             SOURCE.replace(b"for i in 0..3", b"while true"),
