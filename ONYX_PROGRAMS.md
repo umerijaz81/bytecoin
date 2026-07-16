@@ -102,9 +102,11 @@ window, optional private-state transition commitments, a fixed 22-field circuit 
 hash. Contextual envelope version 1 canonically carries the authorized transaction and exactly one ordered
 context per call. Its signed proof field is a bounded versioned bundle containing a named base proof and one
 ordered program proof per context. `apply_contextual_transaction` validates all contexts before state mutation.
-Carriage is not verification: registered base-proof and compiler-proof dispatch remains fail-closed, so this is
-not yet an executable generic-program path. Until exact proof composition and standard-circuit audits land, the
-existing token-family dispatch remains the only executable program path.
+The verification API authenticates the complete bundle, dispatches a fixed native or single-program-asset base
+proof, enforces registry activation and cost, regenerates the exact export-bound compiler descriptor, and checks
+each ordered compiler proof over the 22-field context plus a public true result. Consensus C ABI activation and
+standard-circuit audits have not landed, so the existing token-family dispatch remains the only activated program
+path.
 
 Standard token programs also register eight fixed mixed-transfer shapes. Each proof composes an
 independent token lane (one or two spends/outputs, zero fee, exact Program ID) with a native lane (one

@@ -29,6 +29,7 @@ const MAX_IR_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FUNCTIONS: usize = 1024;
 const MAX_INSTRUCTIONS: usize = 1_000_000;
 const MAX_PROOF_BYTES: usize = 16 * 1024 * 1024;
+pub const COMPILER_PROGRAM_BACKEND: &str = "halo2-ipa-pasta-onyx-compiler-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScalarType {

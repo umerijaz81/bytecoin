@@ -45,6 +45,10 @@ pub fn multi_transfer_backend_id(spends: usize, outputs: usize) -> String {
     format!("halo2-ipa-pasta-onyx-o2-s{spends}-o{outputs}")
 }
 
+pub fn program_transfer_backend_id(spends: usize, outputs: usize) -> String {
+    format!("halo2-ipa-pasta-onyx-program-transfer-v1-s{spends}-o{outputs}")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofError {
     InvalidShape,
@@ -765,6 +769,55 @@ pub fn verify_authorized_token_transfer<
         &vk,
         SingleVerifier::new(&params),
         &[&[&public, &membership, &notes, &authorization]],
+        &mut transcript,
+    )
+    .map_err(|_| ProofError::VerificationFailed)
+}
+
+/// Verifies only the value/membership/note-opening layer for a single program-asset domain.
+///
+/// This deliberately does not verify transaction authorization or interpret program calls. It is
+/// intended for a signed contextual proof bundle whose outer verifier authenticates the complete
+/// transaction and separately verifies the registered program predicate.
+pub fn verify_program_multi_transfer_proof<
+    const DEPTH: usize,
+    const SPENDS: usize,
+    const OUTPUTS: usize,
+>(
+    k: u32,
+    transaction: &AuthorizedTransaction,
+    program_id: &[u8; 32],
+) -> Result<(), ProofError> {
+    if transaction.backend_id != program_transfer_backend_id(SPENDS, OUTPUTS)
+        || transaction.preimage.spends.len() != SPENDS
+        || transaction.preimage.outputs.len() != OUTPUTS
+        || transaction.preimage.fee != 0
+        || !transaction.preimage.programs.is_empty()
+        || transaction.proof.is_empty()
+        || transaction.proof.len() > MAX_PROOF_BYTES
+    {
+        return Err(ProofError::InvalidShape);
+    }
+    transaction.preimage.encode()?;
+    let circuit =
+        empty_program_circuit::<DEPTH, SPENDS, OUTPUTS>().map_err(|_| ProofError::InvalidShape)?;
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
+    let instances = transaction_lane_public_inputs(
+        &transaction.preimage.spends,
+        &transaction.preimage.outputs,
+        0,
+        transaction.preimage.anchor,
+        &transaction.preimage.network_id,
+        Some(program_id),
+    )?;
+    let mut transcript =
+        Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
+    verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
+        &params,
+        &vk,
+        SingleVerifier::new(&params),
+        &[&[&instances[0], &instances[1], &instances[2], &instances[3]]],
         &mut transcript,
     )
     .map_err(|_| ProofError::VerificationFailed)
@@ -1801,6 +1854,24 @@ mod tests {
             function_id,
         )
         .unwrap();
+        let base_transaction = AuthorizedTransaction {
+            preimage: TransactionPreimage {
+                programs: Vec::new(),
+                ..preimage.clone()
+            },
+            backend_id: program_transfer_backend_id(1, 1),
+            proof: proof.clone(),
+            spend_signatures: Vec::new(),
+            binding_signature: [0; 64],
+        };
+        verify_program_multi_transfer_proof::<DEPTH, 1, 1>(K, &base_transaction, &program_id)
+            .unwrap();
+        assert!(verify_program_multi_transfer_proof::<DEPTH, 1, 1>(
+            K,
+            &base_transaction,
+            &other_program_id,
+        )
+        .is_err());
         let spend_signatures = sign_prepared_spends(
             &prepared,
             &preimage,

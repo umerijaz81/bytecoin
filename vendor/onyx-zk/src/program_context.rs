@@ -3,6 +3,15 @@
 use halo2_proofs::pasta::Fp;
 use sha2::{Digest, Sha256};
 
+use crate::authorization::verify_authorized_transaction;
+use crate::compiler_backend::{
+    compiler_vk_descriptor_for_export, verify_compiler_proof_for_export, COMPILER_PROGRAM_BACKEND,
+};
+use crate::program::ProgramRegistry;
+use crate::proof::{
+    multi_transfer_backend_id, program_transfer_backend_id, verify_multi_transfer_proof,
+    verify_program_multi_transfer_proof,
+};
 use crate::state::CanonicalField;
 use crate::transaction::{
     write_public_output, AuthorizedTransaction, ProgramCall, TransactionPreimage,
@@ -17,10 +26,15 @@ pub const MAX_CONTEXTUAL_TRANSACTION_BYTES: usize = 512 * 1024;
 pub const CONTEXTUAL_TRANSACTION_VERSION: u8 = 1;
 pub const CONTEXTUAL_PROOF_BUNDLE_VERSION: u8 = 1;
 pub const CONTEXTUAL_PROGRAM_BACKEND: &str = "halo2-ipa-pasta-onyx-context-v1";
+pub const MAX_CONTEXTUAL_PROGRAM_COST: u64 = 10_000_000;
 pub const PROGRAM_CONTEXT_PUBLIC_INPUT_COUNT: usize = 22;
 pub const PROGRAM_CONTEXT_SCHEMA_HASH: [u8; 32] = [
     0x05, 0xb9, 0xfa, 0xf1, 0x49, 0xf9, 0xfa, 0x69, 0xd9, 0x41, 0x53, 0xd2, 0xf2, 0x2c, 0xe8, 0x5b,
     0xd5, 0x15, 0x28, 0x25, 0x6f, 0x0e, 0x25, 0xf1, 0x5a, 0x1e, 0xdf, 0xbd, 0x1a, 0xd5, 0xe9, 0x41,
+];
+pub const CONTEXTUAL_COMPILER_SCHEMA_HASH: [u8; 32] = [
+    0xcb, 0x29, 0x2c, 0x9b, 0x8a, 0xd1, 0x9b, 0x96, 0x39, 0x01, 0xe7, 0xe5, 0x9f, 0x42, 0x04, 0x91,
+    0x00, 0x5a, 0x0e, 0xf9, 0x08, 0x51, 0xb8, 0x47, 0x6e, 0xe0, 0x3c, 0x76, 0x3f, 0xb9, 0xc9, 0xc1,
 ];
 const CONTEXT_HASH_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.v1";
 const ENVELOPE_ID_DOMAIN: &[u8] = b"bytecoin.onyx.v6.contextual-transaction-id.v1";
@@ -30,6 +44,8 @@ pub const PROGRAM_CONTEXT_PUBLIC_INPUT_SCHEMA: &[u8] = b"network:field,anchor:fi
 const SPENDS_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.spends.v1";
 const OUTPUTS_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.outputs.v1";
 const CALLS_DOMAIN: &[u8] = b"bytecoin.onyx.v6.program-context.calls.v1";
+const COMPILER_SCHEMA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.contextual-compiler.schema.v1";
+const COMPILER_PUBLIC_INPUT_SCHEMA: &[u8] = b"program-context-v1:field[22],result:bool";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProgramStateTransition {
@@ -68,6 +84,13 @@ pub struct ContextualProofBundle {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextualProgramArtifact {
+    pub ir: Vec<u8>,
+    pub export: String,
+    pub circuit_k: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProgramContextError {
     Decode(DecodeError),
     InvalidCall,
@@ -78,6 +101,10 @@ pub enum ProgramContextError {
     EnvelopeTooLarge,
     InvalidContextCount,
     InvalidProofBundle,
+    Registry,
+    Authorization,
+    BaseProof,
+    ProgramProof,
 }
 
 impl From<DecodeError> for ProgramContextError {
@@ -442,6 +469,130 @@ impl ContextualAuthorizedTransaction {
         hash.update(encoded);
         Ok(hash.finalize().into())
     }
+
+    /// Verifies the signed contextual bundle, its base value layer, and every registered compiler
+    /// predicate. State mutation remains a separate atomic operation after this returns success.
+    pub fn verify(
+        &self,
+        registry: &ProgramRegistry,
+        block_height: u64,
+        merkle_depth: u32,
+        base_circuit_k: u32,
+        artifacts: &[ContextualProgramArtifact],
+    ) -> Result<(), ProgramContextError> {
+        self.validate_at_height(block_height)?;
+        if artifacts.len() != self.contexts.len() || !(10..=20).contains(&base_circuit_k) {
+            return Err(ProgramContextError::ProgramProof);
+        }
+        registry
+            .validate_calls(
+                &self.transaction.preimage.programs,
+                block_height,
+                MAX_CONTEXTUAL_PROGRAM_COST,
+            )
+            .map_err(|_| ProgramContextError::Registry)?;
+        verify_authorized_transaction(&self.transaction)
+            .map_err(|_| ProgramContextError::Authorization)?;
+        let bundle = self.proof_bundle()?;
+        verify_contextual_base(
+            &self.transaction,
+            &bundle,
+            &self.contexts,
+            merkle_depth,
+            base_circuit_k,
+        )?;
+        let schema_hash = contextual_compiler_schema_hash();
+        for (index, ((context, artifact), proof)) in self
+            .contexts
+            .iter()
+            .zip(artifacts)
+            .zip(&bundle.program_proofs)
+            .enumerate()
+        {
+            let call = &self.transaction.preimage.programs[index];
+            let (entry, function) = registry
+                .active_function(&call.program_id, call.function_id, block_height)
+                .map_err(|_| ProgramContextError::Registry)?;
+            if entry.backend != COMPILER_PROGRAM_BACKEND
+                || function.public_input_schema_hash != schema_hash
+                || artifact.export.is_empty()
+            {
+                return Err(ProgramContextError::ProgramProof);
+            }
+            let descriptor = compiler_vk_descriptor_for_export(
+                &artifact.ir,
+                artifact.circuit_k,
+                &artifact.export,
+            )
+            .map_err(|_| ProgramContextError::ProgramProof)?;
+            if descriptor != function.verifying_key {
+                return Err(ProgramContextError::ProgramProof);
+            }
+            let mut public_inputs = context.public_inputs()?;
+            public_inputs.push(Fp::one());
+            verify_compiler_proof_for_export(
+                &artifact.ir,
+                artifact.circuit_k,
+                &artifact.export,
+                &public_inputs,
+                proof,
+            )
+            .map_err(|_| ProgramContextError::ProgramProof)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn contextual_compiler_schema_hash() -> [u8; 32] {
+    CONTEXTUAL_COMPILER_SCHEMA_HASH
+}
+
+fn verify_contextual_base(
+    transaction: &AuthorizedTransaction,
+    bundle: &ContextualProofBundle,
+    contexts: &[ProgramContext],
+    merkle_depth: u32,
+    circuit_k: u32,
+) -> Result<(), ProgramContextError> {
+    let mut base = transaction.clone();
+    base.preimage.programs.clear();
+    base.backend_id = bundle.base_backend_id.clone();
+    base.proof = bundle.base_proof.clone();
+    let spends = base.preimage.spends.len();
+    let outputs = base.preimage.outputs.len();
+    macro_rules! verify_shape {
+        ($depth:literal, $spends:literal, $outputs:literal) => {{
+            if bundle.base_backend_id == multi_transfer_backend_id($spends, $outputs) {
+                verify_multi_transfer_proof::<$depth, $spends, $outputs>(circuit_k, &base)
+            } else if contexts.len() == 1
+                && bundle.base_backend_id == program_transfer_backend_id($spends, $outputs)
+            {
+                verify_program_multi_transfer_proof::<$depth, $spends, $outputs>(
+                    circuit_k,
+                    &base,
+                    &contexts[0].program_id,
+                )
+            } else {
+                return Err(ProgramContextError::BaseProof);
+            }
+        }};
+    }
+    let result = match (merkle_depth, spends, outputs) {
+        (2, 1, 1) => verify_shape!(2, 1, 1),
+        (2, 1, 2) => verify_shape!(2, 1, 2),
+        (2, 2, 1) => verify_shape!(2, 2, 1),
+        (2, 2, 2) => verify_shape!(2, 2, 2),
+        (4, 1, 1) => verify_shape!(4, 1, 1),
+        (4, 1, 2) => verify_shape!(4, 1, 2),
+        (4, 2, 1) => verify_shape!(4, 2, 1),
+        (4, 2, 2) => verify_shape!(4, 2, 2),
+        (32, 1, 1) => verify_shape!(32, 1, 1),
+        (32, 1, 2) => verify_shape!(32, 1, 2),
+        (32, 2, 1) => verify_shape!(32, 2, 1),
+        (32, 2, 2) => verify_shape!(32, 2, 2),
+        _ => return Err(ProgramContextError::BaseProof),
+    };
+    result.map_err(|_| ProgramContextError::BaseProof)
 }
 
 impl ContextualProofBundle {
@@ -717,6 +868,14 @@ mod tests {
         assert_eq!(
             ProgramContext::public_input_schema_hash(),
             ProgramContext::derived_public_input_schema_hash()
+        );
+    }
+
+    #[test]
+    fn contextual_compiler_schema_hash_is_frozen() {
+        assert_eq!(
+            domain_hash(COMPILER_SCHEMA_DOMAIN, COMPILER_PUBLIC_INPUT_SCHEMA),
+            CONTEXTUAL_COMPILER_SCHEMA_HASH
         );
     }
 

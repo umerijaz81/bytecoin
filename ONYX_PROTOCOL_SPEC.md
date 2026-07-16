@@ -196,6 +196,17 @@ reject noncanonical varints, trailing data, count mismatches, unsupported versio
 empty proofs, and aggregate size overflow. This format defines carriage and authorization only; consensus must
 still dispatch the base proof and every program proof to exact registered verifiers before applying state.
 
+The first contextual verifier profile accepts the existing fixed native transfer families or a single
+program-asset transfer family as its base value layer. It then requires active registry entries under
+`halo2-ipa-pasta-onyx-compiler-v1`, regenerates descriptor v2 from the supplied canonical IR, exact export,
+and circuit size, compares that descriptor byte-for-byte with the registered key, and verifies each ordered
+proof. Compiler functions receive the 22-field context prefix followed by a public boolean result constrained
+to one. The frozen complete schema hash is
+`cb292c9b8ad19b963901e7e59f420491005a0ef90851b8476ee03c763fb9c9c1`. The verifier supports the frozen
+1-or-2-spend by 1-or-2-output families at Merkle depths 2, 4, and 32 and rejects every other base shape.
+Multiple calls may predicate a native base transfer; a program-asset base transfer is restricted to exactly
+one call so one asset domain cannot be ambiguously attributed to several programs.
+
 The first standard program is the private fungible-token transfer family. It supports fixed
 `(1..=2 spends, 1..=2 outputs)` shapes under backend
 `halo2-ipa-pasta-onyx-token-v1`. A shape-specific function id selects a deterministic VK descriptor

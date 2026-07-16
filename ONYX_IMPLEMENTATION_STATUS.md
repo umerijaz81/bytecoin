@@ -52,7 +52,8 @@ unreachable until the release gates below are independently satisfied.
    and application data into a frozen 22-field circuit ABI. A bounded canonical envelope now carries the
    authorized transaction and exactly one context and proof per ordered call; authorization covers the complete
    versioned proof bundle. The rollback-safe contextual state path validates every ordered context before mutation.
-   Exact registered base/program proof dispatch, executable proof composition and the standard circuits remain.
+   Exact registered native/single-program-asset base dispatch and export-bound compiler proof composition are
+   implemented behind the non-activated Rust boundary. Consensus C ABI wiring and the standard circuits remain.
 
 ### O6 network, scaling and crypto agility
 
