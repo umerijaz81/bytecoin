@@ -5,7 +5,7 @@ backend-path = ["."]
 
 [project]
 name = "bytecoin-onyx-sdk"
-version = "1.0.0"
+version = "1.1.0"
 description = "Versioned offline bindings and wallet RPC codecs for Bytecoin Onyx ABI profile v1"
 readme = "README.md"
 requires-python = ">=3.9"

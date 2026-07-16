@@ -58,7 +58,9 @@ unreachable until the release gates below are independently satisfied.
    wiring remains. Four pinned source packages reproduce export-bound descriptors at `k=16`; real proof vectors
    cover NFT owner continuity, vesting timelocks, pairwise-distinct 1–16 threshold custody and swap claim/refund
    semantics, including insufficient-approval and duplicate-participant rejections. Deployment/SDK plumbing and
-   review remain.
+   review remain. Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and
+   frozen schema hashes with strict uint64, identifier, threshold, boolean and Pasta-field validation; wallet/RPC
+   proving flows remain.
 
 ### O6 network, scaling and crypto agility
 

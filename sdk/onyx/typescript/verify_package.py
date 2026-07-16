@@ -40,7 +40,7 @@ def main() -> int:
         metadata = json.load(package.extractfile("package/package.json"))
         profile = json.load(package.extractfile("package/wallet-rpc-v1.json"))
     source_profile = json.loads((ONYX_ROOT / "v1" / "wallet-rpc.json").read_text(encoding="utf-8"))
-    if metadata.get("name") != "@bytecoin/onyx-sdk" or metadata.get("version") != "1.0.0":
+    if metadata.get("name") != "@bytecoin/onyx-sdk" or metadata.get("version") != "1.1.0":
         raise SystemExit("npm package identity is invalid")
     if profile != source_profile:
         raise SystemExit("packaged wallet RPC contract differs from frozen v1 profile")

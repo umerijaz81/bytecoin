@@ -36,7 +36,7 @@ def verify(wheel_directory: pathlib.Path) -> pathlib.Path:
         )
         expected_metadata = {
             "Name": "bytecoin-onyx-sdk",
-            "Version": "1.0.0",
+            "Version": "1.1.0",
             "Requires-Python": ">=3.9",
             "License": "LGPL-3.0-or-later",
         }

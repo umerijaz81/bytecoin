@@ -119,6 +119,11 @@ timed refund. Each package reproduces its export descriptor and passes a randomi
 policy-specific rejected witness. They remain outside the activated allowlist until deployment, wallet, audit
 and testnet gates land.
 
+The dependency-free Python and TypeScript SDKs expose the same four canonical application-data builders and
+frozen schema identifiers as version 1.1.0. Both reject zero/wrong-length identifiers, noncanonical Pasta
+commitments, unsafe integers, invalid thresholds and non-boolean swap branches before network or native calls.
+Their deterministic wheel/tarball builds include the new helpers and reproduce byte-for-byte.
+
 Standard token programs also register eight fixed mixed-transfer shapes. Each proof composes an
 independent token lane (one or two spends/outputs, zero fee, exact Program ID) with a native lane (one
 or two spends, one change output, public miner fee). Transaction ordering is token spends then native

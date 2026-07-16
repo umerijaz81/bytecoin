@@ -11,7 +11,7 @@ import zipfile
 
 
 NAME = "bytecoin-onyx-sdk"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DIST_NAME = "bytecoin_onyx_sdk"
 DIST_INFO = f"{DIST_NAME}-{VERSION}.dist-info"
 WHEEL_NAME = f"{DIST_NAME}-{VERSION}-py3-none-any.whl"
@@ -20,6 +20,7 @@ PACKAGE_FILES = (
     "onyx_sdk.py",
     "bytecoin_onyx/__init__.py",
     "bytecoin_onyx/rpc.py",
+    "bytecoin_onyx/standard_programs.py",
     "bytecoin_onyx/wallet_rpc_v1.json",
 )
 METADATA = f"""Metadata-Version: 2.1

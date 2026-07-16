@@ -11,6 +11,37 @@ export type OnyxWalletMethod =
   | "finalize_onyx_bridge";
 
 export const PROFILE_NAME: "bytecoin-onyx-wallet-rpc-v1";
+export const STANDARD_APPLICATION_VERSION: 1;
+export const PASTA_FP_MODULUS: bigint;
+export const STANDARD_SCHEMA_HASHES: Readonly<{
+  nft: string;
+  vesting: string;
+  multisig: string;
+  swap: string;
+}>;
+export function nftApplication(
+  collectionId: Uint8Array,
+  tokenId: Uint8Array,
+  serial: bigint | number,
+  transferNonce: bigint | number,
+): Uint8Array;
+export function vestingApplication(
+  scheduleId: Uint8Array,
+  beneficiary: Uint8Array,
+  unlockHeight: bigint | number,
+): Uint8Array;
+export function multisigApplication(
+  policyCommitment: Uint8Array,
+  actionDigest: Uint8Array,
+  threshold: bigint | number,
+  participantCount: bigint | number,
+): Uint8Array;
+export function swapApplication(
+  swapId: Uint8Array,
+  hashlock: Uint8Array,
+  timeoutHeight: bigint | number,
+  refund: boolean,
+): Uint8Array;
 
 export class WalletRpcError extends Error {
   readonly code: number;

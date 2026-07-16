@@ -24,5 +24,9 @@ python tools/onyx/verify_compiler_bundle_v1.py <new-output> \
   --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
 ```
 
-These packages remain non-activated pending consensus deployment/registry plumbing, SDK builders, independent
+These packages remain non-activated pending consensus deployment/registry plumbing, wallet proving flows, independent
 circuit review, sustained fuzzing, and testnet release gates.
+
+Canonical offline application-data builders are available in `bytecoin-onyx-sdk` and
+`@bytecoin/onyx-sdk` version 1.1.0. They construct only the native decoder's exact version-1 encoding; they do
+not prove, submit, or activate a transaction.

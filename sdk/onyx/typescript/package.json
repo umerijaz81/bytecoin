@@ -1,6 +1,6 @@
 {
   "name": "@bytecoin/onyx-sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Dependency-free wallet RPC codec for Bytecoin Onyx SDK profile v1",
   "type": "module",
   "main": "index.js",
