@@ -32,16 +32,20 @@ unreachable until the release gates below are independently satisfied.
 ### O6 network, scaling and crypto agility
 
 1. The negotiated Dandelion++ relay now has epoch rotation, stem-loop prevention, randomized
-   embargo/fluff recovery, hop limits, disconnect recovery, legacy-peer fallback and parser/policy
-   coverage. Remaining: peer scoring, multi-node adversarial topology simulation, fuzz soak and
-   independent network-privacy review.
+   embargo/fluff recovery, hop limits, disconnect recovery, legacy-peer fallback, bounded delivery
+   scoring/decay and weighted randomized peer rotation. A selected peer's own fluff reflection cannot
+   cancel its embargo. Remaining: multi-node adversarial topology simulation, fuzz soak and independent
+   network-privacy review.
 2. Fail-closed no-auth SOCKS5 outbound transport is implemented with numeric proxy/peer addresses,
-   bounded negotiation and no local destination lookup. Remaining: Tor/I2P integration tests,
-   hidden-service address support, leak testing and independent review.
+   bounded negotiation and no local destination lookup. Canonical v3 onion and I2P b32 destination
+   framing is fail-closed, but the peer database/wire identity is still numeric. Remaining: persistent
+   hidden-service peer identity integration, Tor/I2P process tests, leak testing and independent review.
 3. A dormant, versioned RandomX v2.0.1 transition is integrated for node and bundled miner with
-   delayed branch-derived seed epochs, explicit template negotiation and a repository KAT. Remaining:
-   independent review, full-memory miner work, activation/reorg integration tests, multi-architecture
-   vectors and benchmarks.
+   delayed branch-derived seed epochs, explicit template negotiation and a repository KAT. Shared
+   full-memory datasets, persistent multithread workers, strict light/large-page policy, native
+   x86-64/ARM64 equality and an actual branch-seed epoch reorganization are CI-gated. Remaining:
+   independent review, RISC-V gate stabilization, deeper randomized reorg/long-sync tests, published
+   throughput/power benchmarks and public soak.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.
 5. Jade V5 now binds a stable explicit authorization-scheme identifier into its signed prefix and

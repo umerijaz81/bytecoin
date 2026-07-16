@@ -24,10 +24,27 @@ rare invalid-hash condition on ARM/RISC-V. Provenance is recorded in
 ## Validation
 
 Run `tests --randomx` for the repository-specific v2 known-answer vector and cached-seed check. The
-Jade test verifies the fork/version boundary and the delayed epoch rule. Release qualification must
-also run upstream RandomX tests plus node/miner vectors on x86-64, ARM64 and RISC-V, deep side-chain
-and reorg tests across key epochs, corrupt-template tests, long sync and mining benchmarks.
+Jade test verifies the fork/version boundary and delayed epoch rule; `tests --blockchain` includes the
+branch-derived seed/reorganization integration. CI also runs pinned upstream v2 vectors plus the
+full-memory equality test on x86-64 and ARM64, and contains a RISC-V/QEMU vector gate. Remaining
+release qualification includes independent review, longer/deeper randomized reorg and sync runs,
+corrupt-template tests, published mining throughput/power benchmarks and public testnet soak.
 
-The bundled miner uses RandomX light mode because it is intentionally single-threaded. Production
-mining should add a reviewed full-memory dataset manager with bounded initialization and explicit
-large-page/JIT policy; changing fast versus light mode must not change hashes.
+The bundled miner uses one shared 2,080 MiB full-memory dataset by default. Dataset initialization is
+bounded by `--randomx-init-threads`, hashing uses persistent workers selected by `--threads`, and each
+worker owns its own VM while the immutable dataset remains shared. `--randomx-large-pages` is an
+explicit require-or-fail policy: it never silently falls back. Low-memory verification/mining remains
+available as `--randomx-light --threads=1`; multiple light workers are rejected because each would
+otherwise allocate a separate 256 MiB cache. A seed change destroys the old workers and dataset before
+building the next epoch, and a VM refuses to hash with a seed different from its dataset.
+
+The repository full-memory test initializes the dataset in parallel, hashes the same consensus vector
+through two VMs concurrently, compares both with light mode and rejects a mismatched seed. The locked
+CI gate passes on Ubuntu x86-64, Windows x86-64 and macOS ARM64. Its July 2026 qualification step took
+19, 18 and 26 seconds respectively; those are initialization-plus-vector test timings, not mining
+throughput benchmarks.
+
+The consensus integration suite lowers only the test instance's activation/epoch parameters, mines
+two branches that fork before their seed block, validates the side branch across the next seed epoch
+and reorganizes to it. This exercises the actual block serializer, validator and ancestor lookup. The
+production defaults and dormant activation height remain unchanged.

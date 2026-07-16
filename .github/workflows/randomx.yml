@@ -76,7 +76,6 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_C_COMPILER_TARGET=riscv64-linux-gnu
           -DCMAKE_CXX_COMPILER_TARGET=riscv64-linux-gnu
-          -DCMAKE_SYSROOT=/usr/riscv64-linux-gnu
       - name: Build RISC-V upstream tests
         run: cmake --build build-randomx-riscv64 --parallel 2 --target randomx-tests
       - name: Run RandomX v2 vectors under QEMU

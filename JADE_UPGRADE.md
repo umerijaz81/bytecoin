@@ -70,9 +70,12 @@ re-architecting.
 - **Implemented, activation pending:** upstream RandomX v2.0.1 is pinned under `vendor/randomx` and
   selected only at the dormant Jade/height boundary. Node and miner share the canonical hashing blob,
   explicit RPC algorithm/seed fields and a 2,048-block epoch with a 64-block ancestor delay. Side-chain
-  validation derives the seed from that branch. See `docs/RandomX-Transition.md`.
-- **Remaining:** independent consensus review, full-memory multi-thread miner work, multi-architecture
-  vectors, epoch-boundary reorg tests, benchmarks and public testnet activation/soak.
+  validation derives the seed from that branch. The miner now shares one full-memory dataset across
+  persistent worker VMs, bounds initialization/hash thread counts, supports require-or-fail large pages
+  and retains an explicit single-thread light mode. Native x86-64/ARM64 full-memory equality and a real
+  two-branch epoch reorganization are CI-gated. See `docs/RandomX-Transition.md`.
+- **Remaining:** independent consensus review, RISC-V gate stabilization, published throughput/power
+  benchmarks, deeper randomized reorg/long-sync qualification and public testnet activation/soak.
 
 ### Phase 6 — Post-quantum crypto-agility (addresses Q-1)
 - **Implemented seam:** Jade V5 serializes a stable one-byte `TransactionSignatureScheme` identifier
