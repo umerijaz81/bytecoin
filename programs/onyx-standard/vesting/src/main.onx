@@ -1,0 +1,15 @@
+export fn release(public network: field, public anchor: field, public valid_from: u64, public expiry: u64, public fee: u64, public call_index: u8, public program_low: field, public program_high: field, public function_id: u32, public spends_low: field, public spends_high: field, public outputs_low: field, public outputs_high: field, public calls_low: field, public calls_high: field, public has_state: bool, public prior_low: field, public prior_high: field, public next_low: field, public next_high: field, public application_low: field, public application_high: field, public kind: u8, public schedule_low: field, public schedule_high: field, public beneficiary_low: field, public beneficiary_high: field, public unlock_height: u64, public prior_state: field, public next_state: field, private beneficiary_secret: field) -> bool {
+  let zero: field = network - network;
+  let schedule: field = poseidon_hash(schedule_low, schedule_high);
+  let beneficiary: field = poseidon_hash(beneficiary_low, beneficiary_high);
+  let authority: field = poseidon_hash(beneficiary_secret, schedule);
+  let locked_state: field = poseidon_hash(authority, beneficiary);
+  assert(kind == 2);
+  assert(has_state);
+  assert(fee == 0);
+  assert(valid_from >= unlock_height);
+  assert(prior_state == locked_state);
+  assert(next_state != zero);
+  assert(next_state != prior_state);
+  return true;
+}

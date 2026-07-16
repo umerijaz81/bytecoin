@@ -1,0 +1,19 @@
+export fn settle(public network: field, public anchor: field, public valid_from: u64, public expiry: u64, public fee: u64, public call_index: u8, public program_low: field, public program_high: field, public function_id: u32, public spends_low: field, public spends_high: field, public outputs_low: field, public outputs_high: field, public calls_low: field, public calls_high: field, public has_state: bool, public prior_low: field, public prior_high: field, public next_low: field, public next_high: field, public application_low: field, public application_high: field, public kind: u8, public swap_low: field, public swap_high: field, public hashlock: field, public timeout_height: u64, public refund: bool, public prior_state: field, public next_state: field, private preimage: field) -> bool {
+  let zero: field = network - network;
+  let swap: field = poseidon_hash(swap_low, swap_high);
+  let locked_state: field = poseidon_hash(swap, hashlock);
+  assert(kind == 4);
+  assert(has_state);
+  assert(fee == 0);
+  assert(prior_state == locked_state);
+  assert(next_state != zero);
+  assert(next_state != prior_state);
+  if refund == true {
+    assert(valid_from >= timeout_height);
+    assert(preimage == zero);
+  } else {
+    let revealed: field = poseidon_hash(preimage, swap);
+    assert(revealed == hashlock);
+  }
+  return true;
+}

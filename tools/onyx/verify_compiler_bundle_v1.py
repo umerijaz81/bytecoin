@@ -161,12 +161,14 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
             if parameter_name in parameter_names or not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", parameter_name):
                 raise VerificationError("invalid or duplicate IR parameter")
             parameter_names.add(parameter_name)
-            parameter_type = reader.text(128)
+            # Composite types are encoded canonically inline and may contain up to the bounded
+            # record/array profile. Match the independent Rust decoder's 8 KiB type bound.
+            parameter_type = reader.text(8192)
             if not valid_type(parameter_type):
                 raise VerificationError("invalid IR parameter type")
             parameter_types.append(parameter_type)
             parameter_specs.append(("public" if visibility == 1 else "private", parameter_name, parameter_type))
-        return_type = reader.text(128)
+        return_type = reader.text(8192)
         if not valid_type(return_type):
             raise VerificationError("invalid IR return type")
         instruction_count = reader.uleb()
@@ -184,7 +186,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
             opcode = reverse_opcodes[opcode_number]
             encoded_result = reader.uleb()
             result = None if encoded_result == 0 else encoded_result - 1
-            type_name = reader.text(128)
+            type_name = reader.text(8192)
             if not valid_type(type_name):
                 raise VerificationError("invalid IR instruction type")
             operand_count = reader.uleb()

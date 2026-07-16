@@ -1,0 +1,16 @@
+export fn transfer(public network: field, public anchor: field, public valid_from: u64, public expiry: u64, public fee: u64, public call_index: u8, public program_low: field, public program_high: field, public function_id: u32, public spends_low: field, public spends_high: field, public outputs_low: field, public outputs_high: field, public calls_low: field, public calls_high: field, public has_state: bool, public prior_low: field, public prior_high: field, public next_low: field, public next_high: field, public application_low: field, public application_high: field, public kind: u8, public collection_low: field, public collection_high: field, public token_low: field, public token_high: field, public serial: field, public transfer_nonce: field, public prior_state: field, public next_state: field, private owner_secret: field) -> bool {
+  let zero: field = network - network;
+  let collection: field = poseidon_hash(collection_low, collection_high);
+  let token: field = poseidon_hash(token_low, token_high);
+  let identity: field = poseidon_hash(collection, token);
+  let instance: field = poseidon_hash(identity, serial);
+  let owner: field = poseidon_hash(owner_secret, instance);
+  assert(kind == 1);
+  assert(has_state);
+  assert(fee == 0);
+  assert(prior_state == owner);
+  assert(next_state != zero);
+  assert(next_state != prior_state);
+  assert(transfer_nonce != zero);
+  return true;
+}

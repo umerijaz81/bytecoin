@@ -4,10 +4,27 @@ use halo2_proofs::pasta::Fp;
 use sha2::{Digest, Sha256};
 
 use crate::program_context::ProgramContext;
+use crate::state::CanonicalField;
 use crate::types::{pack_32, write_varint, DecodeError, Reader};
 
 pub const STANDARD_APPLICATION_VERSION: u8 = 1;
 const STANDARD_SCHEMA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.standard-program.schema.v1";
+pub const NFT_SCHEMA_HASH: [u8; 32] = [
+    0x20, 0x47, 0x30, 0x97, 0x8f, 0x78, 0x8b, 0x8d, 0x1e, 0x45, 0x8e, 0xe8, 0x1c, 0x1c, 0x12, 0xff,
+    0x39, 0xd0, 0x44, 0x4f, 0x17, 0x4f, 0xe9, 0xd1, 0x92, 0x24, 0x6d, 0x80, 0x89, 0x0b, 0xb1, 0x32,
+];
+pub const VESTING_SCHEMA_HASH: [u8; 32] = [
+    0xc3, 0x6e, 0xfa, 0x02, 0x93, 0x0c, 0x25, 0x51, 0x17, 0x9a, 0x94, 0x92, 0x14, 0xf1, 0xa1, 0x81,
+    0x72, 0x0d, 0xdd, 0x83, 0x64, 0xe4, 0x4a, 0x19, 0x7c, 0x7a, 0x0b, 0x75, 0x6c, 0xd0, 0x86, 0x2c,
+];
+pub const MULTISIG_SCHEMA_HASH: [u8; 32] = [
+    0x87, 0x03, 0xb1, 0xc7, 0x51, 0xde, 0x78, 0x81, 0x66, 0x7f, 0x76, 0x50, 0x7f, 0xdf, 0x7f, 0x04,
+    0xa3, 0x03, 0x99, 0xda, 0x2c, 0x4b, 0x1b, 0xb2, 0x7f, 0x8b, 0x91, 0xe8, 0x6a, 0x5b, 0xa5, 0x89,
+];
+pub const SWAP_SCHEMA_HASH: [u8; 32] = [
+    0x87, 0x38, 0x06, 0x24, 0x76, 0x88, 0x0a, 0x23, 0xaf, 0xdd, 0x40, 0xb5, 0xc6, 0x4c, 0x8e, 0xc2,
+    0x12, 0x0d, 0x8c, 0x69, 0x81, 0x31, 0x5d, 0xba, 0x90, 0x77, 0x62, 0x66, 0xdd, 0xde, 0x4f, 0xce,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -191,6 +208,7 @@ impl StandardApplication {
                 threshold,
                 participant_count,
             } if nonzero(policy_commitment)
+                && CanonicalField::from_bytes(*policy_commitment).is_some()
                 && nonzero(action_digest)
                 && *participant_count <= 16
                 && *threshold > 0
@@ -200,7 +218,12 @@ impl StandardApplication {
             }
             Self::Swap {
                 swap_id, hashlock, ..
-            } if nonzero(swap_id) && nonzero(hashlock) => Ok(()),
+            } if nonzero(swap_id)
+                && nonzero(hashlock)
+                && CanonicalField::from_bytes(*hashlock).is_some() =>
+            {
+                Ok(())
+            }
             _ => Err(StandardProgramError::InvalidField),
         }
     }
@@ -213,6 +236,11 @@ impl StandardApplication {
             .ok_or(StandardProgramError::MissingState)?;
         if state.prior == state.next {
             return Err(StandardProgramError::InvalidTransition);
+        }
+        if CanonicalField::from_bytes(state.prior).is_none()
+            || CanonicalField::from_bytes(state.next).is_none()
+        {
+            return Err(StandardProgramError::InvalidField);
         }
         match self {
             Self::Vesting { unlock_height, .. } if context.valid_from_height < *unlock_height => {
@@ -227,7 +255,7 @@ impl StandardApplication {
         }
     }
 
-    pub fn public_suffix(&self) -> Vec<Fp> {
+    pub fn public_suffix(&self) -> Result<Vec<Fp>, StandardProgramError> {
         let mut fields = vec![Fp::from(self.kind() as u64)];
         match self {
             Self::Nft {
@@ -256,7 +284,11 @@ impl StandardApplication {
                 threshold,
                 participant_count,
             } => {
-                fields.extend(pack_32(policy_commitment));
+                fields.push(
+                    CanonicalField::from_bytes(*policy_commitment)
+                        .ok_or(StandardProgramError::InvalidField)?
+                        .field(),
+                );
                 fields.extend(pack_32(action_digest));
                 fields.push(Fp::from(u64::from(*threshold)));
                 fields.push(Fp::from(u64::from(*participant_count)));
@@ -268,27 +300,42 @@ impl StandardApplication {
                 refund,
             } => {
                 fields.extend(pack_32(swap_id));
-                fields.extend(pack_32(hashlock));
+                fields.push(
+                    CanonicalField::from_bytes(*hashlock)
+                        .ok_or(StandardProgramError::InvalidField)?
+                        .field(),
+                );
                 fields.push(Fp::from(*timeout_height));
                 fields.push(Fp::from(u64::from(u8::from(*refund))));
             }
         }
-        fields
+        Ok(fields)
     }
 
     pub fn schema_hash(kind: StandardProgramKind) -> [u8; 32] {
+        let hash = match kind {
+            StandardProgramKind::Nft => NFT_SCHEMA_HASH,
+            StandardProgramKind::Vesting => VESTING_SCHEMA_HASH,
+            StandardProgramKind::Multisig => MULTISIG_SCHEMA_HASH,
+            StandardProgramKind::Swap => SWAP_SCHEMA_HASH,
+        };
+        debug_assert_eq!(hash, Self::derived_schema_hash(kind));
+        hash
+    }
+
+    fn derived_schema_hash(kind: StandardProgramKind) -> [u8; 32] {
         let suffix = match kind {
             StandardProgramKind::Nft => {
-                b"nft:kind,collection[2],token[2],serial,nonce,result".as_slice()
+                b"nft:kind,collection[2],token[2],serial,nonce,prior,next,result".as_slice()
             }
             StandardProgramKind::Vesting => {
-                b"vesting:kind,schedule[2],beneficiary[2],unlock,result".as_slice()
+                b"vesting:kind,schedule[2],beneficiary[2],unlock,prior,next,result".as_slice()
             }
             StandardProgramKind::Multisig => {
-                b"multisig:kind,policy[2],action[2],threshold,count,result".as_slice()
+                b"multisig:kind,policy,action[2],threshold,count,prior,next,result".as_slice()
             }
             StandardProgramKind::Swap => {
-                b"swap:kind,id[2],hashlock[2],timeout,refund,result".as_slice()
+                b"swap:kind,id[2],hashlock,timeout,refund,prior,next,result".as_slice()
             }
         };
         let mut hash = Sha256::new();
@@ -312,7 +359,21 @@ pub fn contextual_public_inputs(
     let mut inputs = context
         .public_inputs()
         .map_err(|_| StandardProgramError::InvalidField)?;
-    inputs.extend(application.public_suffix());
+    inputs.extend(application.public_suffix()?);
+    let state = context
+        .state
+        .as_ref()
+        .ok_or(StandardProgramError::MissingState)?;
+    inputs.push(
+        CanonicalField::from_bytes(state.prior)
+            .ok_or(StandardProgramError::InvalidField)?
+            .field(),
+    );
+    inputs.push(
+        CanonicalField::from_bytes(state.next)
+            .ok_or(StandardProgramError::InvalidField)?
+            .field(),
+    );
     inputs.push(Fp::one());
     Ok(inputs)
 }
@@ -349,8 +410,8 @@ mod tests {
             outputs_digest: [6; 32],
             call_headers_digest: [7; 32],
             state: Some(ProgramStateTransition {
-                prior: [8; 32],
-                next: [9; 32],
+                prior: Fp::from(8).to_repr(),
+                next: Fp::from(9).to_repr(),
             }),
             application_data,
         }
@@ -372,7 +433,7 @@ mod tests {
 
         let mut refund = vec![1, 4];
         refund.extend([3; 32]);
-        refund.extend([4; 32]);
+        refund.extend(Fp::from(4).to_repr());
         refund.push(60);
         refund.push(1);
         assert_eq!(
@@ -414,5 +475,20 @@ mod tests {
             contextual_public_inputs(&context(encoded, 1), StandardProgramKind::Vesting),
             Err(StandardProgramError::WrongKind)
         );
+    }
+
+    #[test]
+    fn standard_schema_hashes_are_frozen() {
+        for kind in [
+            StandardProgramKind::Nft,
+            StandardProgramKind::Vesting,
+            StandardProgramKind::Multisig,
+            StandardProgramKind::Swap,
+        ] {
+            assert_eq!(
+                StandardApplication::schema_hash(kind),
+                StandardApplication::derived_schema_hash(kind)
+            );
+        }
     }
 }

@@ -55,7 +55,10 @@ unreachable until the release gates below are independently satisfied.
    Exact registered native/single-program-asset base dispatch and export-bound compiler proof composition are
    implemented behind the non-activated Rust boundary. A canonical native decoder now derives typed public
    suffixes for NFT, vesting, multisig and swap profiles and enforces state/timelock invariants. Consensus C ABI
-   wiring, the four constraint programs and their proof vectors remain.
+   wiring remains. Four pinned source packages reproduce export-bound descriptors at `k=16`; real proof vectors
+   cover NFT owner continuity, vesting timelocks, pairwise-distinct 1–16 threshold custody and swap claim/refund
+   semantics, including insufficient-approval and duplicate-participant rejections. Deployment/SDK plumbing and
+   review remain.
 
 ### O6 network, scaling and crypto agility
 

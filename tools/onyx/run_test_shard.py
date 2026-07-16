@@ -37,6 +37,7 @@ SHARDS = {
     "programs": (
         "program_deployment",
         "proof",
+        "standard_programs",
         "token_program",
     ),
     "assets-wallet": (

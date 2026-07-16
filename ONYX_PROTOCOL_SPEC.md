@@ -277,8 +277,13 @@ policy and action commitments plus a threshold and participant count bounded to 
 swap identifier, hashlock, timeout, and claim/refund branch. All require a present, changing state commitment;
 vesting and swap-refund additionally require the consensus-checked context `valid_from` height to meet the
 encoded timelock. Native decoding derives the exact compiler public-input suffix and rejects wrong kinds,
-zero identifiers, invalid thresholds, noncanonical varints, and trailing bytes. These profiles do not by
-themselves activate a standard: each still requires its registered constraint program and audit gates.
+zero identifiers, invalid thresholds, noncanonical varints, and trailing bytes. Standard state, multisig policy,
+and swap hashlock values that feed Pasta constraints must be canonical Pasta fields. The native decoder appends
+the exactly reconstructed prior and next fields to the typed suffix; the circuit never mistakes the mandatory
+31-plus-1-byte context limbs for a field value. The four pinned source packages implement owner-secret NFT
+continuity, beneficiary-bound vesting release, 1–16 pairwise-distinct participant threshold custody, and claim/refund hashlock
+settlement with real positive and negative Halo2 proof vectors at `k=16`. These profiles remain non-activated
+until registry/deployment, SDK, audit and release gates are satisfied.
 
 ## 8. Fork and migration
 

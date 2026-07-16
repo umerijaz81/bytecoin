@@ -41,9 +41,8 @@ dominating boolean guard so checked arithmetic and assertions can be gated by a 
 backend. Recursion, backward calls, `while`, mutable globals, indirect calls, implicit casts, unknown
 intrinsics and nested returns are rejected.
 
-The remaining versioned cryptographic intrinsics are not implemented yet; using them fails compilation.
-This is intentionally recorded as remaining work rather than silently assigning host-language
-semantics.
+The closed versioned cryptographic intrinsic set is implemented by the reference evaluator and independent
+Halo2 backend. Unknown intrinsic names or signatures fail compilation.
 
 ## Artifact and verifier
 
@@ -122,5 +121,5 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 
 The scalar, checked-integer, composite and intrinsic subset now lowers to Halo2 and independently regenerates
 per-export descriptors, but the complete release process is not finished.
-Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
+Sustained coverage-guided fuzzing, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.

@@ -1,0 +1,268 @@
+record Approvals {
+  a00: u8;
+  a01: u8;
+  a02: u8;
+  a03: u8;
+  a04: u8;
+  a05: u8;
+  a06: u8;
+  a07: u8;
+  a08: u8;
+  a09: u8;
+  a10: u8;
+  a11: u8;
+  a12: u8;
+  a13: u8;
+  a14: u8;
+  a15: u8;
+}
+record Commitments {
+  c00: field;
+  c01: field;
+  c02: field;
+  c03: field;
+  c04: field;
+  c05: field;
+  c06: field;
+  c07: field;
+  c08: field;
+  c09: field;
+  c10: field;
+  c11: field;
+  c12: field;
+  c13: field;
+  c14: field;
+  c15: field;
+}
+record Secrets {
+  s00: field;
+  s01: field;
+  s02: field;
+  s03: field;
+  s04: field;
+  s05: field;
+  s06: field;
+  s07: field;
+  s08: field;
+  s09: field;
+  s10: field;
+  s11: field;
+  s12: field;
+  s13: field;
+  s14: field;
+  s15: field;
+}
+export fn authorize(public network: field, public anchor: field, public valid_from: u64, public expiry: u64, public fee: u64, public call_index: u8, public program_low: field, public program_high: field, public function_id: u32, public spends_low: field, public spends_high: field, public outputs_low: field, public outputs_high: field, public calls_low: field, public calls_high: field, public has_state: bool, public prior_low: field, public prior_high: field, public next_low: field, public next_high: field, public application_low: field, public application_high: field, public kind: u8, public policy: field, public action_low: field, public action_high: field, public threshold: u8, public participant_count: u8, public prior_state: field, public next_state: field, private commitments: Commitments, private approvals: Approvals, private secrets: Secrets) -> bool {
+  let zero: field = network - network;
+  let action: field = poseidon_hash(action_low, action_high);
+  assert(kind == 3);
+  assert(has_state);
+  assert(fee == 0);
+  assert(participant_count > 0);
+  assert(participant_count <= 16);
+  assert(threshold > 0);
+  assert(threshold <= participant_count);
+  if participant_count <= 0 { assert(commitments.c00 == zero); assert(approvals.a00 == 0); assert(secrets.s00 == zero); } else { assert(approvals.a00 <= 1); if approvals.a00 == 1 { let approval0: field = poseidon_hash(secrets.s00, action); assert(approval0 == commitments.c00); } else { assert(secrets.s00 == zero); } }
+  if participant_count <= 1 { assert(commitments.c01 == zero); assert(approvals.a01 == 0); assert(secrets.s01 == zero); } else { assert(approvals.a01 <= 1); if approvals.a01 == 1 { let approval1: field = poseidon_hash(secrets.s01, action); assert(approval1 == commitments.c01); } else { assert(secrets.s01 == zero); } }
+  if participant_count <= 2 { assert(commitments.c02 == zero); assert(approvals.a02 == 0); assert(secrets.s02 == zero); } else { assert(approvals.a02 <= 1); if approvals.a02 == 1 { let approval2: field = poseidon_hash(secrets.s02, action); assert(approval2 == commitments.c02); } else { assert(secrets.s02 == zero); } }
+  if participant_count <= 3 { assert(commitments.c03 == zero); assert(approvals.a03 == 0); assert(secrets.s03 == zero); } else { assert(approvals.a03 <= 1); if approvals.a03 == 1 { let approval3: field = poseidon_hash(secrets.s03, action); assert(approval3 == commitments.c03); } else { assert(secrets.s03 == zero); } }
+  if participant_count <= 4 { assert(commitments.c04 == zero); assert(approvals.a04 == 0); assert(secrets.s04 == zero); } else { assert(approvals.a04 <= 1); if approvals.a04 == 1 { let approval4: field = poseidon_hash(secrets.s04, action); assert(approval4 == commitments.c04); } else { assert(secrets.s04 == zero); } }
+  if participant_count <= 5 { assert(commitments.c05 == zero); assert(approvals.a05 == 0); assert(secrets.s05 == zero); } else { assert(approvals.a05 <= 1); if approvals.a05 == 1 { let approval5: field = poseidon_hash(secrets.s05, action); assert(approval5 == commitments.c05); } else { assert(secrets.s05 == zero); } }
+  if participant_count <= 6 { assert(commitments.c06 == zero); assert(approvals.a06 == 0); assert(secrets.s06 == zero); } else { assert(approvals.a06 <= 1); if approvals.a06 == 1 { let approval6: field = poseidon_hash(secrets.s06, action); assert(approval6 == commitments.c06); } else { assert(secrets.s06 == zero); } }
+  if participant_count <= 7 { assert(commitments.c07 == zero); assert(approvals.a07 == 0); assert(secrets.s07 == zero); } else { assert(approvals.a07 <= 1); if approvals.a07 == 1 { let approval7: field = poseidon_hash(secrets.s07, action); assert(approval7 == commitments.c07); } else { assert(secrets.s07 == zero); } }
+  if participant_count <= 8 { assert(commitments.c08 == zero); assert(approvals.a08 == 0); assert(secrets.s08 == zero); } else { assert(approvals.a08 <= 1); if approvals.a08 == 1 { let approval8: field = poseidon_hash(secrets.s08, action); assert(approval8 == commitments.c08); } else { assert(secrets.s08 == zero); } }
+  if participant_count <= 9 { assert(commitments.c09 == zero); assert(approvals.a09 == 0); assert(secrets.s09 == zero); } else { assert(approvals.a09 <= 1); if approvals.a09 == 1 { let approval9: field = poseidon_hash(secrets.s09, action); assert(approval9 == commitments.c09); } else { assert(secrets.s09 == zero); } }
+  if participant_count <= 10 { assert(commitments.c10 == zero); assert(approvals.a10 == 0); assert(secrets.s10 == zero); } else { assert(approvals.a10 <= 1); if approvals.a10 == 1 { let approval10: field = poseidon_hash(secrets.s10, action); assert(approval10 == commitments.c10); } else { assert(secrets.s10 == zero); } }
+  if participant_count <= 11 { assert(commitments.c11 == zero); assert(approvals.a11 == 0); assert(secrets.s11 == zero); } else { assert(approvals.a11 <= 1); if approvals.a11 == 1 { let approval11: field = poseidon_hash(secrets.s11, action); assert(approval11 == commitments.c11); } else { assert(secrets.s11 == zero); } }
+  if participant_count <= 12 { assert(commitments.c12 == zero); assert(approvals.a12 == 0); assert(secrets.s12 == zero); } else { assert(approvals.a12 <= 1); if approvals.a12 == 1 { let approval12: field = poseidon_hash(secrets.s12, action); assert(approval12 == commitments.c12); } else { assert(secrets.s12 == zero); } }
+  if participant_count <= 13 { assert(commitments.c13 == zero); assert(approvals.a13 == 0); assert(secrets.s13 == zero); } else { assert(approvals.a13 <= 1); if approvals.a13 == 1 { let approval13: field = poseidon_hash(secrets.s13, action); assert(approval13 == commitments.c13); } else { assert(secrets.s13 == zero); } }
+  if participant_count <= 14 { assert(commitments.c14 == zero); assert(approvals.a14 == 0); assert(secrets.s14 == zero); } else { assert(approvals.a14 <= 1); if approvals.a14 == 1 { let approval14: field = poseidon_hash(secrets.s14, action); assert(approval14 == commitments.c14); } else { assert(secrets.s14 == zero); } }
+  if participant_count <= 15 { assert(commitments.c15 == zero); assert(approvals.a15 == 0); assert(secrets.s15 == zero); } else { assert(approvals.a15 <= 1); if approvals.a15 == 1 { let approval15: field = poseidon_hash(secrets.s15, action); assert(approval15 == commitments.c15); } else { assert(secrets.s15 == zero); } }
+  if participant_count > 1 {
+    assert(commitments.c00 != commitments.c01);
+  }
+  if participant_count > 2 {
+    assert(commitments.c00 != commitments.c02);
+    assert(commitments.c01 != commitments.c02);
+  }
+  if participant_count > 3 {
+    assert(commitments.c00 != commitments.c03);
+    assert(commitments.c01 != commitments.c03);
+    assert(commitments.c02 != commitments.c03);
+  }
+  if participant_count > 4 {
+    assert(commitments.c00 != commitments.c04);
+    assert(commitments.c01 != commitments.c04);
+    assert(commitments.c02 != commitments.c04);
+    assert(commitments.c03 != commitments.c04);
+  }
+  if participant_count > 5 {
+    assert(commitments.c00 != commitments.c05);
+    assert(commitments.c01 != commitments.c05);
+    assert(commitments.c02 != commitments.c05);
+    assert(commitments.c03 != commitments.c05);
+    assert(commitments.c04 != commitments.c05);
+  }
+  if participant_count > 6 {
+    assert(commitments.c00 != commitments.c06);
+    assert(commitments.c01 != commitments.c06);
+    assert(commitments.c02 != commitments.c06);
+    assert(commitments.c03 != commitments.c06);
+    assert(commitments.c04 != commitments.c06);
+    assert(commitments.c05 != commitments.c06);
+  }
+  if participant_count > 7 {
+    assert(commitments.c00 != commitments.c07);
+    assert(commitments.c01 != commitments.c07);
+    assert(commitments.c02 != commitments.c07);
+    assert(commitments.c03 != commitments.c07);
+    assert(commitments.c04 != commitments.c07);
+    assert(commitments.c05 != commitments.c07);
+    assert(commitments.c06 != commitments.c07);
+  }
+  if participant_count > 8 {
+    assert(commitments.c00 != commitments.c08);
+    assert(commitments.c01 != commitments.c08);
+    assert(commitments.c02 != commitments.c08);
+    assert(commitments.c03 != commitments.c08);
+    assert(commitments.c04 != commitments.c08);
+    assert(commitments.c05 != commitments.c08);
+    assert(commitments.c06 != commitments.c08);
+    assert(commitments.c07 != commitments.c08);
+  }
+  if participant_count > 9 {
+    assert(commitments.c00 != commitments.c09);
+    assert(commitments.c01 != commitments.c09);
+    assert(commitments.c02 != commitments.c09);
+    assert(commitments.c03 != commitments.c09);
+    assert(commitments.c04 != commitments.c09);
+    assert(commitments.c05 != commitments.c09);
+    assert(commitments.c06 != commitments.c09);
+    assert(commitments.c07 != commitments.c09);
+    assert(commitments.c08 != commitments.c09);
+  }
+  if participant_count > 10 {
+    assert(commitments.c00 != commitments.c10);
+    assert(commitments.c01 != commitments.c10);
+    assert(commitments.c02 != commitments.c10);
+    assert(commitments.c03 != commitments.c10);
+    assert(commitments.c04 != commitments.c10);
+    assert(commitments.c05 != commitments.c10);
+    assert(commitments.c06 != commitments.c10);
+    assert(commitments.c07 != commitments.c10);
+    assert(commitments.c08 != commitments.c10);
+    assert(commitments.c09 != commitments.c10);
+  }
+  if participant_count > 11 {
+    assert(commitments.c00 != commitments.c11);
+    assert(commitments.c01 != commitments.c11);
+    assert(commitments.c02 != commitments.c11);
+    assert(commitments.c03 != commitments.c11);
+    assert(commitments.c04 != commitments.c11);
+    assert(commitments.c05 != commitments.c11);
+    assert(commitments.c06 != commitments.c11);
+    assert(commitments.c07 != commitments.c11);
+    assert(commitments.c08 != commitments.c11);
+    assert(commitments.c09 != commitments.c11);
+    assert(commitments.c10 != commitments.c11);
+  }
+  if participant_count > 12 {
+    assert(commitments.c00 != commitments.c12);
+    assert(commitments.c01 != commitments.c12);
+    assert(commitments.c02 != commitments.c12);
+    assert(commitments.c03 != commitments.c12);
+    assert(commitments.c04 != commitments.c12);
+    assert(commitments.c05 != commitments.c12);
+    assert(commitments.c06 != commitments.c12);
+    assert(commitments.c07 != commitments.c12);
+    assert(commitments.c08 != commitments.c12);
+    assert(commitments.c09 != commitments.c12);
+    assert(commitments.c10 != commitments.c12);
+    assert(commitments.c11 != commitments.c12);
+  }
+  if participant_count > 13 {
+    assert(commitments.c00 != commitments.c13);
+    assert(commitments.c01 != commitments.c13);
+    assert(commitments.c02 != commitments.c13);
+    assert(commitments.c03 != commitments.c13);
+    assert(commitments.c04 != commitments.c13);
+    assert(commitments.c05 != commitments.c13);
+    assert(commitments.c06 != commitments.c13);
+    assert(commitments.c07 != commitments.c13);
+    assert(commitments.c08 != commitments.c13);
+    assert(commitments.c09 != commitments.c13);
+    assert(commitments.c10 != commitments.c13);
+    assert(commitments.c11 != commitments.c13);
+    assert(commitments.c12 != commitments.c13);
+  }
+  if participant_count > 14 {
+    assert(commitments.c00 != commitments.c14);
+    assert(commitments.c01 != commitments.c14);
+    assert(commitments.c02 != commitments.c14);
+    assert(commitments.c03 != commitments.c14);
+    assert(commitments.c04 != commitments.c14);
+    assert(commitments.c05 != commitments.c14);
+    assert(commitments.c06 != commitments.c14);
+    assert(commitments.c07 != commitments.c14);
+    assert(commitments.c08 != commitments.c14);
+    assert(commitments.c09 != commitments.c14);
+    assert(commitments.c10 != commitments.c14);
+    assert(commitments.c11 != commitments.c14);
+    assert(commitments.c12 != commitments.c14);
+    assert(commitments.c13 != commitments.c14);
+  }
+  if participant_count > 15 {
+    assert(commitments.c00 != commitments.c15);
+    assert(commitments.c01 != commitments.c15);
+    assert(commitments.c02 != commitments.c15);
+    assert(commitments.c03 != commitments.c15);
+    assert(commitments.c04 != commitments.c15);
+    assert(commitments.c05 != commitments.c15);
+    assert(commitments.c06 != commitments.c15);
+    assert(commitments.c07 != commitments.c15);
+    assert(commitments.c08 != commitments.c15);
+    assert(commitments.c09 != commitments.c15);
+    assert(commitments.c10 != commitments.c15);
+    assert(commitments.c11 != commitments.c15);
+    assert(commitments.c12 != commitments.c15);
+    assert(commitments.c13 != commitments.c15);
+    assert(commitments.c14 != commitments.c15);
+  }
+  let policy01: field = poseidon_hash(commitments.c00, commitments.c01);
+  let policy02: field = poseidon_hash(policy01, commitments.c02);
+  let policy03: field = poseidon_hash(policy02, commitments.c03);
+  let policy04: field = poseidon_hash(policy03, commitments.c04);
+  let policy05: field = poseidon_hash(policy04, commitments.c05);
+  let policy06: field = poseidon_hash(policy05, commitments.c06);
+  let policy07: field = poseidon_hash(policy06, commitments.c07);
+  let policy08: field = poseidon_hash(policy07, commitments.c08);
+  let policy09: field = poseidon_hash(policy08, commitments.c09);
+  let policy10: field = poseidon_hash(policy09, commitments.c10);
+  let policy11: field = poseidon_hash(policy10, commitments.c11);
+  let policy12: field = poseidon_hash(policy11, commitments.c12);
+  let policy13: field = poseidon_hash(policy12, commitments.c13);
+  let policy14: field = poseidon_hash(policy13, commitments.c14);
+  let policy15: field = poseidon_hash(policy14, commitments.c15);
+  assert(policy == policy15);
+  let count01: u8 = approvals.a00 + approvals.a01;
+  let count02: u8 = count01 + approvals.a02;
+  let count03: u8 = count02 + approvals.a03;
+  let count04: u8 = count03 + approvals.a04;
+  let count05: u8 = count04 + approvals.a05;
+  let count06: u8 = count05 + approvals.a06;
+  let count07: u8 = count06 + approvals.a07;
+  let count08: u8 = count07 + approvals.a08;
+  let count09: u8 = count08 + approvals.a09;
+  let count10: u8 = count09 + approvals.a10;
+  let count11: u8 = count10 + approvals.a11;
+  let count12: u8 = count11 + approvals.a12;
+  let count13: u8 = count12 + approvals.a13;
+  let count14: u8 = count13 + approvals.a14;
+  let count15: u8 = count14 + approvals.a15;
+  assert(count15 >= threshold);
+  let custody_state: field = poseidon_hash(policy, action);
+  assert(prior_state == custody_state);
+  assert(next_state != zero);
+  assert(next_state != prior_state);
+  return true;
+}
