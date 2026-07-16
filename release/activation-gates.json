@@ -34,7 +34,11 @@
       "id": "reproducible-platform-binaries",
       "required_for_activation": true,
       "status": "pending",
-      "evidence": []
+      "evidence": [
+        ".github/workflows/reproducible-binaries.yml",
+        "tools/release/verify_binary_reproducibility.py",
+        "docs/Release-Readiness.md"
+      ]
     },
     {
       "id": "incident-response-drill",

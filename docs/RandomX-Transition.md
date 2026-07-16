@@ -31,6 +31,9 @@ reorganizes competing branches through two distinct delayed-seed epochs. Remaini
 release qualification includes independent review, longer/deeper randomized reorg and sync runs,
 corrupt-template tests, published mining throughput/power benchmarks and public testnet soak.
 
+The repeated two-epoch branch test passed in the full consensus job on 2026-07-16 (GitHub Actions
+run `29514198541`).
+
 The RISC-V gate cross-compiles the pinned upstream suite as RV64GC with a vector-crypto-capable GNU
 toolchain, then executes the v2 vectors under QEMU. It passed alongside all three native jobs on
 2026-07-16 (GitHub Actions run `29463920603`). This proves deterministic vector execution in the
@@ -52,6 +55,7 @@ CI gate passes on Ubuntu x86-64, Windows x86-64 and macOS ARM64. Its July 2026 q
 throughput benchmarks.
 
 The consensus integration suite lowers only the test instance's activation/epoch parameters, mines
-two branches that fork before their seed block, validates the side branch across the next seed epoch
-and reorganizes to it. This exercises the actual block serializer, validator and ancestor lookup. The
-production defaults and dormant activation height remain unchanged.
+two branches that fork before their seed block, and repeatedly grows and reorganizes both branches
+through two different seed epochs. This exercises the actual block serializer, validator, retained
+side chains and ancestor lookup. The production defaults and dormant activation height remain
+unchanged.

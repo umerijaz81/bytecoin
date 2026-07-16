@@ -46,6 +46,16 @@ class ReleaseToolsTest(unittest.TestCase):
         errors, _ = verify_release_gates.verify(gates, self.config)
         self.assertTrue(any("two distinct report" in error for error in errors), errors)
 
+    def test_partial_binary_reproducibility_evidence_does_not_pass_gate(self) -> None:
+        gate = next(
+            gate for gate in self.gates["gates"] if gate["id"] == "reproducible-platform-binaries"
+        )
+        self.assertEqual("pending", gate["status"])
+        self.assertGreaterEqual(len(gate["evidence"]), 2)
+        errors, incomplete = verify_release_gates.verify(self.gates, self.config)
+        self.assertEqual([], errors)
+        self.assertIn("reproducible-platform-binaries", incomplete)
+
     def test_spdx_identifiers_are_unique_and_deterministic(self) -> None:
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         first = generate_spdx.generate(revision, 0)

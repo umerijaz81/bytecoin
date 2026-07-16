@@ -36,5 +36,8 @@ the weekly schedule runs for 15 minutes and retains crash artifacts. These jobs 
 do not satisfy the release requirement for sustained, independently reviewed campaigns over the
 valid proof-envelope corpus.
 
+The first complete push qualification passed on 2026-07-16 in GitHub Actions run `29513818205`,
+including the Onyx-enabled C++ build, corpus tests and bounded campaign.
+
 Keep crash artifacts and minimized regression inputs. Every confirmed issue must gain a deterministic
 unit/regression test before the fix is accepted.

@@ -48,6 +48,8 @@ remaps C++ and Rust source paths, disables nondeterministic linker identifiers, 
 and compares the three Linux executables byte-for-byte. Its JSON manifest records hashes and
 toolchain identities. A green same-runner comparison is necessary evidence, but it is not the two
 independent environments or the Windows/macOS evidence required to mark the activation gate passed.
+The initial Linux comparison passed on 2026-07-16 in GitHub Actions run `29513818059`; its uploaded
+manifest records the exact executable hashes and toolchain identities for commit `65f84ca`.
 
 ## Required release ceremony
 
