@@ -267,7 +267,11 @@ if(ONYX_ZK)
 endif()
 
 link_libraries(bytecoin-crypto bytecoin-core ${LINK_OPENSSL})
-if(NOT WIN32)
+if(WIN32)
+    # Imported Rust staticlibs do not carry Cargo's Windows system-library metadata into CMake.
+    # Boost.Stacktrace additionally uses PSAPI for module discovery.
+    link_libraries(bcrypt ntdll userenv psapi)
+else()
     link_libraries(dl pthread)
 endif()
 
