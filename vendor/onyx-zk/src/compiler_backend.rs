@@ -16,6 +16,7 @@ use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 const IR_DOMAIN: &[u8] = b"ONXIR\x01";
 const DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.compiler-halo2-descriptor.v1";
@@ -73,6 +74,7 @@ enum Opcode {
     Remainder,
     ShiftLeft,
     ShiftRight,
+    Call,
     Assert,
     Return,
 }
@@ -84,11 +86,15 @@ struct Instruction {
     kind: ScalarType,
     operands: Vec<usize>,
     immediate: Option<u64>,
+    text: String,
 }
 
 #[derive(Clone, Debug)]
 struct Function {
+    name: String,
+    exported: bool,
     parameters: Vec<Parameter>,
+    return_type: ScalarType,
     instructions: Vec<Instruction>,
 }
 
@@ -226,9 +232,10 @@ fn opcode(value: u8) -> Result<Opcode, CompilerBackendError> {
         16 => Ok(Opcode::Remainder),
         17 => Ok(Opcode::ShiftLeft),
         18 => Ok(Opcode::ShiftRight),
+        25 => Ok(Opcode::Call),
         26 => Ok(Opcode::Assert),
         27 => Ok(Opcode::Return),
-        19..=25 => Err(CompilerBackendError::UnsupportedInstruction),
+        19..=24 => Err(CompilerBackendError::UnsupportedInstruction),
         _ => Err(CompilerBackendError::InvalidEncoding),
     }
 }
@@ -251,128 +258,160 @@ impl CompilerProgram {
             .map_err(|_| CompilerBackendError::InvalidEncoding)?;
         let function_count =
             usize::try_from(reader.uleb()?).map_err(|_| CompilerBackendError::LimitExceeded)?;
-        if function_count == 0 || function_count > MAX_FUNCTIONS || function_count != 1 {
-            return Err(CompilerBackendError::UnsupportedInstruction);
-        }
-        let name = reader.text(128)?;
-        if !identifier(&name) {
-            return Err(CompilerBackendError::InvalidEncoding);
-        }
-        let exported = match reader.byte()? {
-            0 => false,
-            1 => true,
-            _ => return Err(CompilerBackendError::InvalidEncoding),
-        };
-        if !exported {
-            return Err(CompilerBackendError::InvalidProgram);
-        }
-        let parameter_count =
-            usize::try_from(reader.uleb()?).map_err(|_| CompilerBackendError::LimitExceeded)?;
-        if parameter_count > 4096 {
+        if function_count == 0 || function_count > MAX_FUNCTIONS {
             return Err(CompilerBackendError::LimitExceeded);
         }
-        let mut parameters = Vec::with_capacity(parameter_count);
-        for _ in 0..parameter_count {
-            let visibility = match reader.byte()? {
-                1 => Visibility::Public,
-                2 => Visibility::Private,
-                _ => return Err(CompilerBackendError::InvalidEncoding),
-            };
+        let mut functions = Vec::with_capacity(function_count);
+        let mut signatures = BTreeMap::new();
+        for _ in 0..function_count {
             let name = reader.text(128)?;
             if !identifier(&name) {
                 return Err(CompilerBackendError::InvalidEncoding);
             }
-            let kind = scalar_type(&reader.text(128)?)?;
-            parameters.push(Parameter {
-                visibility,
-                name,
-                kind,
-            });
-        }
-        let return_type = scalar_type(&reader.text(128)?)?;
-        let instruction_count =
-            usize::try_from(reader.uleb()?).map_err(|_| CompilerBackendError::LimitExceeded)?;
-        if instruction_count == 0 || instruction_count > MAX_INSTRUCTIONS {
-            return Err(CompilerBackendError::LimitExceeded);
-        }
-        let mut instructions = Vec::with_capacity(instruction_count);
-        for index in 0..instruction_count {
-            let opcode = opcode(reader.byte()?)?;
-            let encoded_result = reader.uleb()?;
-            let result = if encoded_result == 0 {
-                None
-            } else {
-                Some(
-                    usize::try_from(encoded_result - 1)
-                        .map_err(|_| CompilerBackendError::LimitExceeded)?,
-                )
-            };
-            let kind = scalar_type(&reader.text(128)?)?;
-            let operand_count =
-                usize::try_from(reader.uleb()?).map_err(|_| CompilerBackendError::LimitExceeded)?;
-            if operand_count > 64 {
-                return Err(CompilerBackendError::LimitExceeded);
-            }
-            let mut operands = Vec::with_capacity(operand_count);
-            for _ in 0..operand_count {
-                let operand = usize::try_from(reader.uleb()?)
-                    .map_err(|_| CompilerBackendError::LimitExceeded)?;
-                if operand >= index {
-                    return Err(CompilerBackendError::InvalidProgram);
-                }
-                operands.push(operand);
-            }
-            if reader.uleb()? != 0 {
-                return Err(CompilerBackendError::UnsupportedInstruction); // guarded control flow
-            }
-            let encoded_immediate = reader.uleb()?;
-            let immediate = if encoded_immediate == 0 {
-                None
-            } else {
-                Some(encoded_immediate - 1)
-            };
-            let instruction_text = reader.text(8192)?;
-            if opcode == Opcode::Parameter {
-                let parameter = parameters
-                    .get(index)
-                    .ok_or(CompilerBackendError::InvalidProgram)?;
-                let visibility = if parameter.visibility == Visibility::Public {
-                    "public:"
-                } else {
-                    "private:"
-                };
-                if instruction_text != visibility.to_owned() + &parameter.name {
-                    return Err(CompilerBackendError::InvalidProgram);
-                }
-            } else if !instruction_text.is_empty() {
-                return Err(CompilerBackendError::UnsupportedInstruction);
-            }
-            let side_effect = matches!(opcode, Opcode::Assert | Opcode::Return);
-            if side_effect != result.is_none() || result.is_some_and(|value| value != index) {
+            if signatures.contains_key(&name) {
                 return Err(CompilerBackendError::InvalidProgram);
             }
-            instructions.push(Instruction {
-                opcode,
-                result,
-                kind,
-                operands,
-                immediate,
+            let exported = match reader.byte()? {
+                0 => false,
+                1 => true,
+                _ => return Err(CompilerBackendError::InvalidEncoding),
+            };
+            let parameter_count =
+                usize::try_from(reader.uleb()?).map_err(|_| CompilerBackendError::LimitExceeded)?;
+            if parameter_count > 4096 {
+                return Err(CompilerBackendError::LimitExceeded);
+            }
+            let mut parameters = Vec::with_capacity(parameter_count);
+            for _ in 0..parameter_count {
+                let visibility = match reader.byte()? {
+                    1 => Visibility::Public,
+                    2 => Visibility::Private,
+                    _ => return Err(CompilerBackendError::InvalidEncoding),
+                };
+                let parameter_name = reader.text(128)?;
+                if !identifier(&parameter_name) {
+                    return Err(CompilerBackendError::InvalidEncoding);
+                }
+                let kind = scalar_type(&reader.text(128)?)?;
+                parameters.push(Parameter {
+                    visibility,
+                    name: parameter_name,
+                    kind,
+                });
+            }
+            let return_type = scalar_type(&reader.text(128)?)?;
+            let instruction_count =
+                usize::try_from(reader.uleb()?).map_err(|_| CompilerBackendError::LimitExceeded)?;
+            if instruction_count == 0 || instruction_count > MAX_INSTRUCTIONS {
+                return Err(CompilerBackendError::LimitExceeded);
+            }
+            let mut instructions = Vec::with_capacity(instruction_count);
+            for index in 0..instruction_count {
+                let opcode = opcode(reader.byte()?)?;
+                let encoded_result = reader.uleb()?;
+                let result = if encoded_result == 0 {
+                    None
+                } else {
+                    Some(
+                        usize::try_from(encoded_result - 1)
+                            .map_err(|_| CompilerBackendError::LimitExceeded)?,
+                    )
+                };
+                let kind = scalar_type(&reader.text(128)?)?;
+                let operand_count = usize::try_from(reader.uleb()?)
+                    .map_err(|_| CompilerBackendError::LimitExceeded)?;
+                if operand_count > 64 {
+                    return Err(CompilerBackendError::LimitExceeded);
+                }
+                let mut operands = Vec::with_capacity(operand_count);
+                for _ in 0..operand_count {
+                    let operand = usize::try_from(reader.uleb()?)
+                        .map_err(|_| CompilerBackendError::LimitExceeded)?;
+                    if operand >= index {
+                        return Err(CompilerBackendError::InvalidProgram);
+                    }
+                    operands.push(operand);
+                }
+                if reader.uleb()? != 0 {
+                    return Err(CompilerBackendError::UnsupportedInstruction); // guarded control flow
+                }
+                let encoded_immediate = reader.uleb()?;
+                let immediate = if encoded_immediate == 0 {
+                    None
+                } else {
+                    Some(encoded_immediate - 1)
+                };
+                let instruction_text = reader.text(8192)?;
+                if opcode == Opcode::Parameter {
+                    let parameter = parameters
+                        .get(index)
+                        .ok_or(CompilerBackendError::InvalidProgram)?;
+                    let visibility = if parameter.visibility == Visibility::Public {
+                        "public:"
+                    } else {
+                        "private:"
+                    };
+                    if instruction_text != visibility.to_owned() + &parameter.name {
+                        return Err(CompilerBackendError::InvalidProgram);
+                    }
+                } else if opcode == Opcode::Call {
+                    if !identifier(&instruction_text) || !signatures.contains_key(&instruction_text)
+                    {
+                        return Err(CompilerBackendError::InvalidProgram);
+                    }
+                } else if !instruction_text.is_empty() {
+                    return Err(CompilerBackendError::UnsupportedInstruction);
+                }
+                let side_effect = matches!(opcode, Opcode::Assert | Opcode::Return);
+                if side_effect != result.is_none() || result.is_some_and(|value| value != index) {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+                instructions.push(Instruction {
+                    opcode,
+                    result,
+                    kind,
+                    operands,
+                    immediate,
+                    text: instruction_text,
+                });
+            }
+            if !matches!(instructions.last().map(|i| i.opcode), Some(Opcode::Return)) {
+                return Err(CompilerBackendError::InvalidProgram);
+            }
+            validate_types(&parameters, return_type, &instructions, &signatures)?;
+            signatures.insert(
+                name.clone(),
+                (
+                    parameters.iter().map(|parameter| parameter.kind).collect(),
+                    return_type,
+                ),
+            );
+            functions.push(Function {
+                name,
+                exported,
+                parameters,
+                return_type,
+                instructions,
             });
         }
-        if reader.offset != ir.len()
-            || !matches!(instructions.last().map(|i| i.opcode), Some(Opcode::Return))
-        {
+        if reader.offset != ir.len() {
             return Err(CompilerBackendError::InvalidProgram);
         }
-        validate_types(&parameters, return_type, &instructions)?;
+        let exports: Vec<_> = functions
+            .iter()
+            .enumerate()
+            .filter(|(_, function)| function.exported)
+            .map(|(index, _)| index)
+            .collect();
+        if exports.len() != 1 {
+            return Err(CompilerBackendError::UnsupportedInstruction);
+        }
+        let function = inline_export(&functions, exports[0])?;
         let ir_digest: [u8; 32] = Sha256::digest(ir).into();
         Ok(Self {
             profile_digest,
             ir_digest,
-            function: Function {
-                parameters,
-                instructions,
-            },
+            function,
         })
     }
 
@@ -437,10 +476,100 @@ impl CompilerProgram {
     }
 }
 
+fn inline_export(
+    functions: &[Function],
+    export_index: usize,
+) -> Result<Function, CompilerBackendError> {
+    fn inline_function(
+        functions: &[Function],
+        function_index: usize,
+        arguments: Option<&[usize]>,
+        output: &mut Vec<Instruction>,
+    ) -> Result<usize, CompilerBackendError> {
+        let function = &functions[function_index];
+        if arguments.is_some_and(|arguments| arguments.len() != function.parameters.len()) {
+            return Err(CompilerBackendError::InvalidProgram);
+        }
+        let mut mapping = vec![None; function.instructions.len()];
+        let mut parameter_index = 0usize;
+        for (old_index, instruction) in function.instructions.iter().enumerate() {
+            if instruction.opcode == Opcode::Parameter {
+                if let Some(arguments) = arguments {
+                    mapping[old_index] = Some(arguments[parameter_index]);
+                } else {
+                    let new_index = output.len();
+                    let mut cloned = instruction.clone();
+                    cloned.result = Some(new_index);
+                    output.push(cloned);
+                    mapping[old_index] = Some(new_index);
+                }
+                parameter_index += 1;
+                continue;
+            }
+            let operands: Vec<_> = instruction
+                .operands
+                .iter()
+                .map(|operand| mapping[*operand].ok_or(CompilerBackendError::InvalidProgram))
+                .collect::<Result<_, _>>()?;
+            if instruction.opcode == Opcode::Call {
+                let target_index = functions[..function_index]
+                    .iter()
+                    .position(|candidate| candidate.name == instruction.text)
+                    .ok_or(CompilerBackendError::InvalidProgram)?;
+                mapping[old_index] = Some(inline_function(
+                    functions,
+                    target_index,
+                    Some(&operands),
+                    output,
+                )?);
+                continue;
+            }
+            if instruction.opcode == Opcode::Return {
+                return operands
+                    .first()
+                    .copied()
+                    .ok_or(CompilerBackendError::InvalidProgram);
+            }
+            let new_index = output.len();
+            let mut cloned = instruction.clone();
+            cloned.operands = operands;
+            cloned.result = instruction.result.map(|_| new_index);
+            output.push(cloned);
+            if instruction.result.is_some() {
+                mapping[old_index] = Some(new_index);
+            }
+            if output.len() > MAX_INSTRUCTIONS {
+                return Err(CompilerBackendError::LimitExceeded);
+            }
+        }
+        Err(CompilerBackendError::InvalidProgram)
+    }
+
+    let export = &functions[export_index];
+    let mut instructions = Vec::new();
+    let returned = inline_function(functions, export_index, None, &mut instructions)?;
+    instructions.push(Instruction {
+        opcode: Opcode::Return,
+        result: None,
+        kind: export.return_type,
+        operands: vec![returned],
+        immediate: None,
+        text: String::new(),
+    });
+    Ok(Function {
+        name: export.name.clone(),
+        exported: true,
+        parameters: export.parameters.clone(),
+        return_type: export.return_type,
+        instructions,
+    })
+}
+
 fn validate_types(
     parameters: &[Parameter],
     return_type: ScalarType,
     instructions: &[Instruction],
+    signatures: &BTreeMap<String, (Vec<ScalarType>, ScalarType)>,
 ) -> Result<(), CompilerBackendError> {
     let mut types: Vec<Option<ScalarType>> = Vec::with_capacity(instructions.len());
     let mut parameter_index = 0usize;
@@ -529,6 +658,14 @@ fn validate_types(
                 if operand_types != [instruction.kind, instruction.kind]
                     || instruction.kind.integer_bits().is_none()
                 {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
+            Opcode::Call => {
+                let (expected_parameters, expected_return) = signatures
+                    .get(&instruction.text)
+                    .ok_or(CompilerBackendError::InvalidProgram)?;
+                if &operand_types != expected_parameters || instruction.kind != *expected_return {
                     return Err(CompilerBackendError::InvalidProgram);
                 }
             }
@@ -1275,6 +1412,7 @@ impl Circuit<Fp> for CompilerCircuit {
                             || value,
                         )
                     }
+                    Opcode::Call => return Err(Error::Synthesis),
                     Opcode::Equal | Opcode::NotEqual => {
                         let a = copy(&operands[0], config.left, &mut region)?;
                         let b = copy(&operands[1], config.right, &mut region)?;

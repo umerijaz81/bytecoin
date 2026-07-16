@@ -65,8 +65,11 @@ requires every output byte to match.
 
 `vendor/onyx-zk/src/compiler_backend.rs` independently decodes canonical `ONXIR` inside the pinned
 Rust/Halo2 dependency boundary. Its executable profile accepts exactly one call-free exported
-function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. It rejects composites,
-calls, guards and intrinsics until their circuit gadgets are implemented. The circuit constrains public parameters and
+function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. A package may contain
+acyclic direct helper calls: the backend independently verifies earlier-target signatures and deterministically
+inlines their parameters, constraints, assertions and return values into the single exported circuit. Packages
+with multiple exports remain rejected until the proof API has an explicit entry selector. It rejects composites,
+guards and intrinsics until their circuit gadgets are implemented. The circuit constrains public parameters and
 the returned value as instances, copies every operand through Halo2 equality constraints, range-checks
 booleans, and implements field add/subtract/multiply, boolean not/and/or, equality/inequality with an
 inverse witness, and assertion gates. Unsigned values are bit-decomposed and reconstruction-bound;
@@ -96,7 +99,7 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 ## Remaining activation boundary
 
 The scalar and checked-integer subset now lowers to Halo2 and independently regenerates its descriptor,
-but the complete language does not. Arrays, records, byte strings, guarded control flow, calls and
+but the complete language does not. Arrays, records, byte strings, guarded control flow, multiple exports and
 cryptographic intrinsics still require circuit lowering, type-specific proof vectors and backend measurements.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.

@@ -351,11 +351,15 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
 
     @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
     def test_checked_integer_bundle_is_accepted_by_halo2_backend(self):
-        source = b"""export fn balance(public left: u16, private shift: u16) -> u16 {
+        source = b"""fn divide(private value: u16, private divisor: u16) -> u16 {
+  let output: u16 = value / divisor;
+  return output;
+}
+export fn balance(public left: u16, private shift: u16) -> u16 {
   let factor: u16 = 2;
   let divisor: u16 = 3;
   let product: u16 = left * factor;
-  let quotient: u16 = product / divisor;
+  let quotient: u16 = divide(product, divisor);
   let output: u16 = quotient >> shift;
   assert(output <= quotient);
   return output;
