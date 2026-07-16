@@ -71,6 +71,14 @@ the returned value as instances, copies every operand through Halo2 equality con
 booleans, and implements field add/subtract/multiply, boolean not/and/or, equality/inequality with an
 inverse witness, and assertion gates.
 
+The Rust backend also exposes bounded `create_compiler_proof` and `verify_compiler_proof` APIs. Proof
+creation requires every declared parameter plus the public parameters and return value in canonical
+order, rejects arity, boolean and public-witness mismatches before proving, and self-verifies the
+freshly randomized proof before returning it. Verification derives its key from witnessless canonical
+IR. Profile and full IR digests are committed into fixed circuit columns, so even an artifact metadata
+mutation changes the verification key. Positive round trips and negative altered-output, altered-IR,
+corrupted-proof and public-witness vectors run in the locked Rust test shard.
+
 The `onyx-compiler-backend` executable reads IR only from standard input and emits a fixed-length
 descriptor containing the circuit size, profile digest, IR digest and a domain-separated digest of
 the pinned Halo2 verifying key. Passing `--backend-executable` to the frontend embeds that descriptor
@@ -86,6 +94,6 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 
 The scalar subset now lowers to Halo2 and independently regenerates its descriptor, but the complete
 language does not. Checked integers, arrays, records, byte strings, guarded control flow, calls and
-cryptographic intrinsics still require circuit lowering, proof vectors and backend measurements.
+cryptographic intrinsics still require circuit lowering, type-specific proof vectors and backend measurements.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.

@@ -9,10 +9,12 @@ use ff::Field;
 use halo2_proofs::circuit::{AssignedCell, Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::pasta::{EqAffine, Fp};
 use halo2_proofs::plonk::{
-    keygen_vk, Advice, Circuit, Column, ConstraintSystem, Error, Instance, Selector,
+    create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column, ConstraintSystem,
+    Error, Instance, Selector, SingleVerifier,
 };
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::Rotation;
+use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 use sha2::{Digest, Sha256};
 
 const IR_DOMAIN: &[u8] = b"ONXIR\x01";
@@ -20,6 +22,7 @@ const DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.compiler-halo2-descriptor.v1";
 const MAX_IR_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FUNCTIONS: usize = 1024;
 const MAX_INSTRUCTIONS: usize = 1_000_000;
+const MAX_PROOF_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScalarType {
@@ -88,6 +91,9 @@ pub enum CompilerBackendError {
     InvalidProgram,
     InvalidWitness,
     KeyGeneration,
+    ProofCreation,
+    ProofVerification,
+    ProofTooLarge,
 }
 
 struct Reader<'a> {
@@ -618,6 +624,33 @@ impl Circuit<Fp> for CompilerCircuit {
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
+        // Commit otherwise non-semantic profile/IR identity into the fixed columns. This makes a
+        // verification key specific to the complete canonical artifact, even when two artifacts
+        // happen to lower to identical selector placement.
+        for (index, chunk) in self
+            .program
+            .profile_digest
+            .iter()
+            .chain(self.program.ir_digest.iter())
+            .copied()
+            .collect::<Vec<_>>()
+            .chunks_exact(8)
+            .enumerate()
+        {
+            let limb = u64::from_le_bytes(chunk.try_into().unwrap());
+            layouter.assign_region(
+                || format!("compiler identity limb {index}"),
+                |mut region| {
+                    region.assign_advice_from_constant(
+                        || "compiler identity",
+                        config.output,
+                        0,
+                        Fp::from(limb),
+                    )?;
+                    Ok(())
+                },
+            )?;
+        }
         let witness = self.witness.as_ref();
         if witness
             .is_some_and(|value| value.parameters.len() != self.program.function.parameters.len())
@@ -708,13 +741,7 @@ impl Circuit<Fp> for CompilerCircuit {
 }
 
 pub fn compiler_vk_descriptor(ir: &[u8], k: u32) -> Result<Vec<u8>, CompilerBackendError> {
-    if !(8..=20).contains(&k) {
-        return Err(CompilerBackendError::LimitExceeded);
-    }
-    let program = CompilerProgram::decode(ir)?;
-    if program.function.instructions.len() + 8 > (1usize << k) {
-        return Err(CompilerBackendError::LimitExceeded);
-    }
+    let program = checked_program(ir, k)?;
     let circuit = CompilerCircuit {
         program: program.clone(),
         witness: None,
@@ -736,6 +763,118 @@ pub fn compiler_vk_descriptor(ir: &[u8], k: u32) -> Result<Vec<u8>, CompilerBack
     descriptor.extend_from_slice(&program.ir_digest);
     descriptor.extend_from_slice(&hash.finalize());
     Ok(descriptor)
+}
+
+fn checked_program(ir: &[u8], k: u32) -> Result<CompilerProgram, CompilerBackendError> {
+    if !(8..=20).contains(&k) {
+        return Err(CompilerBackendError::LimitExceeded);
+    }
+    let program = CompilerProgram::decode(ir)?;
+    if program.function.instructions.len() + 8 > (1usize << k) {
+        return Err(CompilerBackendError::LimitExceeded);
+    }
+    Ok(program)
+}
+
+/// Creates a Halo2 proof for a canonical scalar ONXIR program.
+///
+/// `witness.parameters` contains every function parameter in declaration order. `public_inputs`
+/// contains public parameters in declaration order followed by the public return value. The proof
+/// uses fresh operating-system randomness; reproducibility is provided by the verification-key
+/// descriptor, not by proof bytes.
+pub fn create_compiler_proof(
+    ir: &[u8],
+    k: u32,
+    witness: CompilerWitness,
+    public_inputs: &[Fp],
+) -> Result<Vec<u8>, CompilerBackendError> {
+    let program = checked_program(ir, k)?;
+    if witness.parameters.len() != program.function.parameters.len()
+        || public_inputs.len() != program.public_input_count()
+    {
+        return Err(CompilerBackendError::InvalidWitness);
+    }
+    let mut public_index = 0usize;
+    for (parameter_index, parameter) in program.function.parameters.iter().enumerate() {
+        if parameter.kind == ScalarType::Bool
+            && !matches!(witness.parameters[parameter_index], value if value == Fp::zero() || value == Fp::one())
+        {
+            return Err(CompilerBackendError::InvalidWitness);
+        }
+        if parameter.visibility == Visibility::Public {
+            if witness.parameters[parameter_index] != public_inputs[public_index] {
+                return Err(CompilerBackendError::InvalidWitness);
+            }
+            public_index += 1;
+        }
+    }
+    let circuit = CompilerCircuit {
+        program,
+        witness: Some(witness),
+    };
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| CompilerBackendError::KeyGeneration)?;
+    let pk = keygen_pk(&params, vk.clone(), &circuit)
+        .map_err(|_| CompilerBackendError::KeyGeneration)?;
+    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
+    create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
+        &params,
+        &pk,
+        &[circuit],
+        &[&[public_inputs]],
+        rand::rngs::OsRng,
+        &mut transcript,
+    )
+    .map_err(|_| CompilerBackendError::ProofCreation)?;
+    let proof = transcript.finalize();
+    if proof.len() > MAX_PROOF_BYTES {
+        return Err(CompilerBackendError::ProofTooLarge);
+    }
+    let mut reader = Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&proof[..]);
+    verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
+        &params,
+        &vk,
+        SingleVerifier::new(&params),
+        &[&[public_inputs]],
+        &mut reader,
+    )
+    .map_err(|_| CompilerBackendError::ProofCreation)?;
+    Ok(proof)
+}
+
+/// Verifies a proof against the verification key derived solely from canonical IR and `k`.
+pub fn verify_compiler_proof(
+    ir: &[u8],
+    k: u32,
+    public_inputs: &[Fp],
+    proof: &[u8],
+) -> Result<(), CompilerBackendError> {
+    if proof.is_empty() || proof.len() > MAX_PROOF_BYTES {
+        return Err(if proof.len() > MAX_PROOF_BYTES {
+            CompilerBackendError::ProofTooLarge
+        } else {
+            CompilerBackendError::ProofVerification
+        });
+    }
+    let program = checked_program(ir, k)?;
+    if public_inputs.len() != program.public_input_count() {
+        return Err(CompilerBackendError::InvalidWitness);
+    }
+    let circuit = CompilerCircuit {
+        program,
+        witness: None,
+    };
+    let params: Params<EqAffine> = Params::new(k);
+    let vk = keygen_vk(&params, &circuit).map_err(|_| CompilerBackendError::KeyGeneration)?;
+    let mut reader = Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(proof);
+    verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
+        &params,
+        &vk,
+        SingleVerifier::new(&params),
+        &[&[public_inputs]],
+        &mut reader,
+    )
+    .map_err(|_| CompilerBackendError::ProofVerification)
 }
 
 #[cfg(test)]
@@ -858,6 +997,52 @@ mod tests {
         assert!(matches!(
             CompilerProgram::decode(&integer),
             Err(CompilerBackendError::UnsupportedType)
+        ));
+    }
+
+    #[test]
+    fn compiler_proof_round_trip_rejects_every_public_binding_mutation() {
+        let ir = multiplication_ir();
+        let public = [Fp::from(6), Fp::from(42)];
+        let proof = create_compiler_proof(
+            &ir,
+            8,
+            CompilerWitness {
+                parameters: vec![Fp::from(6), Fp::from(7)],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof(&ir, 8, &public, &proof).unwrap();
+
+        let wrong_return = [Fp::from(6), Fp::from(41)];
+        assert!(matches!(
+            verify_compiler_proof(&ir, 8, &wrong_return, &proof),
+            Err(CompilerBackendError::ProofVerification)
+        ));
+        let mut altered_ir = ir.clone();
+        altered_ir[IR_DOMAIN.len()] ^= 1;
+        assert!(matches!(
+            verify_compiler_proof(&altered_ir, 8, &public, &proof),
+            Err(CompilerBackendError::ProofVerification)
+        ));
+        let mut corrupted = proof.clone();
+        let corruption_index = corrupted.len() / 2;
+        corrupted[corruption_index] ^= 1;
+        assert!(matches!(
+            verify_compiler_proof(&ir, 8, &public, &corrupted),
+            Err(CompilerBackendError::ProofVerification)
+        ));
+        assert!(matches!(
+            create_compiler_proof(
+                &ir,
+                8,
+                CompilerWitness {
+                    parameters: vec![Fp::from(5), Fp::from(7)],
+                },
+                &public,
+            ),
+            Err(CompilerBackendError::InvalidWitness)
         ));
     }
 }

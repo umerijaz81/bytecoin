@@ -31,9 +31,10 @@ unreachable until the release gates below are independently satisfied.
    canonical nonrecursive construction and field access; fixed byte strings use exact-length lowercase
    hex literals. Content-addressed libraries are lock/tree-digest verified, namespace isolated,
    deterministically topologically ordered and embedded for offline reproduction. Remaining:
-   the first call-free Pasta-field/boolean subset has deterministic Halo2 gates and pinned verifying-key
-   descriptor regeneration, but integers, composites, control flow, calls and intrinsics still require
-   backend lowering and proof vectors. Structured fuzzing, audit and testnet gates also remain. Unknown or
+   the first call-free Pasta-field/boolean subset has deterministic Halo2 gates, pinned verifying-key
+   descriptor regeneration, real randomized proof creation/verification, IR/profile key binding and
+   positive/negative proof vectors. Integers, composites, control flow, calls and intrinsics still require
+   backend lowering and type-specific proof vectors. Structured fuzzing, audit and testnet gates also remain. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative
