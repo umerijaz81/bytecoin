@@ -23,12 +23,13 @@ unreachable until the release gates below are independently satisfied.
    packages where another native language has an identified maintainer. Both packages, golden
    request/response fixtures, compatibility policy, semantic versioning and byte-for-byte
    three-platform package reproduction are CI-gated.
-2. The arbitrary-private-program boundary is now frozen in
-   `docs/Onyx-Compiler-Specification.md`: it defines the bounded v1 type system and control flow,
-   canonical IR, explicit disclosure/state discipline, conservative resource analysis, deterministic
-   Halo2 lowering, verifier-key regeneration and reproducible artifact bundle. Remaining: implement
-   its parser, type checker, IR/resource verifier and backend, then complete its independent audit and
-   testnet gates. Unknown or user-supplied circuits continue to fail closed until all of those gates pass.
+2. The arbitrary-private-program boundary is frozen in `docs/Onyx-Compiler-Specification.md`. A
+   non-registrable alpha frontend now implements strict source-package loading, a bounded typed parser,
+   static loop/conditional lowering, acyclic direct calls, guarded canonical binary IR, conservative
+   resource analysis, reproducible bundles and a strict independent decoder/recompiler with frozen
+   cross-platform digests. Remaining: array/record operations and dependency import, deterministic
+   Halo2 lowering, verifier-key regeneration, structured fuzzing, audit and testnet gates. Unknown or
+   user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative
    vectors, cost budgets and an independent circuit review.
