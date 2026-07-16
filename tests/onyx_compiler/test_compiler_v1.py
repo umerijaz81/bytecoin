@@ -198,6 +198,20 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
             compiler_v1.write_bundle(compiler_v1.load_package(package), bundle)
             verifier.verify_bundle(bundle)
 
+    def test_fixed_byte_string_literals_are_canonical_and_verified(self):
+        source = b"""export fn balance(public network: u32, private payload: bytes<4>) -> bytes<4> {
+  let output: bytes<4> = hex\"0102a0ff\";
+  return output;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source,
+                vectors=[{"function": "balance", "inputs": [7, "00000000"], "expected": "0102a0ff"}])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle)
+            verifier.verify_bundle(bundle)
+
     def test_unbounded_and_unsafe_language_constructs_fail_closed(self):
         bad_sources = (
             SOURCE.replace(b"for i in 0..3", b"while true"),

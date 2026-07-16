@@ -199,7 +199,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 raise VerificationError("IR guard is not a dominating boolean value")
             encoded_immediate = reader.uleb()
             immediate = None if encoded_immediate == 0 else encoded_immediate - 1
-            text = reader.text(256)
+            text = reader.text(8192)
             side_effect = opcode in ("assert", "return")
             if side_effect != (result is None) or (result is not None and result != index):
                 raise VerificationError("IR result numbering is not canonical SSA order")
@@ -211,7 +211,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 raise VerificationError("unknown IR intrinsic")
             if opcode == "call" and (not compiler_v1.re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text) or text >= name):
                 raise VerificationError("IR direct call is not acyclic name order")
-            if opcode not in ("parameter", "intrinsic", "call") and text:
+            if opcode not in ("parameter", "bytes", "intrinsic", "call") and text:
                 raise VerificationError("unexpected IR instruction text")
             if opcode not in ("const", "index", "field") and immediate is not None:
                 raise VerificationError("unexpected IR immediate")
@@ -225,6 +225,7 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                 "mul": 2, "div": 2, "rem": 2, "shl": 2, "shr": 2, "return": 1,
                 "index": 2,
                 "field": 1,
+                "bytes": 0,
             }
             if opcode in expected_operands and len(operands) != expected_operands[opcode]:
                 raise VerificationError("IR opcode has a noncanonical operand count")
@@ -249,6 +250,8 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                     function_constraints += 1 + 2 * int(immediate or 0)
                 elif opcode == "record":
                     function_constraints += 1 + len(operands)
+                elif opcode == "bytes":
+                    function_constraints += 1 + len(text) // 2
                 else:
                     function_constraints += 1
             operand_types = tuple(value_types[operand] for operand in operands)
@@ -261,6 +264,10 @@ def verify_ir(data: bytes, profile: dict, resources: dict) -> None:
                     raise VerificationError("IR boolean constant is noncanonical")
                 if type_name in compiler_v1.INTEGER_BITS and immediate >= 1 << compiler_v1.INTEGER_BITS[type_name]:
                     raise VerificationError("IR integer constant exceeds its type")
+            elif opcode == "bytes":
+                match = compiler_v1.re.fullmatch(r"bytes<([1-9][0-9]{0,3})>", type_name)
+                if match is None or not compiler_v1.re.fullmatch(r"[0-9a-f]*", text) or len(text) != int(match.group(1)) * 2:
+                    raise VerificationError("IR byte-string literal is invalid")
             elif opcode == "not" and (operand_types != ("bool",) or type_name != "bool"):
                 raise VerificationError("IR logical-not types are invalid")
             elif opcode in ("and", "or") and (operand_types != ("bool", "bool") or type_name != "bool"):

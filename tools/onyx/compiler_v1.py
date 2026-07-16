@@ -251,7 +251,8 @@ def load_package(root: pathlib.Path) -> SourcePackage:
 
 TOKEN = re.compile(
     r"(?P<space>[ \t\n]+)|(?P<comment>//[^\n]*)|(?P<number>0|[1-9][0-9]*)|"
-    r"(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>->|\.\.|==|!=|<=|>=|&&|\|\||<<|>>|[.{}()\[\],;:+\-*/%<>=!])"
+    r"(?P<hex>hex\"[0-9a-f]*\")|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|"
+    r"(?P<op>->|\.\.|==|!=|<=|>=|&&|\|\||<<|>>|[.{}()\[\],;:+\-*/%<>=!])"
 )
 
 
@@ -484,6 +485,11 @@ class Parser:
         token = self.take()
         if token.isdigit():
             left = Expr("number", int(token))
+        elif token.startswith('hex"'):
+            payload = token[4:-1]
+            if len(payload) % 2:
+                raise CompileError("E_BYTES_LITERAL", "hex literal must contain whole bytes")
+            left = Expr("bytes", bytes.fromhex(payload))
         elif token in ("true", "false"):
             left = Expr("bool", token == "true")
         elif token == "!":
@@ -604,6 +610,10 @@ class Lowerer:
         if expression.kind == "bool":
             type_ = Type("bool")
             return type_, self.emit("const", type_, immediate=1 if expression.value else 0)
+        if expression.kind == "bytes":
+            if expected is None or expected.name != "bytes" or len(expression.value) != expected.length:
+                raise CompileError("E_BYTES_LITERAL", "byte-string literal length differs from its context")
+            return expected, self.emit("bytes", expected, text=bytes(expression.value).hex())
         if expression.kind == "name":
             if expression.value not in self.environment:
                 raise CompileError("E_UNKNOWN_NAME", f"unknown value {expression.value!r}")
@@ -777,7 +787,7 @@ class Lowerer:
 
 OPCODES = {name: index for index, name in enumerate((
     "parameter", "const", "not", "and", "or", "eq", "ne", "lt", "le", "gt", "ge",
-    "add", "sub", "mul", "div", "rem", "shl", "shr", "array", "index", "record", "field", "intrinsic", "call", "assert", "return"
+    "add", "sub", "mul", "div", "rem", "shl", "shr", "bytes", "array", "index", "record", "field", "intrinsic", "call", "assert", "return"
 ), 1)}
 
 
@@ -865,6 +875,8 @@ def compile_sources(package: SourcePackage) -> tuple[list[CompiledFunction], byt
                     cost = 1 + 2 * int(instruction.immediate or 0)
                 elif instruction.opcode == "record":
                     cost = 1 + len(instruction.operands)
+                elif instruction.opcode == "bytes":
+                    cost = 1 + len(instruction.text) // 2
                 else:
                     cost = 1
                 constraints_for_function = checked_add(constraints_for_function, cost, "constraint estimate")
@@ -939,6 +951,9 @@ def neutral_value(type_name: str):
         return tuple(neutral_value(match.group(1)) for _ in range(int(match.group(2))))
     if type_name.startswith("{"):
         return tuple(neutral_value(type_) for _, type_ in parse_record_type(type_name))
+    match = re.fullmatch(r"bytes<([1-9][0-9]{0,3})>", type_name)
+    if match:
+        return bytes(int(match.group(1)))
     return False if type_name == "bool" else 0
 
 
@@ -954,6 +969,16 @@ def checked_value(value, type_name: str):
     if type_name == "field":
         if type(value) is not int or value < 0 or value >= PASTA_FP_MODULUS:
             raise ExecutionFailure("value is outside the Pasta base field")
+        return value
+    match = re.fullmatch(r"bytes<([1-9][0-9]{0,3})>", type_name)
+    if match:
+        length = int(match.group(1))
+        if isinstance(value, str):
+            if not re.fullmatch(r"[0-9a-f]*", value) or len(value) != length * 2:
+                raise ExecutionFailure("byte-string hex value is not canonical")
+            return bytes.fromhex(value)
+        if not isinstance(value, bytes) or len(value) != length:
+            raise ExecutionFailure("byte-string value has the wrong length")
         return value
     match = re.fullmatch(r"\[(.+);([1-9][0-9]{0,3})\]", type_name)
     if match:
@@ -987,6 +1012,8 @@ def evaluate_function(function: CompiledFunction, inputs: list, functions: dict[
         elif instruction.opcode == "const":
             value = checked_value(bool(instruction.immediate) if instruction.type == "bool" else instruction.immediate,
                                   instruction.type)
+        elif instruction.opcode == "bytes":
+            value = checked_value(instruction.text, instruction.type)
         elif instruction.opcode == "not":
             value = not operands[0]
         elif instruction.opcode == "and":
@@ -1069,6 +1096,8 @@ def evaluate_vectors(package: SourcePackage, compiled: list[CompiledFunction]) -
 
 
 def json_value(value):
+    if isinstance(value, bytes):
+        return value.hex()
     if isinstance(value, tuple):
         return [json_value(item) for item in value]
     return value

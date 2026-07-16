@@ -24,7 +24,7 @@ compiler build and target-profile digest. The current alpha fails closed on none
 until content-addressed dependency import is implemented.
 
 The implemented language accepts explicitly public/private parameters, `bool`, checked `u8`/`u16`/
-`u32`/`u64`, Pasta `field`, bounded byte-string/array interface types, fixed-array construction and
+`u32`/`u64`, Pasta `field`, canonical fixed byte strings with lowercase hex construction, fixed-array construction and
 bounded indexing, canonical nonrecursive records with ordered construction/field access, immutable
 `let`, assertions, one final return, statically bounded `for`, constrained `if`/`else`, three closed
 cryptographic intrinsics and direct calls to earlier name-sorted functions.
@@ -33,9 +33,9 @@ dominating boolean guard so checked arithmetic and assertions can be gated by a 
 backend. Recursion, backward calls, `while`, mutable globals, indirect calls, implicit casts, unknown
 intrinsics and nested returns are rejected.
 
-Byte-string construction, dependency import and the remaining versioned cryptographic intrinsics are
-not implemented yet; using them fails compilation. This is intentionally recorded as remaining work
-rather than silently assigning host-language semantics.
+Dependency import and the remaining versioned cryptographic intrinsics are not implemented yet; using
+them fails compilation. This is intentionally recorded as remaining work rather than silently
+assigning host-language semantics.
 
 ## Artifact and verifier
 

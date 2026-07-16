@@ -28,8 +28,8 @@ unreachable until the release gates below are independently satisfied.
    static loop/conditional lowering, acyclic direct calls, guarded canonical binary IR, conservative
    resource analysis, reproducible bundles and a strict independent decoder/recompiler with frozen
    cross-platform digests. Fixed arrays have canonical construction and bounded-index IR; records have
-   canonical nonrecursive construction and field access. Remaining: byte-string operations and
-   dependency import, deterministic
+   canonical nonrecursive construction and field access; fixed byte strings use exact-length lowercase
+   hex literals. Remaining: dependency import, deterministic
    Halo2 lowering, verifier-key regeneration, structured fuzzing, audit and testnet gates. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
