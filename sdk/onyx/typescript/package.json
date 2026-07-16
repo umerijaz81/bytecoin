@@ -1,0 +1,29 @@
+{
+  "name": "@bytecoin/onyx-sdk",
+  "version": "1.0.0",
+  "description": "Dependency-free wallet RPC codec for Bytecoin Onyx SDK profile v1",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./wallet-rpc-v1.json": "./wallet-rpc-v1.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "wallet-rpc-v1.json",
+    "README.md",
+    "COMPATIBILITY.md"
+  ],
+  "license": "LGPL-3.0-or-later",
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}

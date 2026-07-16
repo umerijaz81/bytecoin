@@ -10,6 +10,8 @@ This profile freezes the developer-facing contract independently from consensus 
 - Canonical cryptographic and descriptor bytes: `../../../vendor/onyx-zk/test_vectors.md`.
 - Semantically versioned dependency-free Python wheel, descriptor binding and offline RPC codec:
   `../python/` (`bytecoin-onyx-sdk==1.0.0`).
+- Semantically versioned dependency-free JavaScript/TypeScript package and offline RPC codec:
+  `../typescript/` (`@bytecoin/onyx-sdk@1.0.0`).
 
 ABI v1 callers must release every successful returned buffer with `onyx_free`. A future incompatible
 signature, ownership, encoding, or error-contract change requires a new ABI number and compatibility

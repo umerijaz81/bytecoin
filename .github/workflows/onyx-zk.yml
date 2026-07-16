@@ -41,6 +41,10 @@ jobs:
       - name: Test Python SDK binding
         if: matrix.shard == 'core'
         run: python -m unittest discover -s sdk/onyx/python -p "test_*.py"
+      - name: Test JavaScript and TypeScript SDK binding
+        if: matrix.shard == 'core'
+        shell: bash
+        run: node sdk/onyx/typescript/test.mjs
       - name: Build versioned Python SDK wheel without network access
         if: matrix.shard == 'core'
         run: |
@@ -49,6 +53,16 @@ jobs:
       - name: Verify reproducible Python SDK wheel contents and metadata
         if: matrix.shard == 'core'
         run: python sdk/onyx/python/verify_wheel.py build/onyx-sdk-wheel build/onyx-sdk-wheel-rebuild
+      - name: Build and verify reproducible TypeScript SDK packages
+        if: matrix.shard == 'core'
+        shell: bash
+        env:
+          npm_config_cache: build/npm-cache
+        run: |
+          python -c "from pathlib import Path; Path('build/onyx-ts-package').mkdir(parents=True, exist_ok=True); Path('build/onyx-ts-package-rebuild').mkdir(parents=True, exist_ok=True)"
+          npm pack ./sdk/onyx/typescript --ignore-scripts --pack-destination build/onyx-ts-package
+          npm pack ./sdk/onyx/typescript --ignore-scripts --pack-destination build/onyx-ts-package-rebuild
+          python sdk/onyx/typescript/verify_package.py build/onyx-ts-package build/onyx-ts-package-rebuild
       - name: Test optimized proof shard without network access
         env:
           CARGO_INCREMENTAL: "0"
