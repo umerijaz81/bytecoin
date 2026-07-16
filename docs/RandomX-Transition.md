@@ -26,7 +26,8 @@ rare invalid-hash condition on ARM/RISC-V. Provenance is recorded in
 Run `tests --randomx` for the repository-specific v2 known-answer vector and cached-seed check. The
 Jade test verifies the fork/version boundary and delayed epoch rule; `tests --blockchain` includes the
 branch-derived seed/reorganization integration. CI also runs pinned upstream v2 vectors plus the
-full-memory equality test on x86-64 and ARM64, and contains a RISC-V/QEMU vector gate. Remaining
+full-memory equality test on x86-64 and ARM64, contains a RISC-V/QEMU vector gate, and repeatedly
+reorganizes competing branches through two distinct delayed-seed epochs. Remaining
 release qualification includes independent review, longer/deeper randomized reorg and sync runs,
 corrupt-template tests, published mining throughput/power benchmarks and public testnet soak.
 

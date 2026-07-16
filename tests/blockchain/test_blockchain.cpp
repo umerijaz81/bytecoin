@@ -216,7 +216,27 @@ void test_blockchain(common::CommandLine &cmd) {
 		    "RandomX side branch did not validate and reorganize across its seed epoch");
 		invariant(randomx_chain.get_ancestor_hash(randomx_chain.get_tip(), 8) == side_seed.hash,
 		    "RandomX reorganized tip did not retain the side-branch seed");
-		std::cout << "---- RandomX branch-derived epoch reorganization: OK" << std::endl;
+
+		// Continue both retained branches through a second seed epoch and force two more tip changes.
+		// This catches implementations that cache the current tip's seed and accidentally reuse it when
+		// validating a longer branch whose height-16 ancestor differs.
+		const auto main_second_seed = randomx_miner.test_grow_chain(main_tip.hash, 5);
+		invariant(main_second_seed.height == 16, "RandomX main branch missed its second seed height");
+		const auto main_second_tip = randomx_miner.test_grow_chain(main_second_seed.hash, 1);
+		invariant(main_second_tip.height == 17 && randomx_chain.get_tip_bid() == main_second_tip.hash,
+		    "RandomX main branch did not reorganize through the second epoch");
+		invariant(randomx_chain.get_ancestor_hash(randomx_chain.get_tip(), 16) == main_second_seed.hash,
+		    "RandomX main branch retained the wrong second-epoch seed");
+
+		const auto side_second_seed = randomx_miner.test_grow_chain(side_tip.hash, 4);
+		invariant(side_second_seed.height == 16 && side_second_seed.hash != main_second_seed.hash,
+		    "RandomX branches did not produce distinct second-epoch seeds");
+		const auto side_second_tip = randomx_miner.test_grow_chain(side_second_seed.hash, 2);
+		invariant(side_second_tip.height == 18 && randomx_chain.get_tip_bid() == side_second_tip.hash,
+		    "RandomX side branch did not reorg back through the second epoch");
+		invariant(randomx_chain.get_ancestor_hash(randomx_chain.get_tip(), 16) == side_second_seed.hash,
+		    "RandomX side branch retained the wrong second-epoch seed");
+		std::cout << "---- RandomX repeated branch-derived epoch reorganizations: OK" << std::endl;
 	}
 }
 
