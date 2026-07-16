@@ -399,6 +399,7 @@ void TCPSocket::write_callback(CFWriteStreamRef stream, CFStreamEventType event,
 #else  // #if TARGET_OS_IPHONE
 
 #include <algorithm>
+#include <chrono>
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
 #include <iostream>
@@ -407,6 +408,11 @@ using namespace std::placeholders;  // We enjoy standard bindings
 
 #if platform_USE_SSL
 #include <boost/asio/ssl.hpp>
+#if BOOST_VERSION >= 107300
+#include <boost/asio/ssl/host_name_verification.hpp>
+#else
+#include <boost/asio/ssl/rfc2818_verification.hpp>
+#endif
 
 namespace ssl = boost::asio::ssl;
 typedef ssl::stream<boost::asio::ip::tcp::socket> SSLSocket;
@@ -526,7 +532,7 @@ EventLoop::~EventLoop() { current_loop = nullptr; }
 void EventLoop::cancel() { io_context.stop(); }
 
 void EventLoop::run() { io_context.run(); }
-void EventLoop::wake(std::function<void()> &&a_handler) { io_context.post(std::move(a_handler)); }
+void EventLoop::wake(std::function<void()> &&a_handler) { boost::asio::post(io_context, std::move(a_handler)); }
 
 class SafeMessage::Impl {
 public:
@@ -572,7 +578,7 @@ public:
 	explicit Impl(Timer *owner) : owner(owner), pending_wait(false), timer(EventLoop::current()->io()) {}
 	Timer *owner;
 	bool pending_wait;
-	boost::asio::deadline_timer timer;
+	boost::asio::steady_timer timer;
 
 	void close() {
 		Timer *was_owner = owner;
@@ -596,8 +602,7 @@ public:
 	void start_timer(float after_seconds) {
 		// assert(pending_wait == false);
 		pending_wait = true;
-		timer.expires_from_now(boost::posix_time::milliseconds(
-		    static_cast<int>(after_seconds * 1000)));  // int because we do not know exact type
+		timer.expires_after(std::chrono::milliseconds(static_cast<int64_t>(after_seconds * 1000)));
 		timer.async_wait(std::bind(&Impl::handle_timeout, owner->impl, _1));
 	}
 };
@@ -842,18 +847,20 @@ bool TCPSocket::connect(const std::string &addr, uint16_t port) {
 		if (ssl_addr.first) {
 #if platform_USE_SSL
 			boost::asio::ip::tcp::resolver resolver(EventLoop::current()->io());
-			boost::asio::ip::tcp::resolver::query query(ssl_addr.second, common::to_string(port));
-			boost::asio::ip::tcp::resolver::iterator iter = resolver.resolve(query);
-			for (; iter != boost::asio::ip::tcp::resolver::iterator(); ++iter)
-				if (iter->endpoint().address().is_v4())
-					break;
-			if (iter == boost::asio::ip::tcp::resolver::iterator())
+			const auto endpoints = resolver.resolve(ssl_addr.second, common::to_string(port));
+			const auto iter = std::find_if(endpoints.begin(), endpoints.end(),
+			    [](const auto &entry) { return entry.endpoint().address().is_v4(); });
+			if (iter == endpoints.end())
 				return false;
 			std::shared_ptr<ssl::context> shared_client_context =
 			    std::make_shared<ssl::context>(ssl::context::tlsv12_client);
 			add_system_root_certs(*shared_client_context);
 			shared_client_context->set_verify_mode(ssl::verify_peer);
+#if BOOST_VERSION >= 107300
+			shared_client_context->set_verify_callback(ssl::host_name_verification(ssl_addr.second));
+#else
 			shared_client_context->set_verify_callback(ssl::rfc2818_verification(ssl_addr.second));
+#endif
 
 			impl->ssl_context = shared_client_context;
 			impl->ssl_socket  = std::make_unique<SSLSocket>(EventLoop::current()->io(), *impl->ssl_context);
@@ -939,8 +946,10 @@ TCPAcceptor::TCPAcceptor(const std::string &addr, uint16_t port, A_handler &&a_h
     : impl(std::make_shared<Impl>(this)),
       a_handler(std::move(a_handler)) {
 	boost::asio::ip::tcp::resolver resolver(EventLoop::current()->io());
-	boost::asio::ip::tcp::resolver::query query(addr, common::to_string(port));
-	boost::asio::ip::tcp::endpoint endpoint = *resolver.resolve(query);
+	const auto endpoints = resolver.resolve(addr, common::to_string(port));
+	if (endpoints.begin() == endpoints.end())
+		throw AddressInUse("Failed to resolve TCP listening address " + addr);
+	boost::asio::ip::tcp::endpoint endpoint = endpoints.begin()->endpoint();
 	impl->acceptor.open(endpoint.protocol());
 	impl->acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
 	impl->acceptor.bind(endpoint);

@@ -247,6 +247,16 @@ void DBmemory::backup_db(const std::string &path, const std::string &dst_path) {
 }
 
 void DBmemory::run_tests() {
+	unsigned char binary_key[4] = {};
+	from_binary_key(std::string("ab", 2), 1, binary_key, sizeof(binary_key));
+	invariant(binary_key[0] == 'b' && binary_key[1] == 0, "binary key bounded copy changed");
+	bool rejected_invalid_offset = false;
+	try {
+		from_binary_key(std::string("ab", 2), 3, binary_key, sizeof(binary_key));
+	} catch (const std::out_of_range &) {
+		rejected_invalid_offset = true;
+	}
+	invariant(rejected_invalid_offset, "binary key offset beyond the key was accepted");
 	delete_db("temp_db");
 	{
 		DBmemory db(platform::O_CREATE_NEW, "temp_db", []() {});

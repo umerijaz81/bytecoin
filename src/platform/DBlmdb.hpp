@@ -5,7 +5,9 @@
 
 #include <lmdb.h>
 #include <algorithm>
+#include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include "Files.hpp"  // For OpenMode
 #include "common/BinaryArray.hpp"
@@ -115,8 +117,11 @@ public:
 		return result;
 	}
 	static void from_binary_key(const std::string &str, size_t pos, unsigned char *data, size_t size) {
+		if (pos > str.size())
+			throw std::out_of_range("binary database key offset exceeds key size");
 		auto si = std::min(str.size() - pos, size);
-		std::char_traits<unsigned char>::copy(data, reinterpret_cast<const unsigned char *>(str.data()) + pos, si);
+		if (si != 0)
+			std::memcpy(data, str.data() + pos, si);
 	}
 
 	static std::string to_ascending_key(uint32_t key);
