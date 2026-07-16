@@ -1,0 +1,41 @@
+{
+  "profile": "bytecoin-onyx-wallet-rpc-v1",
+  "cases": [
+    {
+      "request": {"jsonrpc": "2.0", "id": "status", "method": "get_onyx_status", "params": {"address_index": 0}},
+      "response": {"jsonrpc": "2.0", "id": "status", "result": {"address": "onyx1", "balance": 7, "note_count": 1, "commitment_root": "00"}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "asset", "method": "get_onyx_asset_balance", "params": {"program_id": "11", "asset_id": "22"}},
+      "response": {"jsonrpc": "2.0", "id": "asset", "result": {"balance": 5, "unspent_note_count": 2}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "program", "method": "get_onyx_program_status", "params": {"program_id": "11"}},
+      "response": {"jsonrpc": "2.0", "id": "program", "result": {"issuer": "33", "max_supply": 100, "issued_supply": 10, "remaining_supply": 90, "next_sequence": 1, "query_height": 50, "activation_height": 40, "deactivation_height": 0, "active": true, "metadata": "symbol=T"}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "transfer", "method": "create_onyx_transaction", "params": {"address": "onyx1", "amount": 4, "fee": 1, "expiry_height": 60, "memo": "hi"}},
+      "response": {"jsonrpc": "2.0", "id": "transfer", "result": {"binary_transaction": "0600", "transaction_hash": "44"}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "token-transfer", "method": "create_onyx_token_transaction", "params": {"address": "onyx1", "program_id": "11", "amount": 4, "fee": 1, "expiry_height": 60, "memo": "hi"}},
+      "response": {"jsonrpc": "2.0", "id": "token-transfer", "result": {"binary_transaction": "0601", "transaction_hash": "45"}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "deploy", "method": "create_onyx_program_deployment", "params": {"max_supply": 100, "metadata": "symbol=T", "activation_height": 40, "deactivation_height": 0, "fee": 1, "expiry_height": 60}},
+      "response": {"jsonrpc": "2.0", "id": "deploy", "result": {"binary_transaction": "0602", "transaction_hash": "46", "program_id": "11"}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "issue", "method": "create_onyx_token_issuance", "params": {"address": "onyx1", "program_id": "11", "amount": 10, "expiry_height": 60, "memo": "mint"}},
+      "response": {"jsonrpc": "2.0", "id": "issue", "result": {"binary_transaction": "0603", "transaction_hash": "47", "sequence": 0}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "bridge", "method": "create_onyx_bridge", "params": {"address": "onyx1", "legacy_amount": 5, "fee": 1, "legacy_stack_index": 9, "legacy_key_image": "55", "expiry_height": 60, "memo": "shield"}},
+      "response": {"jsonrpc": "2.0", "id": "bridge", "result": {"unsigned_bridge": "0604", "ownership_sighash": "66"}}
+    },
+    {
+      "request": {"jsonrpc": "2.0", "id": "finalize", "method": "finalize_onyx_bridge", "params": {"unsigned_bridge": "0604", "ownership_signature": "77"}},
+      "response": {"jsonrpc": "2.0", "id": "finalize", "result": {"binary_transaction": "0605", "transaction_hash": "48"}}
+    }
+  ]
+}

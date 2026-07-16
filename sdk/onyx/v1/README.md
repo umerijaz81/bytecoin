@@ -6,8 +6,10 @@ This profile freezes the developer-facing contract independently from consensus 
 - Consensus protocol family: Onyx V6; unknown envelope and function versions fail closed.
 - Program descriptor: `onyx_token_program_descriptor` at fixed Merkle depth 32.
 - Wallet RPC request/response field contract: `wallet-rpc.json`.
+- Golden JSON-RPC request/response objects for every method: `fixtures/wallet-rpc.json`.
 - Canonical cryptographic and descriptor bytes: `../../../vendor/onyx-zk/test_vectors.md`.
-- Dependency-free Python descriptor binding: `../python/`.
+- Semantically versioned dependency-free Python wheel, descriptor binding and offline RPC codec:
+  `../python/` (`bytecoin-onyx-sdk==1.0.0`).
 
 ABI v1 callers must release every successful returned buffer with `onyx_free`. A future incompatible
 signature, ownership, encoding, or error-contract change requires a new ABI number and compatibility

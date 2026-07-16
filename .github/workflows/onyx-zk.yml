@@ -41,6 +41,9 @@ jobs:
       - name: Test Python SDK binding
         if: matrix.shard == 'core'
         run: python -m unittest discover -s sdk/onyx/python -p "test_*.py"
+      - name: Build versioned Python SDK wheel without network access
+        if: matrix.shard == 'core'
+        run: python -m pip wheel --no-deps --no-build-isolation sdk/onyx/python -w build/onyx-sdk-wheel
       - name: Test optimized proof shard without network access
         env:
           CARGO_INCREMENTAL: "0"

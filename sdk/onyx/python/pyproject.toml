@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bytecoin-onyx-sdk"
+version = "1.0.0"
+description = "Versioned offline bindings and wallet RPC codecs for Bytecoin Onyx ABI profile v1"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "LGPL-3.0-or-later"
+authors = [{name = "Bytecoin contributors"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security :: Cryptography",
+]
+
+[tool.setuptools]
+py-modules = ["onyx_sdk"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bytecoin_onyx*"]
+
+[tool.setuptools.package-data]
+bytecoin_onyx = ["wallet_rpc_v1.json"]

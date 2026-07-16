@@ -1,11 +1,17 @@
 # Onyx Python SDK binding
 
-`onyx_sdk.py` is a dependency-free Python 3 binding for ABI profile v1. It currently exposes the
-offline capped-token descriptor helper and deliberately does not hide wallet RPC or transaction relay
-behind implicit network behavior.
+`bytecoin-onyx-sdk` is the dependency-free Python distribution for ABI/profile v1. It exposes the
+offline capped-token descriptor helper and a fail-closed wallet RPC codec. It deliberately does not
+hide wallet RPC or transaction relay behind implicit network behavior.
+
+Build the wheel without downloading dependencies:
+
+```text
+python -m pip wheel --no-deps --no-build-isolation sdk/onyx/python
+```
 
 ```python
-from onyx_sdk import OnyxSdk
+from bytecoin_onyx import OnyxSdk, WalletRpcCodec
 
 sdk = OnyxSdk("path/to/onyx_sdk.dll")
 descriptor = sdk.token_program_descriptor(
@@ -17,12 +23,21 @@ descriptor = sdk.token_program_descriptor(
     circuit_k=20,
 )
 print(descriptor.program_id.hex())
+
+codec = WalletRpcCodec()
+request = codec.request("get_onyx_status", {"address_index": 0}, request_id="status")
+# Send `request` with an authenticated transport chosen by the application, decode JSON, then:
+# result = codec.validate_response("get_onyx_status", response, request_id="status")
 ```
 
 The normal repository build emits a static Rust library for the C++ node. Applications using Python
 must package the same exported C ABI as a shared library. The binding rejects an ABI mismatch, checks
 all scalar/length constraints before crossing FFI, copies returned bytes, and calls `onyx_free`
 exactly once on success.
+
+The checked-in package is semantically versioned as `1.0.0`. `COMPATIBILITY.md` defines what may
+change in patch/minor releases. The packaged wallet RPC profile is byte-for-byte compared with the
+source profile, and `../v1/fixtures/wallet-rpc.json` covers every v1 method.
 
 Run the binding tests without a native library:
 
