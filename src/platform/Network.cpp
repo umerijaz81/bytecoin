@@ -585,8 +585,11 @@ public:
 		if (pending_wait) {
 			owner = nullptr;
 			was_owner->impl.reset();
-			boost::system::error_code ec;
-			timer.cancel(ec);  // Prevent exceptions
+			try {
+				timer.cancel();
+			} catch (const boost::system::system_error &) {
+				// Cancellation is best-effort during owner teardown; the retained handler is inert.
+			}
 		}
 	}
 	void handle_timeout(const boost::system::error_code &e) {
