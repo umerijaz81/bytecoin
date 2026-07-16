@@ -1,7 +1,7 @@
 # Copyright (c) 2012-2018, The CryptoNote developers, The Bytecoin developers.
 # Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.15)
 if(REPRODUCIBLE_BUILD AND (NOT DEFINED ENV{SOURCE_DATE_EPOCH} OR NOT "$ENV{SOURCE_DATE_EPOCH}" MATCHES "^[0-9]+$"))
     message(FATAL_ERROR "REPRODUCIBLE_BUILD requires a numeric SOURCE_DATE_EPOCH")
 endif()
