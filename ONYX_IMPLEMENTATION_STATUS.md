@@ -41,7 +41,9 @@ unreachable until the release gates below are independently satisfied.
    bounded dynamic indexing, with real multi-leaf proof vectors. Versioned Poseidon, domain-separated Merkle-node and
    position-bound nullifier intrinsics match an independent Grain/MDS evaluator and real proof vectors. Multi-export
    IR uses exact entry selection with export identity fixed into descriptor v2 and the circuit, and bundles regenerate
-   one descriptor per declared export. Structured fuzzing, audit and testnet gates still remain. Unknown or
+   one descriptor per declared export. A seeded 48-case structured campaign differentially checks scalar semantics,
+   deterministic IR, malformed canonical encodings and bounded real-backend lowering on all CI platforms. Sustained
+   coverage-guided fuzzing, independent audit and testnet gates still remain. Unknown or
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative

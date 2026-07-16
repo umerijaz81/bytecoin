@@ -41,3 +41,20 @@ including the Onyx-enabled C++ build, corpus tests and bounded campaign.
 
 Keep crash artifacts and minimized regression inputs. Every confirmed issue must gain a deterministic
 unit/regression test before the fix is accepted.
+
+## Compiler structured campaign
+
+`tools/onyx/structured_fuzz_v1.py` separately exercises the compiler trust boundary with a seeded,
+grammar-directed campaign. It generates bounded valid field, Boolean and checked-integer programs,
+computes results with an operator-level oracle independent of the compiler evaluator, requires deterministic
+IR reproduction, and sends canonical IR through the independent decoder. Every case also checks that truncated,
+trailing-byte and overlong-ULEB mutations fail closed. When `--backend` is supplied, a bounded prefix is lowered
+through the real Halo2 backend and must produce an export-bound descriptor v2.
+
+The locked Onyx core workflow runs 48 deterministic cases on every supported platform and lowers eight through
+Halo2. This regression campaign complements rather than replaces coverage-guided fuzzing, sanitizers, long-running
+campaigns, minimized crash retention, and independent review. Reproduce it locally with:
+
+```text
+python tools/onyx/structured_fuzz_v1.py --cases 48 --backend vendor/onyx-zk/target/release/onyx-compiler-backend
+```
