@@ -64,11 +64,12 @@ requires every output byte to match.
 ## Halo2 compiler alpha backend
 
 `vendor/onyx-zk/src/compiler_backend.rs` independently decodes canonical `ONXIR` inside the pinned
-Rust/Halo2 dependency boundary. Its executable profile accepts exactly one call-free exported
-function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. A package may contain
+Rust/Halo2 dependency boundary. Its executable profile accepts explicitly selected exported
+functions over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. A package may contain
 acyclic direct helper calls: the backend independently verifies earlier-target signatures and deterministically
-inlines their parameters, constraints, assertions and return values into the single exported circuit. Packages
-with multiple exports remain rejected until the proof API has an explicit entry selector. Guarded control flow is normalized independently in
+inlines their parameters, constraints, assertions and return values into the selected exported circuit. The
+library and CLI proof APIs require an exact entry name for multi-export IR; unnamed APIs remain available only
+when the IR has exactly one export. Guarded control flow is normalized independently in
 the backend: guarded operands select constraint-safe neutral values, the original arithmetic gadget remains
 fully enabled, and its result is selected against the canonical type-zero. Guarded assertions become Boolean
 implications, and call guards propagate through every inlined callee constraint. Thus inactive division-by-zero,
@@ -106,10 +107,11 @@ mutation changes the verification key. Positive round trips and negative altered
 corrupted-proof and public-witness vectors run in the locked Rust test shard.
 
 The `onyx-compiler-backend` executable reads IR only from standard input and emits a fixed-length
-descriptor containing the circuit size, profile digest, IR digest and a domain-separated digest of
-the pinned Halo2 verifying key. Passing `--backend-executable` to the frontend embeds that descriptor
-and backend measurements. Verification then requires an explicitly supplied backend executable,
-regenerates the VK descriptor from bundled IR, recompiles the whole bundle and byte-compares it. The
+v2 descriptor containing the circuit size, profile digest, IR digest, domain-separated export-name digest and
+a domain-separated digest of the pinned Halo2 verifying key. Passing `--backend-executable` to the frontend
+embeds one descriptor per manifest export and per-export backend measurements. Verification requires an
+explicitly supplied backend executable, requires the descriptor set to equal the declared exports, regenerates
+every VK descriptor from bundled IR, recompiles the whole bundle and byte-compares it. The
 descriptor remains `compiler-alpha-not-registrable`; unsupported IR cannot omit constraints silently.
 
 The locked three-platform core workflow runs positive reproduction plus negative manifest, source,
@@ -118,8 +120,7 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 
 ## Remaining activation boundary
 
-The scalar, checked-integer and composite subset now lowers to Halo2 and independently regenerates its descriptor,
-but the complete language does not. Explicit multi-export selection still requires circuit lowering, proof vectors
-and backend measurements.
+The scalar, checked-integer, composite and intrinsic subset now lowers to Halo2 and independently regenerates
+per-export descriptors, but the complete release process is not finished.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.

@@ -402,6 +402,7 @@ def verify_bundle(root: pathlib.Path, backend_executable: pathlib.Path | None = 
     profile, _ = read_json(root / "target-profile.json")
     resources, _ = read_json(root / "resources.json")
     provenance, _ = read_json(root / "provenance.json")
+    package_manifest, _ = read_json(root / "source" / "onyx-package.json")
     if not isinstance(profile, dict) or profile.get("backend_status") != "frontend-only-not-registrable":
         raise VerificationError("bundle target profile is not the fail-closed frontend profile")
     if not isinstance(resources, dict) or "backend_measurements" not in resources:
@@ -424,25 +425,42 @@ def verify_bundle(root: pathlib.Path, backend_executable: pathlib.Path | None = 
     expected_ir_id = hashlib.sha256(compiler_v1.IR_ID_DOMAIN + ir).hexdigest()
     if (root / "ir-id.txt").read_bytes() != (expected_ir_id + "\n").encode("ascii") or provenance.get("ir_id") != expected_ir_id:
         raise VerificationError("IR identifier mismatch")
-    descriptor_path = root / "halo2-vk-descriptor.bin"
-    if descriptor_path.exists():
+    descriptor_root = root / "halo2-vk-descriptors"
+    if descriptor_root.exists():
         if backend_executable is None:
-            raise VerificationError("Halo2 descriptor requires an explicit regeneration executable")
+            raise VerificationError("Halo2 descriptors require an explicit regeneration executable")
         backend = provenance.get("halo2_backend")
         measurements = resources["backend_measurements"]
         if not isinstance(backend, dict) or not isinstance(measurements, dict) or \
                 backend.get("status") != "compiler-alpha-not-registrable":
             raise VerificationError("invalid Halo2 alpha provenance")
-        descriptor = descriptor_path.read_bytes()
-        if len(descriptor) != measurements.get("descriptor_bytes") or \
-                hashlib.sha256(descriptor).hexdigest() != backend.get("descriptor_sha256") or \
-                measurements.get("circuit_k") != backend.get("circuit_k"):
-            raise VerificationError("Halo2 descriptor differs from backend provenance")
-        regenerated = compiler_v1.backend_descriptor(backend_executable, ir, backend["circuit_k"])
-        if regenerated != descriptor:
-            raise VerificationError("Halo2 verifying-key descriptor did not regenerate")
+        expected_exports = package_manifest.get("exports") if isinstance(package_manifest, dict) else None
+        descriptor_bytes = measurements.get("descriptor_bytes")
+        descriptor_sha256 = backend.get("descriptor_sha256")
+        if (not descriptor_root.is_dir() or descriptor_root.is_symlink() or
+                not isinstance(expected_exports, list) or not isinstance(descriptor_bytes, dict) or
+                not isinstance(descriptor_sha256, dict) or sorted(descriptor_bytes) != expected_exports or
+                sorted(descriptor_sha256) != expected_exports or
+                measurements.get("circuit_k") != backend.get("circuit_k")):
+            raise VerificationError("invalid per-export Halo2 descriptor metadata")
+        expected_files = [f"{name}.bin" for name in expected_exports]
+        actual_files = sorted(path.name for path in descriptor_root.iterdir())
+        if actual_files != expected_files:
+            raise VerificationError("Halo2 descriptor set differs from package exports")
+        for export in expected_exports:
+            descriptor_path = descriptor_root / f"{export}.bin"
+            if descriptor_path.is_symlink() or not descriptor_path.is_file():
+                raise VerificationError("unsafe Halo2 descriptor path")
+            descriptor = descriptor_path.read_bytes()
+            if (len(descriptor) != descriptor_bytes[export] or
+                    hashlib.sha256(descriptor).hexdigest() != descriptor_sha256[export]):
+                raise VerificationError("Halo2 descriptor differs from backend provenance")
+            regenerated = compiler_v1.backend_descriptor(
+                backend_executable, ir, backend["circuit_k"], export)
+            if regenerated != descriptor:
+                raise VerificationError("Halo2 verifying-key descriptor did not regenerate")
     elif resources["backend_measurements"] is not None or "halo2_backend" in provenance:
-        raise VerificationError("backend metadata exists without a Halo2 descriptor")
+        raise VerificationError("backend metadata exists without Halo2 descriptors")
     if hashlib.sha256(manifest_bytes).hexdigest() == "":  # keep manifest bytes covered by strict parsing
         raise VerificationError("unreachable manifest digest state")
     with tempfile.TemporaryDirectory(prefix="onyx-compiler-verify-") as temporary:

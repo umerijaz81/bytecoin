@@ -41,10 +41,10 @@ fn main() {
     let arguments: Vec<String> = std::env::args().collect();
     if !matches!(
         (arguments.get(1).map(String::as_str), arguments.len()),
-        (Some("descriptor"), 3) | (Some("prove"), 5)
+        (Some("descriptor"), 3 | 4) | (Some("prove"), 5 | 6)
     ) {
-        eprintln!("usage: onyx-compiler-backend descriptor <circuit-k> < program.onxir");
-        eprintln!("   or: onyx-compiler-backend prove <circuit-k> <witness-fields> <public-fields> < program.onxir");
+        eprintln!("usage: onyx-compiler-backend descriptor <circuit-k> [export] < program.onxir");
+        eprintln!("   or: onyx-compiler-backend prove <circuit-k> <witness-fields> <public-fields> [export] < program.onxir");
         std::process::exit(2);
     }
     let k: u32 = arguments[2].parse().unwrap_or_else(|_| {
@@ -57,7 +57,13 @@ fn main() {
         std::process::exit(2);
     }
     if arguments[1] == "descriptor" {
-        match onyx_zk::compiler_backend::compiler_vk_descriptor(&ir, k) {
+        let result = match arguments.get(3) {
+            Some(export) => {
+                onyx_zk::compiler_backend::compiler_vk_descriptor_for_export(&ir, k, export)
+            }
+            None => onyx_zk::compiler_backend::compiler_vk_descriptor(&ir, k),
+        };
+        match result {
             Ok(descriptor) => print_hex(&descriptor),
             Err(error) => {
                 eprintln!("compiler backend rejected IR: {error:?}");
@@ -73,14 +79,16 @@ fn main() {
             eprintln!("invalid canonical public fields");
             std::process::exit(2);
         });
-        match onyx_zk::compiler_backend::create_compiler_proof(
-            &ir,
-            k,
-            onyx_zk::compiler_backend::CompilerWitness {
-                parameters: witness,
-            },
-            &public,
-        ) {
+        let witness = onyx_zk::compiler_backend::CompilerWitness {
+            parameters: witness,
+        };
+        let result = match arguments.get(5) {
+            Some(export) => onyx_zk::compiler_backend::create_compiler_proof_for_export(
+                &ir, k, export, witness, &public,
+            ),
+            None => onyx_zk::compiler_backend::create_compiler_proof(&ir, k, witness, &public),
+        };
+        match result {
             Ok(proof) => print_hex(&proof),
             Err(error) => {
                 eprintln!("compiler backend proof failed: {error:?}");

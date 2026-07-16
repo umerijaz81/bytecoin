@@ -1,9 +1,9 @@
 //! Deterministic Halo2 lowering boundary for canonical `ONXIR` v1.
 //!
-//! This backend profile deliberately accepts only one call-free scalar function over Pasta fields,
-//! booleans, and checked unsigned integers. Unsupported composite/control-flow instructions fail closed. The
-//! circuit shape retains the decoded program in `without_witnesses`, so key generation commits to
-//! opcode/selector placement rather than to runtime witnesses.
+//! This backend profile accepts an explicitly selected exported function over the bounded Onyx v1
+//! language. Unsupported instructions fail closed. The circuit shape retains the decoded program in
+//! `without_witnesses`, so key generation commits to opcode/selector placement rather than to runtime
+//! witnesses.
 
 use ff::{Field, PrimeField};
 use halo2_gadgets::poseidon::primitives::{ConstantLength, P128Pow5T3};
@@ -23,7 +23,8 @@ use std::collections::BTreeMap;
 mod compiler_composites;
 
 const IR_DOMAIN: &[u8] = b"ONXIR\x01";
-const DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.compiler-halo2-descriptor.v1";
+const DESCRIPTOR_DOMAIN: &[u8] = b"bytecoin.onyx.compiler-halo2-descriptor.v2";
+const EXPORT_DOMAIN: &[u8] = b"bytecoin.onyx.compiler-export.v1";
 const MAX_IR_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FUNCTIONS: usize = 1024;
 const MAX_INSTRUCTIONS: usize = 1_000_000;
@@ -109,6 +110,7 @@ struct Function {
 pub struct CompilerProgram {
     profile_digest: [u8; 32],
     ir_digest: [u8; 32],
+    export_digest: [u8; 32],
     function: Function,
 }
 
@@ -250,7 +252,11 @@ fn opcode(value: u8) -> Result<Opcode, CompilerBackendError> {
 
 impl CompilerProgram {
     pub fn decode(ir: &[u8]) -> Result<Self, CompilerBackendError> {
-        compiler_composites::decode_composite_program(ir)
+        Self::decode_export(ir, None)
+    }
+
+    pub fn decode_export(ir: &[u8], export: Option<&str>) -> Result<Self, CompilerBackendError> {
+        compiler_composites::decode_composite_program(ir, export)
     }
 
     #[allow(dead_code)]
@@ -433,6 +439,7 @@ impl CompilerProgram {
         Ok(Self {
             profile_digest,
             ir_digest,
+            export_digest: export_digest(&function.name),
             function,
         })
     }
@@ -1640,6 +1647,7 @@ impl Circuit<Fp> for CompilerCircuit {
             .profile_digest
             .iter()
             .chain(self.program.ir_digest.iter())
+            .chain(self.program.export_digest.iter())
             .copied()
             .collect::<Vec<_>>()
             .chunks_exact(8)
@@ -1916,8 +1924,32 @@ impl Circuit<Fp> for CompilerCircuit {
     }
 }
 
+fn export_digest(export: &str) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(EXPORT_DOMAIN);
+    hash.update((export.len() as u64).to_le_bytes());
+    hash.update(export.as_bytes());
+    hash.finalize().into()
+}
+
 pub fn compiler_vk_descriptor(ir: &[u8], k: u32) -> Result<Vec<u8>, CompilerBackendError> {
-    let program = checked_program(ir, k)?;
+    compiler_vk_descriptor_selected(ir, k, None)
+}
+
+pub fn compiler_vk_descriptor_for_export(
+    ir: &[u8],
+    k: u32,
+    export: &str,
+) -> Result<Vec<u8>, CompilerBackendError> {
+    compiler_vk_descriptor_selected(ir, k, Some(export))
+}
+
+fn compiler_vk_descriptor_selected(
+    ir: &[u8],
+    k: u32,
+    export: Option<&str>,
+) -> Result<Vec<u8>, CompilerBackendError> {
+    let program = checked_program(ir, k, export)?;
     let circuit = CompilerCircuit {
         program: program.clone(),
         witness: None,
@@ -1930,29 +1962,35 @@ pub fn compiler_vk_descriptor(ir: &[u8], k: u32) -> Result<Vec<u8>, CompilerBack
     hash.update(k.to_le_bytes());
     hash.update(program.profile_digest);
     hash.update(program.ir_digest);
+    hash.update(program.export_digest);
     hash.update((pinned.len() as u64).to_le_bytes());
     hash.update(pinned.as_bytes());
-    let mut descriptor = Vec::with_capacity(1 + 4 + 32 * 3);
-    descriptor.push(1);
+    let mut descriptor = Vec::with_capacity(1 + 4 + 32 * 4);
+    descriptor.push(2);
     descriptor.extend_from_slice(&k.to_le_bytes());
     descriptor.extend_from_slice(&program.profile_digest);
     descriptor.extend_from_slice(&program.ir_digest);
+    descriptor.extend_from_slice(&program.export_digest);
     descriptor.extend_from_slice(&hash.finalize());
     Ok(descriptor)
 }
 
-fn checked_program(ir: &[u8], k: u32) -> Result<CompilerProgram, CompilerBackendError> {
+fn checked_program(
+    ir: &[u8],
+    k: u32,
+    export: Option<&str>,
+) -> Result<CompilerProgram, CompilerBackendError> {
     if !(8..=20).contains(&k) {
         return Err(CompilerBackendError::LimitExceeded);
     }
-    let program = CompilerProgram::decode(ir)?;
+    let program = CompilerProgram::decode_export(ir, export)?;
     if program.estimated_rows()? > (1usize << k) {
         return Err(CompilerBackendError::LimitExceeded);
     }
     Ok(program)
 }
 
-/// Creates a Halo2 proof for a canonical scalar ONXIR program.
+/// Creates a Halo2 proof for a canonical ONXIR program with exactly one export.
 ///
 /// `witness.parameters` contains every function parameter in declaration order. `public_inputs`
 /// contains public parameters in declaration order followed by the public return value. The proof
@@ -1964,7 +2002,27 @@ pub fn create_compiler_proof(
     witness: CompilerWitness,
     public_inputs: &[Fp],
 ) -> Result<Vec<u8>, CompilerBackendError> {
-    let program = checked_program(ir, k)?;
+    create_compiler_proof_selected(ir, k, None, witness, public_inputs)
+}
+
+pub fn create_compiler_proof_for_export(
+    ir: &[u8],
+    k: u32,
+    export: &str,
+    witness: CompilerWitness,
+    public_inputs: &[Fp],
+) -> Result<Vec<u8>, CompilerBackendError> {
+    create_compiler_proof_selected(ir, k, Some(export), witness, public_inputs)
+}
+
+fn create_compiler_proof_selected(
+    ir: &[u8],
+    k: u32,
+    export: Option<&str>,
+    witness: CompilerWitness,
+    public_inputs: &[Fp],
+) -> Result<Vec<u8>, CompilerBackendError> {
+    let program = checked_program(ir, k, export)?;
     if witness.parameters.len() != program.function.parameters.len()
         || public_inputs.len() != program.public_input_count()
     {
@@ -2025,10 +2083,30 @@ pub fn create_compiler_proof(
     Ok(proof)
 }
 
-/// Verifies a proof against the verification key derived solely from canonical IR and `k`.
+/// Verifies a single-export proof against the key derived solely from canonical IR and `k`.
 pub fn verify_compiler_proof(
     ir: &[u8],
     k: u32,
+    public_inputs: &[Fp],
+    proof: &[u8],
+) -> Result<(), CompilerBackendError> {
+    verify_compiler_proof_selected(ir, k, None, public_inputs, proof)
+}
+
+pub fn verify_compiler_proof_for_export(
+    ir: &[u8],
+    k: u32,
+    export: &str,
+    public_inputs: &[Fp],
+    proof: &[u8],
+) -> Result<(), CompilerBackendError> {
+    verify_compiler_proof_selected(ir, k, Some(export), public_inputs, proof)
+}
+
+fn verify_compiler_proof_selected(
+    ir: &[u8],
+    k: u32,
+    export: Option<&str>,
     public_inputs: &[Fp],
     proof: &[u8],
 ) -> Result<(), CompilerBackendError> {
@@ -2039,7 +2117,7 @@ pub fn verify_compiler_proof(
             CompilerBackendError::ProofVerification
         });
     }
-    let program = checked_program(ir, k)?;
+    let program = checked_program(ir, k, export)?;
     if public_inputs.len() != program.public_input_count() {
         return Err(CompilerBackendError::InvalidWitness);
     }
@@ -2246,6 +2324,29 @@ mod tests {
         ir
     }
 
+    fn multiple_export_ir() -> Vec<u8> {
+        let mut ir = IR_DOMAIN.to_vec();
+        ir.extend_from_slice(&[13u8; 32]);
+        ir.push(2);
+        for name in ["alpha", "beta"] {
+            ir.extend(text(name));
+            ir.push(1);
+            ir.push(2);
+            for (visibility, parameter) in [(1u8, "left"), (2u8, "right")] {
+                ir.push(visibility);
+                ir.extend(text(parameter));
+                ir.extend(text("field"));
+            }
+            ir.extend(text("field"));
+            ir.push(4);
+            ir.extend(instruction(1, Some(0), "field", &[], None, "public:left"));
+            ir.extend(instruction(1, Some(1), "field", &[], None, "private:right"));
+            ir.extend(instruction(12, Some(2), "field", &[0, 1], None, ""));
+            ir.extend(instruction(27, None, "field", &[2], None, ""));
+        }
+        ir
+    }
+
     #[test]
     fn scalar_ir_lowers_and_descriptor_is_deterministic() {
         let ir = multiplication_ir();
@@ -2270,6 +2371,39 @@ mod tests {
             compiler_vk_descriptor(&ir, 8).unwrap(),
             compiler_vk_descriptor(&ir, 8).unwrap()
         );
+    }
+
+    #[test]
+    fn explicit_export_selection_binds_descriptors_and_proofs() {
+        let ir = multiple_export_ir();
+        assert!(matches!(
+            CompilerProgram::decode(&ir),
+            Err(CompilerBackendError::UnsupportedInstruction)
+        ));
+        let alpha = compiler_vk_descriptor_for_export(&ir, 8, "alpha").unwrap();
+        let beta = compiler_vk_descriptor_for_export(&ir, 8, "beta").unwrap();
+        assert_eq!(alpha.len(), 133);
+        assert_ne!(alpha, beta);
+        assert!(matches!(
+            compiler_vk_descriptor_for_export(&ir, 8, "missing"),
+            Err(CompilerBackendError::InvalidProgram)
+        ));
+        let public = [Fp::from(5), Fp::from(12)];
+        let proof = create_compiler_proof_for_export(
+            &ir,
+            8,
+            "alpha",
+            CompilerWitness {
+                parameters: vec![Fp::from(5), Fp::from(7)],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof_for_export(&ir, 8, "alpha", &public, &proof).unwrap();
+        assert!(matches!(
+            verify_compiler_proof_for_export(&ir, 8, "beta", &public, &proof),
+            Err(CompilerBackendError::ProofVerification)
+        ));
     }
 
     #[test]

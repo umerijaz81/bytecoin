@@ -880,7 +880,10 @@ fn flatten(
     Err(CompilerBackendError::InvalidProgram)
 }
 
-pub(super) fn decode_composite_program(ir: &[u8]) -> Result<CompilerProgram, CompilerBackendError> {
+pub(super) fn decode_composite_program(
+    ir: &[u8],
+    selected_export: Option<&str>,
+) -> Result<CompilerProgram, CompilerBackendError> {
     let (profile_digest, functions) = parse_raw(ir)?;
     let exports: Vec<_> = functions
         .iter()
@@ -888,15 +891,22 @@ pub(super) fn decode_composite_program(ir: &[u8]) -> Result<CompilerProgram, Com
         .filter(|(_, function)| function.exported)
         .map(|(index, _)| index)
         .collect();
-    if exports.len() != 1 {
-        return Err(CompilerBackendError::UnsupportedInstruction);
-    }
-    let export = &functions[exports[0]];
+    let export_index = match selected_export {
+        Some(name) if identifier(name) => exports
+            .iter()
+            .copied()
+            .find(|index| functions[*index].name == name)
+            .ok_or(CompilerBackendError::InvalidProgram)?,
+        Some(_) => return Err(CompilerBackendError::InvalidProgram),
+        None if exports.len() == 1 => exports[0],
+        None => return Err(CompilerBackendError::UnsupportedInstruction),
+    };
+    let export = &functions[export_index];
     let mut instructions = Vec::new();
     let mut parameters = Vec::new();
     let returned = flatten(
         &functions,
-        exports[0],
+        export_index,
         None,
         None,
         &mut instructions,
@@ -927,6 +937,7 @@ pub(super) fn decode_composite_program(ir: &[u8]) -> Result<CompilerProgram, Com
     Ok(CompilerProgram {
         profile_digest,
         ir_digest: Sha256::digest(ir).into(),
+        export_digest: export_digest(&export.name),
         function,
     })
 }

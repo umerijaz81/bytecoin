@@ -668,6 +668,7 @@ INTRINSICS = {
     "merkle_root": (("field", "field"), "field", 96),
     "nullifier": (("field", "field", "field"), "field", 160),
 }
+EXPORT_ID_DOMAIN = b"bytecoin.onyx.compiler-export.v1"
 
 
 class _PoseidonGrain:
@@ -1351,20 +1352,26 @@ def parse_record_type(value: str) -> tuple[tuple[str, str], ...]:
     return tuple(fields)
 
 
-def backend_descriptor(executable: pathlib.Path, ir: bytes, circuit_k: int) -> bytes:
+def backend_descriptor(executable: pathlib.Path, ir: bytes, circuit_k: int, export: str) -> bytes:
     executable = executable.resolve()
     if not executable.is_file() or executable.is_symlink():
         raise CompileError("E_BACKEND_EXECUTABLE", "Halo2 backend executable is missing or linked")
-    process = subprocess.run([str(executable), "descriptor", str(circuit_k)], input=ir,
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", export):
+        raise CompileError("E_BACKEND_EXPORT", "Halo2 backend export is not an identifier")
+    process = subprocess.run([str(executable), "descriptor", str(circuit_k), export], input=ir,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
     if process.returncode != 0:
         message = process.stderr.decode("utf-8", "replace")[:512]
         raise CompileError("E_BACKEND_REJECTED", f"Halo2 backend rejected canonical IR: {message}")
     output = process.stdout.strip()
-    if not re.fullmatch(b"[0-9a-f]{202}", output):
-        raise CompileError("E_BACKEND_DESCRIPTOR", "Halo2 backend descriptor is not canonical v1 hex")
+    if not re.fullmatch(b"[0-9a-f]{266}", output):
+        raise CompileError("E_BACKEND_DESCRIPTOR", "Halo2 backend descriptor is not canonical v2 hex")
     descriptor = bytes.fromhex(output.decode("ascii"))
-    if descriptor[0] != 1 or int.from_bytes(descriptor[1:5], "little") != circuit_k:
+    export_digest = hashlib.sha256(EXPORT_ID_DOMAIN + len(export.encode("ascii")).to_bytes(8, "little") +
+                                   export.encode("ascii")).digest()
+    if (descriptor[0] != 2 or int.from_bytes(descriptor[1:5], "little") != circuit_k or
+            descriptor[5:37] != ir[len(IR_DOMAIN):len(IR_DOMAIN) + 32] or
+            descriptor[37:69] != hashlib.sha256(ir).digest() or descriptor[69:101] != export_digest):
         raise CompileError("E_BACKEND_DESCRIPTOR", "Halo2 backend descriptor header mismatch")
     return descriptor
 
@@ -1373,13 +1380,14 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
                  backend_executable: pathlib.Path | None = None, circuit_k: int = 12) -> None:
     compiled, ir, metadata, schemas = compile_sources(package)
     vectors = evaluate_vectors(package, compiled)
-    descriptor = None
+    descriptors = None
     if backend_executable is not None:
-        descriptor = backend_descriptor(backend_executable, ir, circuit_k)
+        descriptors = {export: backend_descriptor(backend_executable, ir, circuit_k, export)
+                       for export in package.manifest["exports"]}
         metadata["resources"]["backend_measurements"] = {
             "backend": "halo2-ipa-pasta-compiler-alpha",
             "circuit_k": circuit_k,
-            "descriptor_bytes": len(descriptor),
+            "descriptor_bytes": {name: len(descriptor) for name, descriptor in descriptors.items()},
         }
     parent = destination.resolve().parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -1409,8 +1417,11 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
         (temporary / "target-profile.json").write_bytes(canonical_json(metadata["profile"]))
         (temporary / "resources.json").write_bytes(canonical_json(metadata["resources"]))
         (temporary / "vectors.json").write_bytes(canonical_json(vectors))
-        if descriptor is not None:
-            (temporary / "halo2-vk-descriptor.bin").write_bytes(descriptor)
+        if descriptors is not None:
+            descriptor_directory = temporary / "halo2-vk-descriptors"
+            descriptor_directory.mkdir()
+            for name, descriptor in descriptors.items():
+                (descriptor_directory / f"{name}.bin").write_bytes(descriptor)
         for name, schema in schemas.items():
             (temporary / "schemas" / f"{name}.json").write_bytes(canonical_json(schema))
         provenance = {
@@ -1426,10 +1437,11 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
             "registrable": False,
             "missing_gate": "audited deterministic Halo2 lowering and verifying-key regeneration",
         }
-        if descriptor is not None:
+        if descriptors is not None:
             provenance["halo2_backend"] = {
                 "circuit_k": circuit_k,
-                "descriptor_sha256": sha256(descriptor),
+                "descriptor_sha256": {name: sha256(descriptor)
+                                      for name, descriptor in descriptors.items()},
                 "status": "compiler-alpha-not-registrable",
             }
         (temporary / "provenance.json").write_bytes(canonical_json(provenance))

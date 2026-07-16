@@ -61,6 +61,11 @@ Control flow is limited to:
 are rejected. A function may access only its parameters and local values. Compiler intrinsics are
 versioned and selected from the target profile; an unknown intrinsic is an error.
 
+When an IR contains multiple exported functions, proof and descriptor creation MUST name one export exactly.
+The export name is domain-separated, length-bound and SHA-256 committed into both the circuit's fixed identity
+and descriptor v2. An unnamed request is valid only when the IR has exactly one export. A bundle with backend
+artifacts contains exactly one descriptor for every export declared by its canonical package manifest.
+
 The non-registrable compiler-v1 profile currently fixes three Pasta-field intrinsics using
 `P128Pow5T3` and the two-input constant-length domain: `poseidon_hash(a,b) = H(a,b)`,
 `merkle_root(left,right) = H(2,H(left,right))`, and

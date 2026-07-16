@@ -349,8 +349,48 @@ export fn balance(public network: u32, private amount: u64) -> u64 {
                 vectors=[{"function": "balance", "inputs": [6, 7], "expected": 42}])
             bundle = root / "bundle"
             compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
-            self.assertEqual((bundle / "halo2-vk-descriptor.bin").stat().st_size, 101)
+            self.assertEqual((bundle / "halo2-vk-descriptors" / "balance.bin").stat().st_size, 133)
             verifier.verify_bundle(bundle, backend)
+
+    @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
+    def test_each_export_has_an_identity_bound_descriptor_and_proof_entry(self):
+        source = b"""export fn alpha(public left: field, private right: field) -> field {
+  let output: field = left + right;
+  return output;
+}
+export fn beta(public left: field, private right: field) -> field {
+  let output: field = left + right;
+  return output;
+}
+"""
+        backend = pathlib.Path(os.environ["ONYX_COMPILER_BACKEND"])
+        vectors = [
+            {"function": "alpha", "inputs": [5, 7], "expected": 12},
+            {"function": "beta", "inputs": [5, 7], "expected": 12},
+        ]
+        field = lambda value: int(value).to_bytes(32, "little").hex()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = create_package(root / "package", source, vectors=vectors,
+                                     exports=["alpha", "beta"])
+            bundle = root / "bundle"
+            compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
+            descriptor_root = bundle / "halo2-vk-descriptors"
+            self.assertEqual(sorted(path.name for path in descriptor_root.iterdir()),
+                             ["alpha.bin", "beta.bin"])
+            self.assertNotEqual((descriptor_root / "alpha.bin").read_bytes(),
+                                (descriptor_root / "beta.bin").read_bytes())
+            verifier.verify_bundle(bundle, backend)
+            ir = (bundle / "program.onxir").read_bytes()
+            witness = ",".join(map(field, [5, 7]))
+            public = ",".join(map(field, [5, 12]))
+            for export in ("alpha", "beta"):
+                proof = subprocess.run([str(backend), "prove", "12", witness, public, export],
+                    input=ir, capture_output=True, check=True, timeout=120)
+                self.assertRegex(proof.stdout.decode().strip(), r"^[0-9a-f]+$")
+            rejected = subprocess.run([str(backend), "descriptor", "12", "missing"],
+                input=ir, capture_output=True, timeout=120)
+            self.assertNotEqual(rejected.returncode, 0)
 
     @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
     def test_checked_integer_bundle_is_accepted_by_halo2_backend(self):
@@ -382,7 +422,7 @@ export fn balance(public left: u16, private shift: u16) -> u16 {
                 vectors=[{"function": "balance", "inputs": [9, 2], "expected": 1}])
             bundle = root / "bundle"
             compiler_v1.write_bundle(compiler_v1.load_package(package), bundle, backend, 12)
-            self.assertEqual((bundle / "halo2-vk-descriptor.bin").stat().st_size, 101)
+            self.assertEqual((bundle / "halo2-vk-descriptors" / "balance.bin").stat().st_size, 133)
             verifier.verify_bundle(bundle, backend)
 
     @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
@@ -425,15 +465,15 @@ export fn balance(public header: bytes<2>, private pair: Pair, private index: u6
             verifier.verify_bundle(bundle, backend)
             witness = ",".join(map(field, [10, 11, 5, 7, 1]))
             public = ",".join(map(field, [10, 11, 7, 5]))
-            proof = subprocess.run([str(backend), "prove", "12", witness, public],
+            proof = subprocess.run([str(backend), "prove", "12", witness, public, "balance"],
                 input=(bundle / "program.onxir").read_bytes(), capture_output=True, check=True, timeout=120)
             self.assertRegex(proof.stdout.decode().strip(), r"^[0-9a-f]+$")
             wrong_public = ",".join(map(field, [10, 11, 7, 6]))
-            rejected = subprocess.run([str(backend), "prove", "12", witness, wrong_public],
+            rejected = subprocess.run([str(backend), "prove", "12", witness, wrong_public, "balance"],
                 input=(bundle / "program.onxir").read_bytes(), capture_output=True, timeout=120)
             self.assertNotEqual(rejected.returncode, 0)
             bad_index_witness = ",".join(map(field, [10, 11, 5, 7, 3]))
-            rejected = subprocess.run([str(backend), "prove", "12", bad_index_witness, public],
+            rejected = subprocess.run([str(backend), "prove", "12", bad_index_witness, public, "balance"],
                 input=(bundle / "program.onxir").read_bytes(), capture_output=True, timeout=120)
             self.assertNotEqual(rejected.returncode, 0)
 
@@ -460,7 +500,7 @@ export fn balance(public header: bytes<2>, private pair: Pair, private index: u6
             verifier.verify_bundle(bundle, backend)
             witness = ",".join(map(field, [5, 7, 11]))
             public = ",".join(map(field, [5, expected]))
-            proof = subprocess.run([str(backend), "prove", "13", witness, public],
+            proof = subprocess.run([str(backend), "prove", "13", witness, public, "balance"],
                 input=(bundle / "program.onxir").read_bytes(), capture_output=True, check=True, timeout=180)
             self.assertRegex(proof.stdout.decode().strip(), r"^[0-9a-f]+$")
 
