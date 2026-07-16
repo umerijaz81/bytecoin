@@ -14,6 +14,7 @@ message("SANITIZE adds clang sanitizer options. Examples thread or address,undef
 option(BETTER_DEBUG "Disables optimizations. We do not use standard debug/realease configurations because they change too much" OFF)
 option(CRYPTO128 "Uses faster crypto" OFF)
 option(REPRODUCIBLE_BUILD "Normalize build paths and nondeterministic linker metadata" OFF)
+set(BYTECOIN_OPENSSL_ROOT "" CACHE PATH "OpenSSL prefix containing include/ and platform libraries")
 # Onyx (V6) zero-knowledge backend (vendor/onyx-zk, Rust/Halo2). OFF by default so the C++-only
 # build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
 option(ONYX_ZK "Build the Onyx ZK backend (requires Rust/cargo)" OFF)
@@ -37,10 +38,15 @@ endif()
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     option(USE_SQLITE "Builds with SQLite instead of LMDB. 4x slower, but works on 32-bit and mobile platforms" OFF)
-    set(OPENSSL_ROOT ${PARENT_DIR}/openssl)
+    set(DEFAULT_OPENSSL_ROOT ${PARENT_DIR}/openssl)
 else()
     option(USE_SQLITE "Builds with sqlite instead of LMDB. 4x slower, but works on 32-bit and mobile platforms" ON)
-    set(OPENSSL_ROOT ${PARENT_DIR}/openssl32)
+    set(DEFAULT_OPENSSL_ROOT ${PARENT_DIR}/openssl32)
+endif()
+if(BYTECOIN_OPENSSL_ROOT)
+    set(OPENSSL_ROOT ${BYTECOIN_OPENSSL_ROOT})
+else()
+    set(OPENSSL_ROOT ${DEFAULT_OPENSSL_ROOT})
 endif()
 
 if(APPLE)
@@ -53,7 +59,10 @@ else()
     # We can build on old Ubuntu 14 with clang by adding next line (does not work with add_compile_options)
     # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
     # Binaries will need sudo apt-get install libc++-dev to run on machines without clang
-    add_compile_options(-maes -g -Wall -Wextra -Wformat -Wformat-security -Werror=return-type -Wno-unused-parameter)
+    add_compile_options(-g -Wall -Wextra -Wformat -Wformat-security -Werror=return-type -Wno-unused-parameter)
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+        add_compile_options(-maes)
+    endif()
     # Security options below, on old Linux replace -fstack-protector-strong with -fstack-protector
     add_compile_options(-fPIE -fPIC -fstack-protector-strong)
     add_definitions(-D_FORTIFY_SOURCE=2)
