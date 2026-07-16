@@ -75,6 +75,7 @@ enum Opcode {
     ShiftLeft,
     ShiftRight,
     Call,
+    Select,
     Assert,
     Return,
 }
@@ -85,6 +86,7 @@ struct Instruction {
     result: Option<usize>,
     kind: ScalarType,
     operands: Vec<usize>,
+    guard: Option<usize>,
     immediate: Option<u64>,
     text: String,
 }
@@ -332,9 +334,17 @@ impl CompilerProgram {
                     }
                     operands.push(operand);
                 }
-                if reader.uleb()? != 0 {
-                    return Err(CompilerBackendError::UnsupportedInstruction); // guarded control flow
-                }
+                let encoded_guard = reader.uleb()?;
+                let guard = if encoded_guard == 0 {
+                    None
+                } else {
+                    let guard = usize::try_from(encoded_guard - 1)
+                        .map_err(|_| CompilerBackendError::LimitExceeded)?;
+                    if guard >= index {
+                        return Err(CompilerBackendError::InvalidProgram);
+                    }
+                    Some(guard)
+                };
                 let encoded_immediate = reader.uleb()?;
                 let immediate = if encoded_immediate == 0 {
                     None
@@ -371,6 +381,7 @@ impl CompilerProgram {
                     result,
                     kind,
                     operands,
+                    guard,
                     immediate,
                     text: instruction_text,
                 });
@@ -484,6 +495,7 @@ fn inline_export(
         functions: &[Function],
         function_index: usize,
         arguments: Option<&[usize]>,
+        inherited_guard: Option<usize>,
         output: &mut Vec<Instruction>,
     ) -> Result<usize, CompilerBackendError> {
         let function = &functions[function_index];
@@ -511,6 +523,26 @@ fn inline_export(
                 .iter()
                 .map(|operand| mapping[*operand].ok_or(CompilerBackendError::InvalidProgram))
                 .collect::<Result<_, _>>()?;
+            let own_guard = instruction
+                .guard
+                .map(|guard| mapping[guard].ok_or(CompilerBackendError::InvalidProgram))
+                .transpose()?;
+            let guard = match (inherited_guard, own_guard) {
+                (Some(left), Some(right)) => {
+                    let result = output.len();
+                    output.push(Instruction {
+                        opcode: Opcode::And,
+                        result: Some(result),
+                        kind: ScalarType::Bool,
+                        operands: vec![left, right],
+                        guard: None,
+                        immediate: None,
+                        text: String::new(),
+                    });
+                    Some(result)
+                }
+                (left, right) => left.or(right),
+            };
             if instruction.opcode == Opcode::Call {
                 let target_index = functions[..function_index]
                     .iter()
@@ -520,19 +552,45 @@ fn inline_export(
                     functions,
                     target_index,
                     Some(&operands),
+                    guard,
                     output,
                 )?);
                 continue;
             }
             if instruction.opcode == Opcode::Return {
-                return operands
+                let returned = operands
                     .first()
                     .copied()
-                    .ok_or(CompilerBackendError::InvalidProgram);
+                    .ok_or(CompilerBackendError::InvalidProgram)?;
+                if let Some(guard) = inherited_guard {
+                    let zero = output.len();
+                    output.push(Instruction {
+                        opcode: Opcode::Constant,
+                        result: Some(zero),
+                        kind: function.return_type,
+                        operands: Vec::new(),
+                        guard: None,
+                        immediate: Some(0),
+                        text: String::new(),
+                    });
+                    let selected = output.len();
+                    output.push(Instruction {
+                        opcode: Opcode::Select,
+                        result: Some(selected),
+                        kind: function.return_type,
+                        operands: vec![guard, returned, zero],
+                        guard: None,
+                        immediate: None,
+                        text: String::new(),
+                    });
+                    return Ok(selected);
+                }
+                return Ok(returned);
             }
             let new_index = output.len();
             let mut cloned = instruction.clone();
             cloned.operands = operands;
+            cloned.guard = guard;
             cloned.result = instruction.result.map(|_| new_index);
             output.push(cloned);
             if instruction.result.is_some() {
@@ -547,22 +605,162 @@ fn inline_export(
 
     let export = &functions[export_index];
     let mut instructions = Vec::new();
-    let returned = inline_function(functions, export_index, None, &mut instructions)?;
+    let returned = inline_function(functions, export_index, None, None, &mut instructions)?;
     instructions.push(Instruction {
         opcode: Opcode::Return,
         result: None,
         kind: export.return_type,
         operands: vec![returned],
+        guard: None,
         immediate: None,
         text: String::new(),
     });
-    Ok(Function {
+    lower_guards(Function {
         name: export.name.clone(),
         exported: true,
         parameters: export.parameters.clone(),
         return_type: export.return_type,
         instructions,
     })
+}
+
+fn lower_guards(mut function: Function) -> Result<Function, CompilerBackendError> {
+    fn push_value(output: &mut Vec<Instruction>, mut instruction: Instruction) -> usize {
+        let index = output.len();
+        instruction.result = Some(index);
+        output.push(instruction);
+        index
+    }
+    fn constant(output: &mut Vec<Instruction>, kind: ScalarType, value: u64) -> usize {
+        push_value(
+            output,
+            Instruction {
+                opcode: Opcode::Constant,
+                result: None,
+                kind,
+                operands: Vec::new(),
+                guard: None,
+                immediate: Some(value),
+                text: String::new(),
+            },
+        )
+    }
+    fn select(
+        output: &mut Vec<Instruction>,
+        guard: usize,
+        when_true: usize,
+        when_false: usize,
+        kind: ScalarType,
+    ) -> usize {
+        push_value(
+            output,
+            Instruction {
+                opcode: Opcode::Select,
+                result: None,
+                kind,
+                operands: vec![guard, when_true, when_false],
+                guard: None,
+                immediate: None,
+                text: String::new(),
+            },
+        )
+    }
+
+    let original = std::mem::take(&mut function.instructions);
+    let mut output = Vec::with_capacity(original.len());
+    let mut mapping = vec![None; original.len()];
+    for (old_index, instruction) in original.into_iter().enumerate() {
+        let operands: Vec<_> = instruction
+            .operands
+            .iter()
+            .map(|operand| mapping[*operand].ok_or(CompilerBackendError::InvalidProgram))
+            .collect::<Result<_, _>>()?;
+        let guard = instruction
+            .guard
+            .map(|guard| mapping[guard].ok_or(CompilerBackendError::InvalidProgram))
+            .transpose()?;
+        if instruction.opcode == Opcode::Return {
+            output.push(Instruction {
+                operands,
+                guard: None,
+                ..instruction
+            });
+            continue;
+        }
+        if let Some(guard) = guard {
+            if instruction.opcode == Opcode::Assert {
+                let not_guard = push_value(
+                    &mut output,
+                    Instruction {
+                        opcode: Opcode::Not,
+                        result: None,
+                        kind: ScalarType::Bool,
+                        operands: vec![guard],
+                        guard: None,
+                        immediate: None,
+                        text: String::new(),
+                    },
+                );
+                let implication = push_value(
+                    &mut output,
+                    Instruction {
+                        opcode: Opcode::Or,
+                        result: None,
+                        kind: ScalarType::Bool,
+                        operands: vec![not_guard, operands[0]],
+                        guard: None,
+                        immediate: None,
+                        text: String::new(),
+                    },
+                );
+                output.push(Instruction {
+                    operands: vec![implication],
+                    guard: None,
+                    ..instruction
+                });
+                continue;
+            }
+            let mut safe_operands = Vec::with_capacity(operands.len());
+            for (operand_index, operand) in operands.iter().copied().enumerate() {
+                let operand_kind = output[operand].kind;
+                let default = constant(
+                    &mut output,
+                    operand_kind,
+                    u64::from(
+                        matches!(instruction.opcode, Opcode::Divide | Opcode::Remainder)
+                            && operand_index == 1,
+                    ),
+                );
+                safe_operands.push(select(&mut output, guard, operand, default, operand_kind));
+            }
+            let raw = push_value(
+                &mut output,
+                Instruction {
+                    operands: safe_operands,
+                    guard: None,
+                    ..instruction.clone()
+                },
+            );
+            let neutral = constant(&mut output, instruction.kind, 0);
+            mapping[old_index] = Some(select(&mut output, guard, raw, neutral, instruction.kind));
+        } else {
+            let result = instruction.result.map(|_| output.len());
+            output.push(Instruction {
+                result,
+                operands,
+                guard: None,
+                ..instruction
+            });
+            if result.is_some() {
+                mapping[old_index] = result;
+            }
+        }
+        if output.len() > MAX_INSTRUCTIONS {
+            return Err(CompilerBackendError::LimitExceeded);
+        }
+    }
+    function.instructions = output;
+    Ok(function)
 }
 
 fn validate_types(
@@ -575,6 +773,14 @@ fn validate_types(
     let mut parameter_index = 0usize;
     let mut return_count = 0usize;
     for instruction in instructions {
+        if instruction
+            .guard
+            .is_some_and(|guard| types[guard] != Some(ScalarType::Bool))
+            || matches!(instruction.opcode, Opcode::Parameter | Opcode::Return)
+                && instruction.guard.is_some()
+        {
+            return Err(CompilerBackendError::InvalidProgram);
+        }
         let operand_types: Vec<_> = instruction
             .operands
             .iter()
@@ -669,6 +875,11 @@ fn validate_types(
                     return Err(CompilerBackendError::InvalidProgram);
                 }
             }
+            Opcode::Select => {
+                if operand_types != [ScalarType::Bool, instruction.kind, instruction.kind] {
+                    return Err(CompilerBackendError::InvalidProgram);
+                }
+            }
             Opcode::Assert => require(
                 &operand_types,
                 &[ScalarType::Bool],
@@ -749,6 +960,7 @@ struct CompilerConfig {
     integer_divide: Selector,
     zero: Selector,
     shift_power: Selector,
+    select: Selector,
 }
 
 fn canonical_u64(value: &Fp) -> Option<u64> {
@@ -1093,6 +1305,7 @@ impl Circuit<Fp> for CompilerCircuit {
         let integer_divide = meta.selector();
         let zero = meta.selector();
         let shift_power = meta.selector();
+        let select = meta.selector();
         meta.create_gate("compiler add", |meta| {
             let q = meta.query_selector(add);
             let a = meta.query_advice(left, Rotation::cur());
@@ -1242,6 +1455,15 @@ impl Circuit<Fp> for CompilerCircuit {
             let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
             vec![q * (previous * (one + bit * multiplier) - next)]
         });
+        meta.create_gate("compiler guarded select", |meta| {
+            let q = meta.query_selector(select);
+            let guard = meta.query_advice(left, Rotation::cur());
+            let when_true = meta.query_advice(right, Rotation::cur());
+            let when_false = meta.query_advice(auxiliary, Rotation::cur());
+            let output = meta.query_advice(output, Rotation::cur());
+            let one = halo2_proofs::plonk::Expression::Constant(Fp::one());
+            vec![q * (guard.clone() * when_true + (one - guard) * when_false - output)]
+        });
         CompilerConfig {
             left,
             right,
@@ -1266,6 +1488,7 @@ impl Circuit<Fp> for CompilerCircuit {
             integer_divide,
             zero,
             shift_power,
+            select,
         }
     }
 
@@ -1413,6 +1636,22 @@ impl Circuit<Fp> for CompilerCircuit {
                         )
                     }
                     Opcode::Call => return Err(Error::Synthesis),
+                    Opcode::Select => {
+                        let guard = copy(&operands[0], config.left, &mut region)?;
+                        let when_true = copy(&operands[1], config.right, &mut region)?;
+                        let when_false = copy(&operands[2], config.auxiliary, &mut region)?;
+                        config.select.enable(&mut region, 0)?;
+                        region.assign_advice(
+                            || "guarded selection",
+                            config.output,
+                            0,
+                            || guard.value().zip(when_true.value()).zip(when_false.value()).map(
+                                |((guard, when_true), when_false)| {
+                                    *guard * *when_true + (Fp::one() - *guard) * *when_false
+                                },
+                            ),
+                        )
+                    }
                     Opcode::Equal | Opcode::NotEqual => {
                         let a = copy(&operands[0], config.left, &mut region)?;
                         let b = copy(&operands[1], config.right, &mut region)?;
@@ -1703,6 +1942,25 @@ mod tests {
         immediate: Option<u64>,
         instruction_text: &str,
     ) -> Vec<u8> {
+        instruction_with_guard(
+            opcode,
+            index,
+            kind,
+            operands,
+            None,
+            immediate,
+            instruction_text,
+        )
+    }
+    fn instruction_with_guard(
+        opcode: u8,
+        index: Option<usize>,
+        kind: &str,
+        operands: &[usize],
+        guard: Option<usize>,
+        immediate: Option<u64>,
+        instruction_text: &str,
+    ) -> Vec<u8> {
         let mut out = vec![opcode];
         out.extend(uleb(index.map_or(0, |v| v as u64 + 1)));
         out.extend(text(kind));
@@ -1710,10 +1968,76 @@ mod tests {
         for operand in operands {
             out.extend(uleb(*operand as u64));
         }
-        out.push(0);
+        out.extend(uleb(guard.map_or(0, |value| value as u64 + 1)));
         out.extend(uleb(immediate.map_or(0, |v| v + 1)));
         out.extend(text(instruction_text));
         out
+    }
+
+    fn guarded_division_ir() -> Vec<u8> {
+        let mut ir = IR_DOMAIN.to_vec();
+        ir.extend_from_slice(&[11u8; 32]);
+        ir.push(1);
+        ir.extend(text("guarded"));
+        ir.push(1);
+        ir.push(3);
+        for (visibility, name, kind) in [
+            (1u8, "left", "u8"),
+            (2u8, "denominator", "u8"),
+            (2u8, "condition", "bool"),
+        ] {
+            ir.push(visibility);
+            ir.extend(text(name));
+            ir.extend(text(kind));
+        }
+        ir.extend(text("u8"));
+        ir.push(7);
+        ir.extend(instruction(1, Some(0), "u8", &[], None, "public:left"));
+        ir.extend(instruction(
+            1,
+            Some(1),
+            "u8",
+            &[],
+            None,
+            "private:denominator",
+        ));
+        ir.extend(instruction(
+            1,
+            Some(2),
+            "bool",
+            &[],
+            None,
+            "private:condition",
+        ));
+        ir.extend(instruction_with_guard(
+            15,
+            Some(3),
+            "u8",
+            &[0, 1],
+            Some(2),
+            None,
+            "",
+        ));
+        ir.extend(instruction_with_guard(
+            2,
+            Some(4),
+            "bool",
+            &[],
+            Some(2),
+            Some(0),
+            "",
+        ));
+        ir.extend(instruction_with_guard(
+            26,
+            None,
+            "bool",
+            &[4],
+            Some(2),
+            None,
+            "",
+        ));
+        ir.extend(instruction(27, None, "u8", &[0], None, ""));
+        ir
     }
     fn multiplication_ir() -> Vec<u8> {
         arithmetic_ir("field", 14)
@@ -2012,6 +2336,45 @@ mod tests {
         )
         .unwrap();
         verify_compiler_proof(&ir, 10, &public, &proof).unwrap();
+    }
+
+    #[test]
+    fn guarded_execution_neutralizes_inactive_failures_but_enforces_active_ones() {
+        let ir = guarded_division_ir();
+        let inactive = CompilerCircuit {
+            program: CompilerProgram::decode(&ir).unwrap(),
+            witness: Some(CompilerWitness {
+                parameters: vec![Fp::from(9), Fp::zero(), Fp::zero()],
+            }),
+        };
+        MockProver::run(9, &inactive, vec![vec![Fp::from(9), Fp::from(9)]])
+            .unwrap()
+            .assert_satisfied();
+
+        let active = CompilerCircuit {
+            program: CompilerProgram::decode(&ir).unwrap(),
+            witness: Some(CompilerWitness {
+                parameters: vec![Fp::from(9), Fp::from(3), Fp::one()],
+            }),
+        };
+        assert!(
+            MockProver::run(9, &active, vec![vec![Fp::from(9), Fp::from(9)]])
+                .unwrap()
+                .verify()
+                .is_err()
+        );
+
+        let public = [Fp::from(9), Fp::from(9)];
+        let proof = create_compiler_proof(
+            &ir,
+            9,
+            CompilerWitness {
+                parameters: vec![Fp::from(9), Fp::zero(), Fp::zero()],
+            },
+            &public,
+        )
+        .unwrap();
+        verify_compiler_proof(&ir, 9, &public, &proof).unwrap();
     }
 
     #[test]

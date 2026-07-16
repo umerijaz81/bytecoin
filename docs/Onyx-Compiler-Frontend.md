@@ -69,7 +69,12 @@ function over Pasta `field`, `bool`, and checked `u8`/`u16`/`u32`/`u64` values. 
 acyclic direct helper calls: the backend independently verifies earlier-target signatures and deterministically
 inlines their parameters, constraints, assertions and return values into the single exported circuit. Packages
 with multiple exports remain rejected until the proof API has an explicit entry selector. It rejects composites,
-guards and intrinsics until their circuit gadgets are implemented. The circuit constrains public parameters and
+intrinsics until their circuit gadgets are implemented. Guarded control flow is normalized independently in
+the backend: guarded operands select constraint-safe neutral values, the original arithmetic gadget remains
+fully enabled, and its result is selected against the canonical type-zero. Guarded assertions become Boolean
+implications, and call guards propagate through every inlined callee constraint. Thus inactive division-by-zero,
+overflow and failing assertions are neutral, while activating the same path restores every original failure.
+The circuit constrains public parameters and
 the returned value as instances, copies every operand through Halo2 equality constraints, range-checks
 booleans, and implements field add/subtract/multiply, boolean not/and/or, equality/inequality with an
 inverse witness, and assertion gates. Unsigned values are bit-decomposed and reconstruction-bound;
@@ -99,7 +104,7 @@ the exact compiler/profile/IR/artifact digests so platform drift fails visibly.
 ## Remaining activation boundary
 
 The scalar and checked-integer subset now lowers to Halo2 and independently regenerates its descriptor,
-but the complete language does not. Arrays, records, byte strings, guarded control flow, multiple exports and
+but the complete language does not. Arrays, records, byte strings, multiple exports and
 cryptographic intrinsics still require circuit lowering, type-specific proof vectors and backend measurements.
 Structured fuzzing, standard-library packages, independent builds, external audits and public testnet
 soak remain mandatory before governance can approve any compiler/profile digest.

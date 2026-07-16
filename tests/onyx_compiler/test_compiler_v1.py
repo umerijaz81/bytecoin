@@ -362,6 +362,13 @@ export fn balance(public left: u16, private shift: u16) -> u16 {
   let quotient: u16 = divide(product, divisor);
   let output: u16 = quotient >> shift;
   assert(output <= quotient);
+  if false {
+    let zero: u16 = 0;
+    let impossible: u16 = divide(output, zero);
+    assert(impossible > output);
+  } else {
+    assert(output <= quotient);
+  }
   return output;
 }
 """
