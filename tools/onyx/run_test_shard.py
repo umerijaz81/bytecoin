@@ -19,6 +19,7 @@ SHARDS = {
         "keys",
         "note_commitment_circuit",
         "program",
+        "program_context",
         "spend_auth_circuit",
         "state",
         "tests",

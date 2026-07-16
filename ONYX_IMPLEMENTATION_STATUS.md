@@ -47,7 +47,10 @@ unreachable until the release gates below are independently satisfied.
    user-supplied circuits continue to fail closed until all of those gates pass.
 3. Implement only approved standard circuits (the original architecture mentions NFT, vesting,
    multisignature custody and swaps), each with isolated value domains, canonical schemas, negative
-   vectors, cost budgets and an independent circuit review.
+   vectors, cost budgets and an independent circuit review. A canonical non-circular program-context v1
+   now binds transaction projections, ordered call identity, inclusion windows, optional state commitments
+   and application data into a frozen 22-field circuit ABI. The rollback-safe contextual state path validates
+   every ordered context before mutation. Generic envelope/proof composition and the standard circuits remain.
 
 ### O6 network, scaling and crypto agility
 

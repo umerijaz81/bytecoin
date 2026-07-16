@@ -11,6 +11,7 @@ use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, 
 use halo2_proofs::pasta::Fp;
 
 use crate::program::{ProgramDelta, ProgramEntry, ProgramRegistry};
+use crate::program_context::ProgramContext;
 use crate::token_program::{
     issuance_function_id, issuance_policy_from_entry, issuance_public_data_hash,
 };
@@ -63,6 +64,7 @@ pub enum StateError {
     SupplyOverflow,
     SupplyUnderflow,
     InvalidProgram,
+    InvalidProgramContext,
     ProgramCostLimit,
 }
 
@@ -550,6 +552,27 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             previous_circulating_supply,
             previous_block_program_cost,
         })
+    }
+
+    /// Applies a generic program transaction only after every ordered call context has been
+    /// reconstructed and bound to the inclusion height. Validation is complete before the ordinary
+    /// rollback-safe state transition can insert a nullifier or append a commitment.
+    pub fn apply_contextual_transaction(
+        &mut self,
+        transaction: &TransactionPreimage,
+        block_height: u64,
+        contexts: &[ProgramContext],
+    ) -> Result<ShieldedStateDelta<DEPTH>, StateError> {
+        if transaction.programs.is_empty()
+            || contexts.len() != transaction.programs.len()
+            || contexts.iter().enumerate().any(|(index, context)| {
+                usize::from(context.call_index) != index
+                    || context.validate_binding(transaction, block_height).is_err()
+            })
+        {
+            return Err(StateError::InvalidProgramContext);
+        }
+        self.apply_transaction(transaction, block_height)
     }
 
     fn next_block_program_cost(
@@ -1238,6 +1261,74 @@ mod tests {
         assert_eq!(state.current_block_program_cost(), 0);
         state.rollback_program(registry_delta);
         assert_eq!(state.program_count(), 0);
+    }
+
+    #[test]
+    fn contextual_program_calls_fail_before_state_mutation() {
+        use crate::program::{ProgramEntry, ProgramFunction};
+        use crate::program_context::{ProgramContext, ProgramStateTransition};
+        use crate::transaction::ProgramCall;
+
+        let entry = ProgramEntry {
+            manifest: b"onyx.test.context/v1".to_vec(),
+            backend: "halo2-ipa-pasta".to_owned(),
+            activation_height: 10,
+            deactivation_height: None,
+            functions: vec![ProgramFunction {
+                function_id: 7,
+                verifying_key: vec![1, 2, 3],
+                public_input_schema_hash: [4; 32],
+                max_cost: 100,
+            }],
+        };
+        let program_id = entry.id().unwrap();
+        let mut state = ShieldedState::<4>::new(3);
+        state.register_program(entry).unwrap();
+        let empty = transaction(state.root(), 1, 40);
+        assert_eq!(
+            state.apply_contextual_transaction(&empty, 10, &[]).err(),
+            Some(StateError::InvalidProgramContext)
+        );
+        let mut transaction = transaction(state.root(), 1, 40);
+        transaction.programs.push(ProgramCall {
+            program_id,
+            function_id: 7,
+            public_data_hash: [0; 32],
+        });
+        let context = ProgramContext::from_transaction(
+            &transaction,
+            0,
+            10,
+            Some(ProgramStateTransition {
+                prior: [5; 32],
+                next: [6; 32],
+            }),
+            b"context-test".to_vec(),
+        )
+        .unwrap();
+        transaction.programs[0].public_data_hash = context.hash().unwrap();
+        let before = state.encode_snapshot();
+        assert_eq!(
+            state
+                .apply_contextual_transaction(&transaction, 10, &[])
+                .err(),
+            Some(StateError::InvalidProgramContext)
+        );
+        let mut altered = context.clone();
+        altered.application_data[0] ^= 1;
+        assert_eq!(
+            state
+                .apply_contextual_transaction(&transaction, 10, &[altered])
+                .err(),
+            Some(StateError::InvalidProgramContext)
+        );
+        assert_eq!(state.encode_snapshot(), before);
+        let delta = state
+            .apply_contextual_transaction(&transaction, 10, &[context])
+            .unwrap();
+        assert_eq!(state.leaf_count(), 1);
+        state.rollback(delta);
+        assert_eq!(state.encode_snapshot(), before);
     }
 
     #[test]

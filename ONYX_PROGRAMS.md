@@ -97,6 +97,13 @@ following:
 4. transaction-level binding of ordered calls and public-data hashes;
 5. verification cost within the entry and block limits;
 
+The generic program-context v1 foundation now supplies a canonical transaction projection, inclusion
+window, optional private-state transition commitments, a fixed 22-field circuit ABI, and a frozen schema
+hash. `apply_contextual_transaction` requires exactly one ordered context per call and validates all of them
+before state mutation. This is not yet a generic executable-program envelope: transaction-proof composition,
+context carriage, a registered compiler verifier, and standard-circuit audits must land before non-token calls
+can enter consensus. Until then the existing token-family dispatch remains the only executable program path.
+
 Standard token programs also register eight fixed mixed-transfer shapes. Each proof composes an
 independent token lane (one or two spends/outputs, zero fee, exact Program ID) with a native lane (one
 or two spends, one change output, public miner fee). Transaction ordering is token spends then native

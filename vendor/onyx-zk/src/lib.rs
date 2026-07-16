@@ -35,6 +35,7 @@ pub mod mixed_token_circuit;
 pub mod multi_transfer_circuit;
 pub mod note_commitment_circuit;
 pub mod program;
+pub mod program_context;
 pub mod program_deployment;
 pub mod proof;
 pub mod spend_auth_circuit;

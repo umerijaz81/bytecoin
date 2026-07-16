@@ -165,6 +165,26 @@ equivalent bridge-specific digest over their stable legacy statement and sole ou
 manifest, backend, activation window, ordered function ids, each function's verifying-key descriptor,
 public-input schema hash, and maximum cost. Unknown or inactive programs fail closed.
 
+Generic stateful calls use canonical program-context version 1. The context is non-circular: the
+transaction stores its domain-separated context hash, while the context commits to the network, anchor,
+valid-from/expiry window, fee, selected call index and identity, ordered call headers, complete public spend
+and output encodings, optional prior/next state commitments, and at most 4096 application-data bytes. It does
+not hash program-call payload hashes back into itself. Inclusion requires one context per ordered call and
+`valid_from_height <= block_height <= expiry_height`; every context is validated before nullifier or tree work.
+
+The mandatory context prefix contains 22 Pasta instances in this order:
+
+`network, anchor, valid_from, expiry, fee, call_index, program[2], function, spends[2], outputs[2],`
+`call_headers[2], has_state, prior[2], next[2], application_data_hash[2]`.
+
+Arbitrary 32-byte values use a 31-byte little-endian limb plus a one-byte limb. Missing state uses a false
+flag and four zero limbs. The frozen schema hash is
+`05b9faf149f9fa69d94153d2f22ce85bd51528256f0e25f15a1edfbd1ad5e941`. A different order, packing,
+field count, or application-data hash domain requires a new context version and registry schema. An audited
+function may append a versioned, typed application-specific suffix, but its registry schema hash must commit to
+the complete prefix-plus-suffix layout and its native decoder must derive those fields from the same bounded
+application-data bytes. The generic context layer never interprets an unregistered suffix.
+
 The first standard program is the private fungible-token transfer family. It supports fixed
 `(1..=2 spends, 1..=2 outputs)` shapes under backend
 `halo2-ipa-pasta-onyx-token-v1`. A shape-specific function id selects a deterministic VK descriptor
