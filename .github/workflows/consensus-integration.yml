@@ -5,18 +5,22 @@ on:
     paths:
       - ".github/workflows/consensus-integration.yml"
       - "CMakeLists.txt"
+      - "src/CryptoNote.*"
       - "src/Core/BlockChain*"
       - "src/Core/Currency.*"
       - "src/crypto/RandomX.*"
+      - "src/main_miner.cpp"
       - "tests/blockchain/**"
       - "vendor/randomx/**"
   pull_request:
     paths:
       - ".github/workflows/consensus-integration.yml"
       - "CMakeLists.txt"
+      - "src/CryptoNote.*"
       - "src/Core/BlockChain*"
       - "src/Core/Currency.*"
       - "src/crypto/RandomX.*"
+      - "src/main_miner.cpp"
       - "tests/blockchain/**"
       - "vendor/randomx/**"
 
@@ -39,7 +43,10 @@ jobs:
       - name: Configure consensus tests
         run: cmake -S . -B build-consensus -DUSE_SQLITE=ON -DONYX_ZK=OFF
       - name: Build consensus tests
-        run: cmake --build build-consensus --parallel 2 --target tests
+        run: cmake --build build-consensus --parallel 2 --target tests minerd
+      - name: Smoke-test miner command line
+        working-directory: build-consensus
+        run: ../bin/minerd --help
       - name: Run blockchain and RandomX reorganization tests
         working-directory: build-consensus
         run: ../bin/tests --blockchain

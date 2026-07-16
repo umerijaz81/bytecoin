@@ -1,6 +1,10 @@
 // Copyright (c) 2012-2018, The CryptoNote developers, The Bytecoin developers.
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
+#include <algorithm>
+#include <condition_variable>
+#include <exception>
+#include <mutex>
 #include <thread>
 #include "Core/Config.hpp"
 #include "Core/CryptoNoteTools.hpp"
@@ -20,10 +24,8 @@
 #include "seria/BinaryOutputStream.hpp"
 #include "version.hpp"
 
-// Single-threaded, as this is enough for testNet.
-
 static const char USAGE[] =
-    R"(minerd. single-threaded to be light on cpu while running in background
+    R"(minerd. Bytecoin proof-of-work miner
 
 Usage:
   minerd [options]
@@ -34,7 +36,10 @@ Options:
   --wallet-address=<address>     Address to receive mined coins (required).
   --bytecoind-address=<ip:port>  Single option for both daemon address and port.
   --limit=<N>                    Mine and submit specified number of blocks, then exit, 0 means no limit [Default: 0].
-  --threads=<N>                  Not implemented - just start several copies of minerd.
+  --threads=<N>                  RandomX hashing threads [Default: detected CPU count].
+  --randomx-init-threads=<N>     Full-memory dataset initialization threads [Default: hashing threads].
+  --randomx-large-pages          Require large pages for the RandomX dataset (fail if unavailable).
+  --randomx-light                Use one-thread 256 MiB verification mode instead of the 2080 MiB dataset.
   --boast=<text>                 Text to insert into coinbase transaction's extra nonce.
   --miner-secret=<hash_hex>      Turn on deterministic mining.
   --cm                           EXPERIMENTAL. Use CM with random virtual coins.
@@ -56,6 +61,20 @@ struct MiningConfig {
 			throw std::runtime_error("--" CRYPTONOTE_NAME "d-address=ip:port argument is mandatory");
 		if (const char *pa = cmd.get("--limit"))
 			blocks_limit = common::integer_cast<size_t>(pa);
+		threads = std::max<size_t>(1, std::thread::hardware_concurrency());
+		if (const char *pa = cmd.get("--threads"))
+			threads = common::integer_cast<size_t>(pa);
+		if (threads == 0 || threads > 256)
+			throw std::runtime_error("--threads must be between 1 and 256");
+		randomx_init_threads = threads;
+		if (const char *pa = cmd.get("--randomx-init-threads"))
+			randomx_init_threads = common::integer_cast<size_t>(pa);
+		if (randomx_init_threads == 0 || randomx_init_threads > 256)
+			throw std::runtime_error("--randomx-init-threads must be between 1 and 256");
+		randomx_large_pages = cmd.get_bool("--randomx-large-pages");
+		randomx_light       = cmd.get_bool("--randomx-light");
+		if (randomx_light && threads != 1)
+			throw std::runtime_error("--randomx-light requires --threads=1 to avoid duplicate 256 MiB caches");
 		if (const char *pa = cmd.get("--boast"))
 			boast = pa;
 		if (const char *pa = cmd.get("--miner-secret")) {
@@ -77,6 +96,100 @@ struct MiningConfig {
 	Hash miner_secret;
 	bool cm = false;
 	bool mm = false;
+	size_t threads = 1;
+	size_t randomx_init_threads = 1;
+	bool randomx_large_pages = false;
+	bool randomx_light = false;
+};
+
+class RandomXHashPool : private common::Nocopy {
+public:
+	RandomXHashPool(std::shared_ptr<const crypto::RandomXDataset> dataset, size_t thread_count)
+	    : m_dataset(std::move(dataset)), m_inputs(thread_count), m_results(thread_count) {
+		if (!m_dataset || thread_count == 0)
+			throw std::invalid_argument("RandomX hash pool requires a dataset and worker threads");
+		m_contexts.reserve(thread_count);
+		m_workers.reserve(thread_count);
+		for (size_t i = 0; i != thread_count; ++i)
+			m_contexts.emplace_back(new crypto::RandomXContext(m_dataset));
+		try {
+			for (size_t i = 0; i != thread_count; ++i)
+				m_workers.emplace_back(&RandomXHashPool::worker_run, this, i);
+		} catch (...) {
+			stop_workers();
+			throw;
+		}
+	}
+
+	~RandomXHashPool() { stop_workers(); }
+
+	std::vector<Hash> hash(std::vector<BinaryArray> inputs) {
+		if (inputs.size() != m_workers.size())
+			throw std::invalid_argument("RandomX hash pool input count does not match worker count");
+		std::unique_lock<std::mutex> lock(m_mutex);
+		m_inputs = std::move(inputs);
+		m_completed = 0;
+		m_error = nullptr;
+		++m_generation;
+		m_start.notify_all();
+		m_done.wait(lock, [&] { return m_completed == m_workers.size(); });
+		if (m_error)
+			std::rethrow_exception(m_error);
+		return m_results;
+	}
+
+private:
+	void stop_workers() {
+		{
+			std::lock_guard<std::mutex> lock(m_mutex);
+			m_stopping = true;
+			++m_generation;
+		}
+		m_start.notify_all();
+		for (auto &worker : m_workers)
+			if (worker.joinable())
+				worker.join();
+		m_workers.clear();
+	}
+
+	void worker_run(size_t index) {
+		size_t observed_generation = 0;
+		for (;;) {
+			std::unique_lock<std::mutex> lock(m_mutex);
+			m_start.wait(lock, [&] { return m_stopping || m_generation != observed_generation; });
+			if (m_stopping)
+				return;
+			observed_generation = m_generation;
+			const BinaryArray &input = m_inputs[index];
+			lock.unlock();
+			try {
+				m_results[index] =
+				    m_contexts[index]->hash(m_dataset->seed(), input.data(), input.size());
+			} catch (...) {
+				lock.lock();
+				if (!m_error)
+					m_error = std::current_exception();
+				lock.unlock();
+			}
+			lock.lock();
+			++m_completed;
+			if (m_completed == m_workers.size())
+				m_done.notify_one();
+		}
+	}
+
+	std::shared_ptr<const crypto::RandomXDataset> m_dataset;
+	std::vector<std::unique_ptr<crypto::RandomXContext>> m_contexts;
+	std::vector<std::thread> m_workers;
+	std::vector<BinaryArray> m_inputs;
+	std::vector<Hash> m_results;
+	std::mutex m_mutex;
+	std::condition_variable m_start;
+	std::condition_variable m_done;
+	size_t m_generation = 0;
+	size_t m_completed = 0;
+	bool m_stopping = false;
+	std::exception_ptr m_error;
 };
 
 class HTTPMiner {
@@ -92,6 +205,8 @@ public:
 
 	crypto::CryptoNightContext crypto_context;
 	crypto::RandomXContext randomx_context;
+	std::shared_ptr<const crypto::RandomXDataset> randomx_dataset;
+	std::unique_ptr<RandomXHashPool> randomx_hash_pool;
 	BlockTemplate block{};
 	api::cnd::GetBlockTemplate::Response block_response;
 	api::cnd::GetCurrencyId::Response currencyid_response;
@@ -120,6 +235,9 @@ public:
 	bool on_idle() {
 		if (difficulty == 0)
 			return false;
+		if (block_response.pow_algorithm == "randomx-v2" && !mining_config.cm &&
+		    !mining_config.randomx_light)
+			return on_randomx_idle();
 		nonce++;
 		BinaryArray pow_hashing_data;
 		BinaryArray cm_nonce;
@@ -167,6 +285,44 @@ public:
 			}
 			common::console::set_text_color(common::console::Default);
 			found_blocks.push_back(FoundBlock{block, cm_nonce, cm_merkle_branch});
+			difficulty = 0;
+			send_submit();
+			return false;
+		}
+		return true;
+	}
+	bool on_randomx_idle() {
+		if (!randomx_dataset || randomx_dataset->seed() != block_response.pow_seed_hash) {
+			randomx_hash_pool.reset();
+			randomx_dataset = std::make_shared<crypto::RandomXDataset>(block_response.pow_seed_hash,
+			    mining_config.randomx_init_threads, mining_config.randomx_large_pages);
+			randomx_hash_pool =
+			    std::make_unique<RandomXHashPool>(randomx_dataset, mining_config.threads);
+			std::cout << "RandomX full-memory dataset ready with " << mining_config.threads
+			          << " hashing thread(s)" << std::endl;
+		}
+		std::vector<BinaryArray> inputs;
+		std::vector<uint32_t> nonces;
+		inputs.reserve(mining_config.threads);
+		nonces.reserve(mining_config.threads);
+		for (size_t i = 0; i != mining_config.threads; ++i) {
+			++nonce;
+			const uint32_t candidate_nonce = static_cast<uint32_t>(nonce);
+			common::uint_le_to_bytes(block.root_block.nonce, 4, candidate_nonce);
+			nonces.push_back(candidate_nonce);
+			const auto body_proxy = get_body_proxy_from_template(block);
+			inputs.push_back(
+			    get_block_pow_hashing_data(block, body_proxy, currencyid_response.currency_id_blob));
+		}
+		const std::vector<Hash> hashes = randomx_hash_pool->hash(std::move(inputs));
+		for (size_t i = 0; i != hashes.size(); ++i) {
+			if (!check_hash(hashes[i], difficulty))
+				continue;
+			common::uint_le_to_bytes(block.root_block.nonce, 4, nonces[i]);
+			common::console::set_text_color(common::console::BrightGreen);
+			std::cout << "Miner found RandomX block !!!, will send ASAP" << std::endl;
+			common::console::set_text_color(common::console::Default);
+			found_blocks.push_back(FoundBlock{block, BinaryArray{}, {}});
 			difficulty = 0;
 			send_submit();
 			return false;
@@ -270,6 +426,10 @@ public:
 					    for (size_t i = 0; i != mining_config.boast.size(); ++i)
 						    resp.blocktemplate_blob.at(resp.reserved_offset + i) = mining_config.boast[i];
 				    block_response = resp;
+				    if (resp.pow_algorithm != "randomx-v2") {
+					    randomx_hash_pool.reset();
+					    randomx_dataset.reset();
+				    }
 				    seria::from_binary(block, resp.blocktemplate_blob);
 				    set_root_extra_to_solo_mining_tag(block);
 				    difficulty = resp.difficulty;

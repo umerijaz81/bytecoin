@@ -145,7 +145,11 @@ struct BlockHeader {
 	std::vector<crypto::CMBranchElement> cm_merkle_branch;  // For blocks with is_cm_mined() true
 	bool is_cm_mined() const { return major_version == 6; }
 #endif
-	bool is_merge_mined() const { return major_version == 2 || major_version == 3 || major_version == 4; }
+	// Jade V5 and Onyx V7 retain the established root-block wire format. V6 is deliberately
+	// reserved for the disabled CM experiment and must not be interpreted as merge-mined.
+	bool is_merge_mined() const {
+		return (major_version >= 2 && major_version <= 5) || major_version == 7;
+	}
 };
 
 struct BlockBodyProxy {

@@ -310,6 +310,15 @@ void test_jade_consensus(common::CommandLine &cmd) {
 
 	// 10. RandomX seed epochs are deterministic and always lag the block being validated.
 	{
+		BlockHeader jade_header;
+		jade_header.major_version = currency.jade_block_version;
+		BlockHeader onyx_header;
+		onyx_header.major_version = currency.onyx_block_version;
+		invariant(jade_header.is_merge_mined() && onyx_header.is_merge_mined(),
+		    "Jade or Onyx did not retain the canonical root-block wire format");
+		BlockHeader reserved_header;
+		reserved_header.major_version = 6;
+		invariant(!reserved_header.is_merge_mined(), "reserved V6 block format was accepted as merge-mined");
 		invariant(currency.uses_randomx(currency.jade_block_version, currency.randomx_switch_height),
 		    "RandomX is not active at its versioned switch height");
 		invariant(!currency.uses_randomx(currency.amethyst_block_version, currency.randomx_switch_height),
