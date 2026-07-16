@@ -67,8 +67,10 @@ are implemented in `tools/release`, `release/` and `.github/workflows/release-ev
 Azure publisher is disabled because its runner images, dependency acquisition and OpenSSL release are
 not a trustworthy or reproducible build boundary. `docs/Release-Readiness.md` defines the two-person
 ceremony and `docs/Incident-Response.md` defines the consensus/privacy response and rollback boundary.
-The activation-gate verifier keeps all placeholder heights unchanged while any mandatory evidence is
-not passed.
+Same-runner full daemon, wallet and miner builds now reproduce byte-for-byte on Linux x64, macOS ARM64
+and Windows x64, with exact manifests retained by CI. Independent pinned-dependency builders and
+signatures are still required. The activation-gate verifier keeps all placeholder heights unchanged
+while any mandatory evidence is not passed.
 
 ### Release gates that cannot be completed by repository code alone
 

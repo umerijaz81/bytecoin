@@ -45,11 +45,22 @@ remote URL. None of its artifacts meet the release boundary.
 `.github/workflows/reproducible-binaries.yml` is the first executable reproducibility qualification
 gate. It exports the same revision into two different absolute paths, requires `SOURCE_DATE_EPOCH`,
 remaps C++ and Rust source paths, disables nondeterministic linker identifiers, strips both builds,
-and compares the three Linux executables byte-for-byte. Its JSON manifest records hashes and
-toolchain identities. A green same-runner comparison is necessary evidence, but it is not the two
-independent environments or the Windows/macOS evidence required to mark the activation gate passed.
-The initial Linux comparison passed on 2026-07-16 in GitHub Actions run `29513818059`; its uploaded
-manifest records the exact executable hashes and toolchain identities for commit `65f84ca`.
+and compares `bytecoind`, `walletd` and `minerd` byte-for-byte on Linux x64, macOS ARM64 and Windows
+x64. Each JSON manifest records hashes and exact compiler, SDK and dependency identities. All three
+same-runner platform comparisons passed on 2026-07-16 in GitHub Actions run `29521526735` for commit
+`87f0e5f2291bdb8abf0212e5ce566fc7ebc811c3`. The uploaded evidence artifacts are:
+
+- Linux artifact `8385140911`, digest
+  `sha256:0399ee89888a46eb3376a6262e2af0518e8f1278c94d73e7815c915277931c77`;
+- macOS ARM64 artifact `8385134927`, digest
+  `sha256:e720a135af9939c71c6e558b6b20fc149b66248d95c6f78a564cc395c040f381`;
+- Windows x64 artifact `8385420466`, digest
+  `sha256:174d9d84ab7dc557862080eb14e746608366cbe3d43e086f1928cb17cbe4f1b4`.
+
+This closes the repository-controlled same-runner qualification, not the activation gate. The runners
+currently use their platform package managers rather than the frozen production dependency lock, and
+two independent operators/environments have not reproduced and signed the artifacts. The
+`reproducible-platform-binaries` gate therefore remains `pending`.
 
 ## Required release ceremony
 
