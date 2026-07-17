@@ -24,6 +24,7 @@ use crate::proof::{
     create_token_issuance_proof, multi_transfer_backend_id, BridgeWitness, MixedTokenWitness,
     MultiSpendWitness, MultiTransferWitness, TokenIssuanceWitness, BRIDGE_BACKEND,
 };
+use crate::standard_programs::{standard_program_entry, StandardProgramKind};
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
 use crate::token_issuance::{sign_issuer_authorization, AuthorizedTokenIssuance};
 use crate::token_program::{
@@ -565,13 +566,42 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             deactivation_height,
         )
         .map_err(|_| WalletBuildError::InvalidValue)?;
+        self.build_program_deployment_entry(keys, entry, expiry_height, fee, circuit_k)
+    }
+
+    pub fn build_standard_program_deployment(
+        &self,
+        keys: &KeyBundle,
+        kind: StandardProgramKind,
+        activation_height: u64,
+        deactivation_height: Option<u64>,
+        expiry_height: u64,
+        fee: u64,
+        circuit_k: u32,
+    ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
+        let entry = standard_program_entry(kind, activation_height, deactivation_height)
+            .map_err(|_| WalletBuildError::InvalidValue)?;
+        self.build_program_deployment_entry(keys, entry, expiry_height, fee, circuit_k)
+    }
+
+    fn build_program_deployment_entry(
+        &self,
+        keys: &KeyBundle,
+        entry: crate::program::ProgramEntry,
+        expiry_height: u64,
+        fee: u64,
+        circuit_k: u32,
+    ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
         let program_id = entry.id().map_err(|_| WalletBuildError::Crypto)?;
+        let activation_height = entry.activation_height;
+        let deactivation_height = entry.deactivation_height;
+        let manifest = entry.manifest;
         let call = ProgramCall {
             program_id,
             function_id: PROGRAM_DEPLOYMENT_FUNCTION_ID,
             public_data_hash: deployment_hash(
                 self.network_id,
-                &token_manifest,
+                &manifest,
                 activation_height,
                 deactivation_height,
             ),
@@ -590,7 +620,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             vec![call],
         )?;
         Ok(AuthorizedProgramDeployment {
-            token_manifest,
+            token_manifest: manifest,
             activation_height,
             deactivation_height,
             funding,

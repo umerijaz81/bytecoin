@@ -61,6 +61,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | `create_onyx_transaction` | Selects confirmed shielded notes, creates recipient/change notes, and returns a fully proved and authorized Onyx transaction. |
 | `create_onyx_token_transaction` | Transfers a private standard token while paying the miner fee from native Onyx notes in the same proof. |
 | `create_onyx_program_deployment` | Deploys a capped private fungible-token program, funded and authorized by native Onyx notes. |
+| `create_onyx_standard_program_deployment` | Deploys one pinned NFT, vesting, multisig, or atomic-swap program artifact. |
 | `create_onyx_token_issuance` | Privately issues tokens under a wallet-owned active capped program and its next consensus sequence. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
@@ -221,6 +222,29 @@ their native nullifiers against one another, so a second builder cannot reuse th
   "params":{
     "max_supply":1000000000,
     "metadata":"PRIVATE-USD/v1",
+    "activation_height":0,
+    "deactivation_height":0,
+    "fee":100000,
+    "expiry_height":0
+  }
+}
+```
+
+#### `create_onyx_standard_program_deployment`
+
+This method deploys an immutable built-in standard program. `kind` must be exactly `nft`, `vesting`,
+`multisig`, or `swap`; walletd selects the pinned package manifest, circuit, and verifier artifact,
+so callers cannot supply executable bytes or substitute a verification key. Activation,
+deactivation, fee, expiry, nullifier reservation, and response fields follow
+`create_onyx_program_deployment`.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"deploy-nft",
+  "method":"create_onyx_standard_program_deployment",
+  "params":{
+    "kind":"nft",
     "activation_height":0,
     "deactivation_height":0,
     "fee":100000,

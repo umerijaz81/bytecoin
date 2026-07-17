@@ -158,6 +158,11 @@ public:
 	    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
 	    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
 	    std::array<uint8_t, 32> *program_id);
+	static bool wallet_create_standard_program_deployment(const BinaryArray &wallet_snapshot,
+	    const std::array<uint8_t, 32> &seed, uint8_t kind, uint64_t inclusion_height,
+	    uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,
+	    uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
+	    std::array<uint8_t, 32> *program_id);
 	static bool wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,

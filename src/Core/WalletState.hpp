@@ -109,6 +109,9 @@ public:
 	bool create_onyx_program_deployment(Amount max_supply, const BinaryArray &metadata,
 	    Height inclusion_height, Height activation_height, Height deactivation_height,
 	    Amount fee, Height expiry_height, BinaryArray *envelope, std::array<uint8_t, 32> *program_id) const;
+	bool create_onyx_standard_program_deployment(uint8_t kind, Height inclusion_height,
+	    Height activation_height, Height deactivation_height, Amount fee, Height expiry_height,
+	    BinaryArray *envelope, std::array<uint8_t, 32> *program_id) const;
 	bool create_onyx_token_issuance(const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, Amount amount, Height inclusion_height,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope, uint64_t *sequence) const;

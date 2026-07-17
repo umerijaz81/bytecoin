@@ -2360,6 +2360,101 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
 }
 
 #[no_mangle]
+pub extern "C" fn onyx_wallet_create_standard_program_deployment(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    kind: u8,
+    inclusion_height: u64,
+    activation_height: u64,
+    deactivation_height: u64,
+    expiry_height: u64,
+    fee: u64,
+    circuit_k: u32,
+    deployment_out: *mut *mut u8,
+    deployment_len_out: *mut usize,
+    program_id_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        let kind = match kind {
+            1 => standard_programs::StandardProgramKind::Nft,
+            2 => standard_programs::StandardProgramKind::Vesting,
+            3 => standard_programs::StandardProgramKind::Multisig,
+            4 => standard_programs::StandardProgramKind::Swap,
+            _ => return -1,
+        };
+        if wallet_snapshot.is_null()
+            || wallet_snapshot_len == 0
+            || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || activation_height <= inclusion_height
+            || activation_height - inclusion_height
+                > program_deployment::MAX_PROGRAM_ACTIVATION_DELAY
+            || (deactivation_height != 0 && deactivation_height <= activation_height)
+            || expiry_height < inclusion_height
+            || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
+            || fee < program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE
+            || circuit_k != standard_programs::STANDARD_CIRCUIT_K
+            || deployment_out.is_null()
+            || deployment_len_out.is_null()
+            || program_id_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *deployment_out = std::ptr::null_mut();
+            *deployment_len_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let keys = match keys::MasterSeed::new(seed).derive(wallet.network_id()) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let deactivation = (deactivation_height != 0).then_some(deactivation_height);
+        let deployment = match wallet.build_standard_program_deployment(
+            &keys,
+            kind,
+            activation_height,
+            deactivation,
+            expiry_height,
+            fee,
+            circuit_k,
+        ) {
+            Ok(deployment) => deployment,
+            Err(_) => return -5,
+        };
+        if verify_program_deployment_dispatch(&deployment, 32, circuit_k, Some(inclusion_height))
+            .is_err()
+        {
+            return -2;
+        }
+        let program_id = deployment.funding.preimage.programs[0].program_id;
+        let encoded = match deployment.encode() {
+            Ok(encoded) if encoded.len() <= program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES => {
+                encoded
+            }
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *deployment_out = ptr;
+            *deployment_len_out = len;
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+        }
+        1
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_wallet_create_transfer(
     snapshot: *const u8,
     snapshot_len: usize,

@@ -468,6 +468,22 @@ struct CreateOnyxProgramDeployment {
 	};
 };
 
+struct CreateOnyxStandardProgramDeployment {
+	static std::string method() { return "create_onyx_standard_program_deployment"; }
+	struct Request {
+		std::string kind;  // nft, vesting, multisig, or swap
+		Height activation_height = 0;
+		Height deactivation_height = 0;  // zero means no scheduled deactivation
+		Amount fee = 0;
+		Height expiry_height = 0;
+	};
+	struct Response {
+		BinaryArray binary_transaction;
+		Hash transaction_hash{};
+		Hash program_id{};
+	};
+};
+
 struct CreateOnyxTokenIssuance {
 	static std::string method() { return "create_onyx_token_issuance"; }
 	struct Request {
@@ -1132,6 +1148,8 @@ void ser_members(cn::api::walletd::CreateOnyxTokenTransaction::Request &v, ISeri
 void ser_members(cn::api::walletd::CreateOnyxTokenTransaction::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxProgramDeployment::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxProgramDeployment::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxStandardProgramDeployment::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxStandardProgramDeployment::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTokenIssuance::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTokenIssuance::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxBridge::Request &v, ISeria &s);

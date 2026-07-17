@@ -43,6 +43,16 @@
       ],
       "response_fields": ["binary_transaction", "transaction_hash", "program_id"]
     },
+    "create_onyx_standard_program_deployment": {
+      "request_fields": [
+        "kind",
+        "activation_height",
+        "deactivation_height",
+        "fee",
+        "expiry_height"
+      ],
+      "response_fields": ["binary_transaction", "transaction_hash", "program_id"]
+    },
     "create_onyx_token_issuance": {
       "request_fields": ["address", "program_id", "amount", "expiry_height", "memo"],
       "response_fields": ["binary_transaction", "transaction_hash", "sequence"]

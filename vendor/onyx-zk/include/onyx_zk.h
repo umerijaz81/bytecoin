@@ -205,6 +205,14 @@ int onyx_wallet_create_program_deployment(
     uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
     uint64_t expiry_height, uint64_t fee, uint32_t circuit_k,
     uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
+/* Build a fee-funded deployment for a pinned standard program. kind is 1=Nft,
+ * 2=Vesting, 3=Multisig, or 4=Swap. Standard programs require circuit k=16. */
+int onyx_wallet_create_standard_program_deployment(
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
+    const uint8_t seed[32], uint8_t kind,
+    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
+    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k,
+    uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
 int onyx_wallet_create_token_issuance(
     const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
     const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],

@@ -401,6 +401,20 @@ void ser_members(api::walletd::CreateOnyxProgramDeployment::Response &v, ISeria 
 	seria_kv("program_id", v.program_id, s);
 }
 
+void ser_members(api::walletd::CreateOnyxStandardProgramDeployment::Request &v, ISeria &s) {
+	seria_kv("kind", v.kind, s);
+	seria_kv("activation_height", v.activation_height, s);
+	seria_kv("deactivation_height", v.deactivation_height, s);
+	seria_kv("fee", v.fee, s);
+	seria_kv("expiry_height", v.expiry_height, s);
+}
+
+void ser_members(api::walletd::CreateOnyxStandardProgramDeployment::Response &v, ISeria &s) {
+	seria_kv("binary_transaction", v.binary_transaction, s);
+	seria_kv("transaction_hash", v.transaction_hash, s);
+	seria_kv("program_id", v.program_id, s);
+}
+
 void ser_members(api::walletd::CreateOnyxTokenIssuance::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("program_id", v.program_id, s);

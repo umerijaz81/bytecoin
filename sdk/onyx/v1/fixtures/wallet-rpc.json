@@ -26,6 +26,10 @@
       "response": {"jsonrpc": "2.0", "id": "deploy", "result": {"binary_transaction": "0602", "transaction_hash": "46", "program_id": "11"}}
     },
     {
+      "request": {"jsonrpc": "2.0", "id": "standard-deploy", "method": "create_onyx_standard_program_deployment", "params": {"kind": "nft", "activation_height": 40, "deactivation_height": 0, "fee": 1, "expiry_height": 60}},
+      "response": {"jsonrpc": "2.0", "id": "standard-deploy", "result": {"binary_transaction": "0602", "transaction_hash": "49", "program_id": "12"}}
+    },
+    {
       "request": {"jsonrpc": "2.0", "id": "issue", "method": "create_onyx_token_issuance", "params": {"address": "onyx1", "program_id": "11", "amount": 10, "expiry_height": 60, "memo": "mint"}},
       "response": {"jsonrpc": "2.0", "id": "issue", "result": {"binary_transaction": "0603", "transaction_hash": "47", "sequence": 0}}
     },

@@ -3,8 +3,9 @@
 use sha2::{Digest, Sha256};
 
 use crate::authorization::{verify_authorized_transaction, AuthorizationError};
-use crate::program::{ProgramEntry, MAX_MANIFEST_BYTES};
+use crate::program::{ProgramEntry, ProgramError, MAX_MANIFEST_BYTES};
 use crate::proof::{multi_transfer_backend_id, verify_multi_transfer_proof, ProofError};
+use crate::standard_programs::{standard_artifact, standard_program_entry, StandardProgramKind};
 use crate::token_program::{standard_token_program, TokenProgramError};
 use crate::transaction::{read_bytes, write_bytes, AuthorizedTransaction, TransactionError};
 use crate::types::{write_varint, DecodeError, Reader};
@@ -35,6 +36,7 @@ pub enum ProgramDeploymentError {
     Authorization(AuthorizationError),
     Proof(ProofError),
     Program(TokenProgramError),
+    Registry(ProgramError),
     InvalidManifest,
     InvalidActivation,
     InsufficientFee,
@@ -69,6 +71,12 @@ impl From<ProofError> for ProgramDeploymentError {
 impl From<TokenProgramError> for ProgramDeploymentError {
     fn from(value: TokenProgramError) -> Self {
         Self::Program(value)
+    }
+}
+
+impl From<ProgramError> for ProgramDeploymentError {
+    fn from(value: ProgramError) -> Self {
+        Self::Registry(value)
     }
 }
 
@@ -137,12 +145,27 @@ impl AuthorizedProgramDeployment {
         &self,
         k: u32,
     ) -> Result<ProgramEntry, ProgramDeploymentError> {
-        Ok(standard_token_program::<DEPTH>(
+        for kind in [
+            StandardProgramKind::Nft,
+            StandardProgramKind::Vesting,
+            StandardProgramKind::Multisig,
+            StandardProgramKind::Swap,
+        ] {
+            if self.token_manifest == standard_artifact(kind).package_manifest {
+                return Ok(standard_program_entry(
+                    kind,
+                    self.activation_height,
+                    self.deactivation_height,
+                )?);
+            }
+        }
+        standard_token_program::<DEPTH>(
             k,
             &self.token_manifest,
             self.activation_height,
             self.deactivation_height,
-        )?)
+        )
+        .map_err(|_| ProgramDeploymentError::InvalidManifest)
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ProgramDeploymentError> {
@@ -249,9 +272,7 @@ mod tests {
         CanonicalField::from_field(Fp::from(value))
     }
 
-    fn deployment() -> AuthorizedProgramDeployment {
-        let manifest = b"TEST/DEPLOY".to_vec();
-        let entry = standard_token_program::<2>(14, &manifest, 11, Some(100)).unwrap();
+    fn deployment_skeleton(manifest: Vec<u8>) -> AuthorizedProgramDeployment {
         let mut result = AuthorizedProgramDeployment {
             token_manifest: manifest,
             activation_height: 11,
@@ -264,18 +285,12 @@ mod tests {
                     fee: MIN_PROGRAM_DEPLOYMENT_FEE,
                     spends: vec![PublicSpend {
                         nullifier: Nullifier([3; 32]),
-                        value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
-                            MIN_PROGRAM_DEPLOYMENT_FEE + 1,
-                            Fp::from(4),
-                        ),
+                        value_commitment: [4; 32],
                         randomized_key: [5; 32],
                     }],
                     outputs: vec![PublicOutput {
                         commitment: field(6),
-                        value_commitment: crate::value_commitment_circuit::value_commitment_bytes(
-                            1,
-                            Fp::from(7),
-                        ),
+                        value_commitment: [7; 32],
                         ephemeral_key: [8; 32],
                         ciphertext: vec![],
                         outgoing_ciphertext: vec![],
@@ -289,10 +304,25 @@ mod tests {
             },
         };
         result.funding.preimage.programs.push(ProgramCall {
-            program_id: entry.id().unwrap(),
+            program_id: [0; 32],
             function_id: PROGRAM_DEPLOYMENT_FUNCTION_ID,
             public_data_hash: result.deployment_hash(),
         });
+        result
+    }
+
+    fn deployment() -> AuthorizedProgramDeployment {
+        let manifest = b"TEST/DEPLOY".to_vec();
+        let entry = standard_token_program::<2>(14, &manifest, 11, Some(100)).unwrap();
+        let mut result = deployment_skeleton(manifest);
+        result.funding.preimage.spends[0].value_commitment =
+            crate::value_commitment_circuit::value_commitment_bytes(
+                MIN_PROGRAM_DEPLOYMENT_FEE + 1,
+                Fp::from(4),
+            );
+        result.funding.preimage.outputs[0].value_commitment =
+            crate::value_commitment_circuit::value_commitment_bytes(1, Fp::from(7));
+        result.funding.preimage.programs[0].program_id = entry.id().unwrap();
         result
     }
 
@@ -317,6 +347,39 @@ mod tests {
         let mut trailing = encoded;
         trailing.push(0);
         assert!(AuthorizedProgramDeployment::decode(&trailing).is_err());
+    }
+
+    #[test]
+    fn deployment_resolves_only_pinned_standard_program_manifests() {
+        for kind in [
+            StandardProgramKind::Nft,
+            StandardProgramKind::Vesting,
+            StandardProgramKind::Multisig,
+            StandardProgramKind::Swap,
+        ] {
+            let mut deployment =
+                deployment_skeleton(standard_artifact(kind).package_manifest.to_vec());
+            let expected = standard_program_entry(
+                kind,
+                deployment.activation_height,
+                deployment.deactivation_height,
+            )
+            .unwrap();
+            deployment.funding.preimage.programs[0].program_id = expected.id().unwrap();
+            rebind_call(&mut deployment);
+
+            // An invalid k makes the generic token fallback fail immediately; pinned
+            // standard artifacts remain resolvable because their k is immutable.
+            let resolved = deployment.program_entry::<2>(9).unwrap();
+            assert_eq!(resolved, expected);
+
+            deployment.token_manifest.push(b'\n');
+            rebind_call(&mut deployment);
+            assert_eq!(
+                deployment.program_entry::<2>(9).err(),
+                Some(ProgramDeploymentError::InvalidManifest)
+            );
+        }
     }
 
     #[test]

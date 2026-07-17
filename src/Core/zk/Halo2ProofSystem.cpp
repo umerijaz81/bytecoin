@@ -513,6 +513,33 @@ bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &walle
 	return true;
 }
 
+bool Halo2ProofSystem::wallet_create_standard_program_deployment(const BinaryArray &wallet_snapshot,
+    const std::array<uint8_t, 32> &seed, uint8_t kind, uint64_t inclusion_height,
+    uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,
+    uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
+    std::array<uint8_t, 32> *program_id) {
+	if (wallet_snapshot.empty() || kind < 1 || kind > 4 || deployment == nullptr || program_id == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	const int rc = onyx_wallet_create_standard_program_deployment(wallet_snapshot.data(),
+	    wallet_snapshot.size(), seed.data(), kind, inclusion_height, activation_height,
+	    deactivation_height, expiry_height, fee, circuit_k, &ptr, &len, program_id->data());
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		deployment->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
+	return true;
+}
+
 bool Halo2ProofSystem::wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
     const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
     const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,
