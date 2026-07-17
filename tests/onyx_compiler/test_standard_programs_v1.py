@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import json
 import pathlib
 import subprocess
@@ -116,6 +118,11 @@ def proof_vectors() -> dict[str, tuple[list[int], list[int], list[tuple[list[int
 
 class StandardProgramTests(unittest.TestCase):
     def test_packages_reproduce_and_have_exact_public_profiles(self):
+        artifact_root = ROOT / "programs" / "onyx-standard" / "artifacts"
+        manifest_bytes = (artifact_root / "manifest-v1.json").read_bytes()
+        artifact_manifest = json.loads(manifest_bytes)
+        self.assertEqual(manifest_bytes, compiler_v1.canonical_json(artifact_manifest))
+        self.assertEqual(set(artifact_manifest["programs"]), set(PACKAGES))
         with tempfile.TemporaryDirectory() as temporary:
             temporary = pathlib.Path(temporary)
             for name, (_, public_count, private_count) in PACKAGES.items():
@@ -129,6 +136,15 @@ class StandardProgramTests(unittest.TestCase):
                 resources = json.loads((first / "resources.json").read_text("utf-8"))
                 self.assertEqual(resources["public_inputs"], public_count)
                 self.assertEqual(resources["private_inputs"], private_count)
+                entry = artifact_manifest["programs"][name]
+                self.assertEqual(
+                    hashlib.sha256((artifact_root / name / "program.onxir").read_bytes()).hexdigest(),
+                    entry["ir_sha256"],
+                )
+                self.assertEqual(
+                    hashlib.sha256((artifact_root / name / "descriptor-v2.bin").read_bytes()).hexdigest(),
+                    entry["descriptor_sha256"],
+                )
 
     @unittest.skipUnless(os.environ.get("ONYX_COMPILER_BACKEND"), "Halo2 backend executable not supplied")
     def test_real_proofs_accept_valid_and_reject_policy_mutations(self):
@@ -141,6 +157,14 @@ class StandardProgramTests(unittest.TestCase):
                 package = compiler_v1.load_package(ROOT / "programs" / "onyx-standard" / name)
                 compiler_v1.write_bundle(package, bundle, backend, 16)
                 verifier.verify_bundle(bundle, backend)
+                self.assertEqual(
+                    (bundle / "program.onxir").read_bytes(),
+                    (ROOT / "programs" / "onyx-standard" / "artifacts" / name / "program.onxir").read_bytes(),
+                )
+                self.assertEqual(
+                    (bundle / "halo2-vk-descriptors" / f"{export}.bin").read_bytes(),
+                    (ROOT / "programs" / "onyx-standard" / "artifacts" / name / "descriptor-v2.bin").read_bytes(),
+                )
                 valid_public, valid_private, rejected_vectors = vectors[name]
                 ir = (bundle / "program.onxir").read_bytes()
                 accepted = subprocess.run(

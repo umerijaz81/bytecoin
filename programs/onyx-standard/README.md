@@ -17,10 +17,17 @@ hashlock instances independently. The tracked integration test builds each packa
 the bundles and descriptors, creates real randomized proofs, and rejects policy-specific mutations including
 insufficient approvals and duplicate participants.
 
+`artifacts/manifest-v1.json` pins the tracked canonical IR and 133-byte descriptor-v2 files by SHA-256. The
+standalone artifact verifier recompiles every package, independently verifies its bundle, and byte-compares IR
+and descriptors. Rust embeds these exact bytes to construct canonical registry entries and to verify standard
+calls without accepting caller-supplied IR, exports, circuit sizes, schemas, or keys.
+
 ```text
 python tools/onyx/compiler_v1.py programs/onyx-standard/nft <new-output> \
   --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend --circuit-k 16
 python tools/onyx/verify_compiler_bundle_v1.py <new-output> \
+  --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
+python tools/onyx/verify_standard_program_artifacts_v1.py \
   --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
 ```
 

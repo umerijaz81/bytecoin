@@ -12,7 +12,7 @@ use crate::proof::{
     multi_transfer_backend_id, program_transfer_backend_id, verify_multi_transfer_proof,
     verify_program_multi_transfer_proof,
 };
-use crate::standard_programs::{contextual_public_inputs, kind_for_schema};
+use crate::standard_programs::{contextual_public_inputs, kind_for_schema, standard_artifact};
 use crate::state::CanonicalField;
 use crate::transaction::{
     write_public_output, AuthorizedTransaction, ProgramCall, TransactionPreimage,
@@ -546,6 +546,44 @@ impl ContextualAuthorizedTransaction {
             .map_err(|_| ProgramContextError::ProgramProof)?;
         }
         Ok(())
+    }
+
+    /// Consensus-safe standard-program path. Canonical IR/export/k values are selected from the
+    /// compiled-in allowlist using the registered schema; no caller-supplied artifact is accepted.
+    pub fn verify_standard(
+        &self,
+        registry: &ProgramRegistry,
+        block_height: u64,
+        merkle_depth: u32,
+        base_circuit_k: u32,
+    ) -> Result<(), ProgramContextError> {
+        self.validate_at_height(block_height)?;
+        let mut artifacts = Vec::with_capacity(self.contexts.len());
+        for call in &self.transaction.preimage.programs {
+            let (entry, function) = registry
+                .active_function(&call.program_id, call.function_id, block_height)
+                .map_err(|_| ProgramContextError::Registry)?;
+            let kind = kind_for_schema(&function.public_input_schema_hash)
+                .ok_or(ProgramContextError::ProgramProof)?;
+            let artifact = standard_artifact(kind);
+            if entry.backend != COMPILER_PROGRAM_BACKEND
+                || function.verifying_key != artifact.verifying_key
+            {
+                return Err(ProgramContextError::ProgramProof);
+            }
+            artifacts.push(ContextualProgramArtifact {
+                ir: artifact.ir.to_vec(),
+                export: artifact.export.to_owned(),
+                circuit_k: crate::standard_programs::STANDARD_CIRCUIT_K,
+            });
+        }
+        self.verify(
+            registry,
+            block_height,
+            merkle_depth,
+            base_circuit_k,
+            &artifacts,
+        )
     }
 }
 

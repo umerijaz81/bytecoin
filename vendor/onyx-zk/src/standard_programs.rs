@@ -3,6 +3,8 @@
 use halo2_proofs::pasta::Fp;
 use sha2::{Digest, Sha256};
 
+use crate::compiler_backend::COMPILER_PROGRAM_BACKEND;
+use crate::program::{ProgramEntry, ProgramError, ProgramFunction};
 use crate::program_context::ProgramContext;
 use crate::state::CanonicalField;
 use crate::types::{pack_32, write_varint, DecodeError, Reader};
@@ -25,6 +27,18 @@ pub const SWAP_SCHEMA_HASH: [u8; 32] = [
     0x87, 0x38, 0x06, 0x24, 0x76, 0x88, 0x0a, 0x23, 0xaf, 0xdd, 0x40, 0xb5, 0xc6, 0x4c, 0x8e, 0xc2,
     0x12, 0x0d, 0x8c, 0x69, 0x81, 0x31, 0x5d, 0xba, 0x90, 0x77, 0x62, 0x66, 0xdd, 0xde, 0x4f, 0xce,
 ];
+pub const STANDARD_FUNCTION_ID: u32 = 1;
+pub const STANDARD_CIRCUIT_K: u32 = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardProgramArtifact {
+    pub kind: StandardProgramKind,
+    pub export: &'static str,
+    pub package_manifest: &'static [u8],
+    pub ir: &'static [u8],
+    pub verifying_key: &'static [u8],
+    pub max_cost: u64,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -33,6 +47,81 @@ pub enum StandardProgramKind {
     Vesting = 2,
     Multisig = 3,
     Swap = 4,
+}
+
+pub fn standard_artifact(kind: StandardProgramKind) -> StandardProgramArtifact {
+    match kind {
+        StandardProgramKind::Nft => StandardProgramArtifact {
+            kind,
+            export: "transfer",
+            package_manifest: include_bytes!(
+                "../../../programs/onyx-standard/nft/onyx-package.json"
+            ),
+            ir: include_bytes!("../../../programs/onyx-standard/artifacts/nft/program.onxir"),
+            verifying_key: include_bytes!(
+                "../../../programs/onyx-standard/artifacts/nft/descriptor-v2.bin"
+            ),
+            max_cost: 4_096,
+        },
+        StandardProgramKind::Vesting => StandardProgramArtifact {
+            kind,
+            export: "release",
+            package_manifest: include_bytes!(
+                "../../../programs/onyx-standard/vesting/onyx-package.json"
+            ),
+            ir: include_bytes!("../../../programs/onyx-standard/artifacts/vesting/program.onxir"),
+            verifying_key: include_bytes!(
+                "../../../programs/onyx-standard/artifacts/vesting/descriptor-v2.bin"
+            ),
+            max_cost: 4_096,
+        },
+        StandardProgramKind::Multisig => StandardProgramArtifact {
+            kind,
+            export: "authorize",
+            package_manifest: include_bytes!(
+                "../../../programs/onyx-standard/multisig/onyx-package.json"
+            ),
+            ir: include_bytes!("../../../programs/onyx-standard/artifacts/multisig/program.onxir"),
+            verifying_key: include_bytes!(
+                "../../../programs/onyx-standard/artifacts/multisig/descriptor-v2.bin"
+            ),
+            max_cost: 16_384,
+        },
+        StandardProgramKind::Swap => StandardProgramArtifact {
+            kind,
+            export: "settle",
+            package_manifest: include_bytes!(
+                "../../../programs/onyx-standard/swap/onyx-package.json"
+            ),
+            ir: include_bytes!("../../../programs/onyx-standard/artifacts/swap/program.onxir"),
+            verifying_key: include_bytes!(
+                "../../../programs/onyx-standard/artifacts/swap/descriptor-v2.bin"
+            ),
+            max_cost: 4_096,
+        },
+    }
+}
+
+pub fn standard_program_entry(
+    kind: StandardProgramKind,
+    activation_height: u64,
+    deactivation_height: Option<u64>,
+) -> Result<ProgramEntry, ProgramError> {
+    let artifact = standard_artifact(kind);
+    let entry = ProgramEntry {
+        manifest: artifact.package_manifest.to_vec(),
+        backend: COMPILER_PROGRAM_BACKEND.to_owned(),
+        activation_height,
+        deactivation_height,
+        functions: vec![ProgramFunction {
+            function_id: STANDARD_FUNCTION_ID,
+            verifying_key: artifact.verifying_key.to_vec(),
+            public_input_schema_hash: StandardApplication::schema_hash(kind),
+            max_cost: artifact.max_cost,
+        }],
+    };
+    entry.validate()?;
+    Ok(entry)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -490,5 +579,47 @@ mod tests {
                 StandardApplication::derived_schema_hash(kind)
             );
         }
+    }
+
+    #[test]
+    fn standard_artifacts_build_distinct_valid_registry_entries() {
+        let mut identifiers = Vec::new();
+        for kind in [
+            StandardProgramKind::Nft,
+            StandardProgramKind::Vesting,
+            StandardProgramKind::Multisig,
+            StandardProgramKind::Swap,
+        ] {
+            let artifact = standard_artifact(kind);
+            assert_eq!(artifact.kind, kind);
+            assert_eq!(artifact.verifying_key.len(), 133);
+            assert_eq!(artifact.verifying_key[0], 2);
+            assert_eq!(
+                u32::from_le_bytes(artifact.verifying_key[1..5].try_into().unwrap()),
+                STANDARD_CIRCUIT_K
+            );
+            assert!(!artifact.ir.is_empty());
+            let entry = standard_program_entry(kind, 100, Some(200)).unwrap();
+            assert_eq!(entry.backend, COMPILER_PROGRAM_BACKEND);
+            assert_eq!(entry.functions[0].function_id, STANDARD_FUNCTION_ID);
+            assert_eq!(
+                entry.functions[0].public_input_schema_hash,
+                StandardApplication::schema_hash(kind)
+            );
+            identifiers.push(entry.id().unwrap());
+        }
+        identifiers.sort();
+        identifiers.dedup();
+        assert_eq!(identifiers.len(), 4);
+        assert_ne!(
+            standard_program_entry(StandardProgramKind::Nft, 100, Some(200))
+                .unwrap()
+                .id()
+                .unwrap(),
+            standard_program_entry(StandardProgramKind::Nft, 101, Some(200))
+                .unwrap()
+                .id()
+                .unwrap()
+        );
     }
 }

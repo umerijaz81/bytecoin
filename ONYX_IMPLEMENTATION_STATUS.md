@@ -60,7 +60,8 @@ unreachable until the release gates below are independently satisfied.
    semantics, including insufficient-approval and duplicate-participant rejections. Deployment/SDK plumbing and
    review remain. Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and
    frozen schema hashes with strict uint64, identifier, threshold, boolean and Pasta-field validation; wallet/RPC
-   proving flows remain.
+   proving flows remain. Canonical IR/descriptor artifacts are digest-pinned, reproducibly regenerated, embedded
+   in Rust and used by a caller-artifact-free standard verifier and activation-bound registry-entry builder.
 
 ### O6 network, scaling and crypto agility
 
