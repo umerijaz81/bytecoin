@@ -1,0 +1,66 @@
+name: Onyx sustained qualification
+
+on:
+  schedule:
+    - cron: "41 2 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  structured-compiler-fuzz:
+    name: structured compiler fuzz (${{ matrix.seed }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: ["0x4f4e5958", "0x91a75eed", "0xc0dec0de", "0xf00d1234"]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build locked compiler backend
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          cargo build --release --locked --offline
+          --manifest-path vendor/onyx-zk/Cargo.toml
+          --bin onyx-compiler-backend
+      - name: Run deterministic grammar-directed differential campaign
+        run: |
+          python3 tools/onyx/structured_fuzz_v1.py \
+            --cases 10000 \
+            --seed "${{ matrix.seed }}" \
+            --backend vendor/onyx-zk/target/release/onyx-compiler-backend \
+            --backend-cases 32 \
+            --report "build/onyx-qualification/structured-${{ matrix.seed }}.json"
+      - name: Upload campaign identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onyx-structured-fuzz-${{ matrix.seed }}-${{ github.sha }}
+          path: build/onyx-qualification/structured-${{ matrix.seed }}.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  pinned-standard-artifacts:
+    name: reproduce pinned standard artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build locked compiler backend
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          cargo build --release --locked --offline
+          --manifest-path vendor/onyx-zk/Cargo.toml
+          --bin onyx-compiler-backend
+      - name: Independently reproduce all standard descriptors
+        run: >-
+          python3 tools/onyx/verify_standard_program_artifacts_v1.py
+          --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend

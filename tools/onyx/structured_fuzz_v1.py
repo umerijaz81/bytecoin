@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import json
 import pathlib
 import random
 import sys
@@ -150,7 +151,7 @@ def _must_reject_ir(data: bytes, profile: dict, resources: dict) -> None:
 
 
 def run_campaign(count: int, seed: int = DEFAULT_SEED,
-                 backend: pathlib.Path | None = None, backend_cases: int = 8) -> None:
+                 backend: pathlib.Path | None = None, backend_cases: int = 8) -> dict:
     cases = generate_cases(count, seed)
     with tempfile.TemporaryDirectory(prefix="onyx-structured-fuzz-") as temporary:
         root = pathlib.Path(temporary)
@@ -174,6 +175,18 @@ def run_campaign(count: int, seed: int = DEFAULT_SEED,
                 descriptor = compiler_v1.backend_descriptor(backend, ir, 12, case.export)
                 if len(descriptor) != 133:
                     raise AssertionError("unexpected compiler backend descriptor length")
+    executed_backend_cases = min(count, backend_cases) if backend is not None else 0
+    return {
+        "backend_cases": executed_backend_cases,
+        "backend_sha256": hashlib.sha256(backend.read_bytes()).hexdigest() if backend else None,
+        "cases": count,
+        "compiler_build_digest": compiler_v1.compiler_digest(),
+        "format": 1,
+        "seed": seed,
+        "target_profile_digest": hashlib.sha256(
+            compiler_v1.canonical_json(compiler_v1.target_profile())
+        ).hexdigest(),
+    }
 
 
 def main() -> int:
@@ -182,8 +195,13 @@ def main() -> int:
     parser.add_argument("--seed", type=lambda value: int(value, 0), default=DEFAULT_SEED)
     parser.add_argument("--backend", type=pathlib.Path)
     parser.add_argument("--backend-cases", type=int, default=8)
+    parser.add_argument("--report", type=pathlib.Path)
     args = parser.parse_args()
-    run_campaign(args.cases, args.seed, args.backend, args.backend_cases)
+    report = run_campaign(args.cases, args.seed, args.backend, args.backend_cases)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+                               encoding="utf-8", newline="\n")
     print(f"structured Onyx campaign passed: cases={args.cases} seed={args.seed:#x}")
     return 0
 

@@ -45,6 +45,7 @@ class ReleaseToolsTest(unittest.TestCase):
         audit["evidence"] = ["docs/Release-Readiness.md"]
         errors, _ = verify_release_gates.verify(gates, self.config)
         self.assertTrue(any("two distinct report" in error for error in errors), errors)
+        self.assertTrue(any("release_revision" in error for error in errors), errors)
 
     def test_partial_binary_reproducibility_evidence_does_not_pass_gate(self) -> None:
         gate = next(

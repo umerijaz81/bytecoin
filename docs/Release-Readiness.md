@@ -82,6 +82,34 @@ two independent operators/environments have not reproduced and signed the artifa
    manifest with the offline release keys, and only then publish it. Release signing keys must never be
    stored in the repository or general-purpose CI secrets.
 
+## Typed qualification evidence
+
+`tools/release/verify_release_gates.py` fails closed when an external gate is marked `passed` without
+gate-specific JSON attestations. Every attestation binds a 40-character Git revision, a UTC completion
+time, and a repository-relative artifact whose lowercase SHA-256 is recomputed by the verifier. The
+attestation and its referenced artifact must both be committed before the activation-gate change.
+Before any external gate passes, `release/activation-gates.json` must freeze one lowercase
+40-character `release_revision`; every typed attestation must bind that exact revision. It remains
+`null` while qualification is still in progress.
+
+The enforced minimums are release policy, not claims about the current branch:
+
+- independent audits require two attestations from distinct organizations, each binding its report
+  and declaring zero unresolved critical or high findings;
+- public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,
+  and recorded reorg, malformed-bundle, and denial-of-service scenarios at a public HTTPS endpoint;
+- binary reproducibility requires Linux x86-64, macOS ARM64, and Windows x86-64, with two independent
+  builders and byte-identical normalized hashes for each platform;
+- an incident drill requires at least two participants and consensus-stall, reorg, and proof-DoS
+  scenarios;
+- governance must approve the exact revision plus compiler and target-profile SHA-256 digests, record
+  quorum, and contain at least two approvals.
+
+JSON alone is not treated as an audit, soak, drill, build, or governance record. Its `artifact` object
+must name the committed primary record and its digest. Reviewers should additionally verify any
+detached signatures or public transparency-log entries used by the participating organizations; those
+trust roots deliberately remain outside this repository.
+
 ## Updating dependencies
 
 Archive entries require an HTTPS URL and upstream SHA-256. Git entries require a full immutable commit.

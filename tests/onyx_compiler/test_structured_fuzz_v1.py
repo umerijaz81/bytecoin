@@ -17,7 +17,13 @@ class StructuredCompilerFuzzTests(unittest.TestCase):
     def test_grammar_directed_differential_campaign(self) -> None:
         backend_value = os.environ.get("ONYX_COMPILER_BACKEND")
         backend = pathlib.Path(backend_value) if backend_value else None
-        structured_fuzz_v1.run_campaign(48, backend=backend, backend_cases=8)
+        report = structured_fuzz_v1.run_campaign(48, backend=backend, backend_cases=8)
+        self.assertEqual(report["format"], 1)
+        self.assertEqual(report["cases"], 48)
+        self.assertEqual(report["seed"], structured_fuzz_v1.DEFAULT_SEED)
+        self.assertEqual(report["backend_cases"], 8 if backend else 0)
+        self.assertEqual(len(report["compiler_build_digest"]), 64)
+        self.assertEqual(len(report["target_profile_digest"]), 64)
 
     def test_generation_is_seeded_bounded_and_reproducible(self) -> None:
         first = structured_fuzz_v1.generate_cases(64, 12345)

@@ -8,6 +8,7 @@ import re
 import sys
 
 from release_common import ROOT
+from qualification_evidence import verify_gate
 
 
 REQUIRED_GATES = {
@@ -31,6 +32,25 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         errors.append("activation gate identifiers must be present and unique")
     if missing := REQUIRED_GATES - by_id.keys():
         errors.append(f"missing activation gates: {sorted(missing)}")
+    passed_external = [
+        gate_id
+        for gate_id, gate in by_id.items()
+        if gate_id
+        in {
+            "independent-audits",
+            "public-testnet-soak",
+            "reproducible-platform-binaries",
+            "incident-response-drill",
+            "governance-approval",
+        }
+        and gate.get("status") == "passed"
+    ]
+    release_revision = gates_document.get("release_revision")
+    if passed_external and (
+        not isinstance(release_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", release_revision)
+    ):
+        errors.append("passed external gates require one frozen lowercase 40-character release_revision")
     for gate_id, gate in by_id.items():
         status = gate.get("status")
         evidence = gate.get("evidence")
@@ -44,6 +64,15 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                 errors.append(f"{gate_id}: missing repository evidence {relative!r}")
         if status == "passed" and not evidence:
             errors.append(f"{gate_id}: passed status requires concrete evidence")
+        if status == "passed":
+            errors.extend(
+                verify_gate(
+                    gate_id,
+                    evidence,
+                    ROOT,
+                    release_revision if isinstance(release_revision, str) else None,
+                )
+            )
     audit_gate = by_id.get("independent-audits", {})
     if audit_gate.get("status") == "passed" and len(audit_gate.get("evidence", [])) < int(
         audit_gate.get("minimum_independent_reports", 2)
