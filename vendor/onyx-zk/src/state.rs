@@ -12,6 +12,7 @@ use halo2_proofs::pasta::Fp;
 
 use crate::program::{ProgramDelta, ProgramEntry, ProgramRegistry};
 use crate::program_context::ProgramContext;
+use crate::standard_programs::{kind_for_schema, StandardApplication};
 use crate::token_program::{
     issuance_function_id, issuance_policy_from_entry, issuance_public_data_hash,
 };
@@ -19,7 +20,8 @@ use crate::transaction::TransactionPreimage;
 use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
-const SNAPSHOT_VERSION: u8 = 5;
+const SNAPSHOT_VERSION: u8 = 6;
+const ISSUANCE_SNAPSHOT_VERSION: u8 = 5;
 const PROGRAM_COST_SNAPSHOT_VERSION: u8 = 4;
 const PROGRAM_REGISTRY_SNAPSHOT_VERSION: u8 = 3;
 const ACCOUNTING_SNAPSHOT_VERSION: u8 = 2;
@@ -28,6 +30,7 @@ const MAX_TRANSACTION_PROGRAM_COST: u64 = 10_000_000;
 const MAX_BLOCK_PROGRAM_COST: u64 = 20_000_000;
 const MAX_SNAPSHOT_NULLIFIERS: usize = 1_000_000;
 const MAX_SNAPSHOT_ANCHORS: usize = 1_000_000;
+const MAX_SNAPSHOT_PROGRAM_STATES: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CanonicalField([u8; 32]);
@@ -84,6 +87,7 @@ pub enum SnapshotError {
     InvalidRegistry,
     InvalidProgramCost,
     InvalidIssuanceLedger,
+    InvalidProgramState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -243,6 +247,7 @@ pub struct ShieldedState<const DEPTH: usize = ONYX_MERKLE_DEPTH> {
     programs: ProgramRegistry,
     current_block_program_cost: u64,
     issuance: BTreeMap<[u8; 32], TokenIssuanceState>,
+    program_states: BTreeMap<[u8; 32], CanonicalField>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -266,6 +271,7 @@ pub struct ShieldedStateDelta<const DEPTH: usize> {
     previous_total_fees: u64,
     previous_circulating_supply: u64,
     previous_block_program_cost: u64,
+    previous_program_states: BTreeMap<[u8; 32], CanonicalField>,
 }
 
 impl<const DEPTH: usize> ShieldedState<DEPTH> {
@@ -287,6 +293,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             programs: ProgramRegistry::default(),
             current_block_program_cost: 0,
             issuance: BTreeMap::new(),
+            program_states: BTreeMap::new(),
         }
     }
 
@@ -516,6 +523,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let previous_total_fees = self.total_fees;
         let previous_circulating_supply = self.circulating_supply;
         let previous_block_program_cost = self.current_block_program_cost;
+        let previous_program_states = self.program_states.clone();
         let nullifier_values: Vec<_> = transaction
             .spends
             .iter()
@@ -551,6 +559,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             previous_total_fees,
             previous_circulating_supply,
             previous_block_program_cost,
+            previous_program_states,
         })
     }
 
@@ -572,7 +581,53 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         {
             return Err(StateError::InvalidProgramContext);
         }
-        self.apply_transaction(transaction, block_height)
+        let mut next_program_states = self.program_states.clone();
+        for (call, context) in transaction.programs.iter().zip(contexts) {
+            let (_, function) = self
+                .programs
+                .active_function(&call.program_id, call.function_id, block_height)
+                .map_err(|_| StateError::InvalidProgram)?;
+            let Some(kind) = kind_for_schema(&function.public_input_schema_hash) else {
+                continue;
+            };
+            let application = StandardApplication::decode(&context.application_data)
+                .map_err(|_| StateError::InvalidProgramContext)?;
+            if application.kind() != kind || application.validate_context(context).is_err() {
+                return Err(StateError::InvalidProgramContext);
+            }
+            let transition = context
+                .state
+                .as_ref()
+                .ok_or(StateError::InvalidProgramContext)?;
+            let prior = CanonicalField::from_bytes(transition.prior)
+                .ok_or(StateError::InvalidProgramContext)?;
+            let next = CanonicalField::from_bytes(transition.next)
+                .ok_or(StateError::InvalidProgramContext)?;
+            let state_key = application
+                .state_key(&call.program_id)
+                .map_err(|_| StateError::InvalidProgramContext)?;
+            if next_program_states
+                .get(&state_key)
+                .is_some_and(|current| *current != prior)
+            {
+                return Err(StateError::InvalidProgramContext);
+            }
+            next_program_states.insert(state_key, next);
+        }
+        let delta = self.apply_transaction(transaction, block_height)?;
+        self.program_states = next_program_states;
+        Ok(delta)
+    }
+
+    pub fn standard_program_state(
+        &self,
+        program_id: &[u8; 32],
+        application: &StandardApplication,
+    ) -> Result<Option<CanonicalField>, StateError> {
+        let key = application
+            .state_key(program_id)
+            .map_err(|_| StateError::InvalidProgramContext)?;
+        Ok(self.program_states.get(&key).copied())
     }
 
     fn next_block_program_cost(
@@ -606,6 +661,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.total_fees = delta.previous_total_fees;
         self.circulating_supply = delta.previous_circulating_supply;
         self.current_block_program_cost = delta.previous_block_program_cost;
+        self.program_states = delta.previous_program_states;
     }
 
     pub fn encode_snapshot(&self) -> Vec<u8> {
@@ -660,6 +716,11 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             write_varint(issuance.issued_supply, &mut out);
             write_varint(issuance.next_sequence, &mut out);
         }
+        write_varint(self.program_states.len() as u64, &mut out);
+        for (state_key, value) in &self.program_states {
+            out.extend_from_slice(state_key);
+            out.extend_from_slice(&value.bytes());
+        }
         out
     }
 
@@ -670,6 +731,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let mut reader = Reader::new(input);
         let version = reader.byte()?;
         if version != SNAPSHOT_VERSION
+            && version != ISSUANCE_SNAPSHOT_VERSION
             && version != ACCOUNTING_SNAPSHOT_VERSION
             && version != PROGRAM_REGISTRY_SNAPSHOT_VERSION
             && version != PROGRAM_COST_SNAPSHOT_VERSION
@@ -790,7 +852,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         } else {
             0
         };
-        let issuance = if version == SNAPSHOT_VERSION {
+        let issuance = if version >= ISSUANCE_SNAPSHOT_VERSION {
             let count = bounded_snapshot_count(
                 reader.varint()?,
                 crate::program::MAX_REGISTERED_PROGRAMS,
@@ -828,6 +890,26 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         } else {
             BTreeMap::new()
         };
+        let program_states = if version == SNAPSHOT_VERSION {
+            let count = bounded_snapshot_count(
+                reader.varint()?,
+                MAX_SNAPSHOT_PROGRAM_STATES,
+                SnapshotError::InvalidProgramState,
+            )?;
+            let mut states = BTreeMap::new();
+            let mut previous = None;
+            for _ in 0..count {
+                let state_key: [u8; 32] = reader.array()?;
+                if previous.is_some_and(|key| key >= state_key) {
+                    return Err(SnapshotError::InvalidProgramState);
+                }
+                previous = Some(state_key);
+                states.insert(state_key, reader.field()?);
+            }
+            states
+        } else {
+            BTreeMap::new()
+        };
         if !reader.is_empty() {
             return Err(DecodeError::TrailingData.into());
         }
@@ -843,6 +925,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             programs,
             current_block_program_cost,
             issuance,
+            program_states,
         })
     }
 }
@@ -1143,7 +1226,7 @@ mod tests {
         let mut legacy = ShieldedState::<4>::new(3).encode_snapshot();
         legacy[0] = LEGACY_SNAPSHOT_VERSION;
         legacy.drain(6..9);
-        legacy.truncate(legacy.len() - 5);
+        legacy.truncate(legacy.len() - 6);
         let migrated = ShieldedState::<4>::decode_snapshot(&legacy).unwrap();
         assert_eq!(
             (
@@ -1156,7 +1239,7 @@ mod tests {
 
         let mut accounting_v2 = state.encode_snapshot();
         accounting_v2[0] = ACCOUNTING_SNAPSHOT_VERSION;
-        accounting_v2.truncate(accounting_v2.len() - 5);
+        accounting_v2.truncate(accounting_v2.len() - 6);
         let migrated_v2 = ShieldedState::<4>::decode_snapshot(&accounting_v2).unwrap();
         assert_eq!(
             (
@@ -1209,7 +1292,7 @@ mod tests {
         );
         let mut registry_v3 = snapshot.clone();
         registry_v3[0] = PROGRAM_REGISTRY_SNAPSHOT_VERSION;
-        registry_v3.truncate(registry_v3.len() - 2);
+        registry_v3.truncate(registry_v3.len() - 3);
         let migrated_v3 = ShieldedState::<4>::decode_snapshot(&registry_v3).unwrap();
         assert_eq!(migrated_v3.program_count(), 1);
         assert_eq!(migrated_v3.current_block_program_cost(), 0);
@@ -1328,6 +1411,129 @@ mod tests {
             .unwrap();
         assert_eq!(state.leaf_count(), 1);
         state.rollback(delta);
+        assert_eq!(state.encode_snapshot(), before);
+    }
+
+    #[test]
+    fn standard_contextual_state_rejects_forks_and_survives_snapshot_rollback() {
+        use crate::program_context::{ProgramContext, ProgramStateTransition};
+        use crate::standard_programs::{
+            standard_program_entry, StandardApplication, StandardProgramKind, STANDARD_FUNCTION_ID,
+        };
+        use crate::transaction::ProgramCall;
+
+        fn bind(
+            mut transaction: TransactionPreimage,
+            application: &StandardApplication,
+            prior: CanonicalField,
+            next: CanonicalField,
+        ) -> (TransactionPreimage, ProgramContext) {
+            let context = ProgramContext::from_transaction(
+                &transaction,
+                0,
+                10,
+                Some(ProgramStateTransition {
+                    prior: prior.bytes(),
+                    next: next.bytes(),
+                }),
+                application.encode().unwrap(),
+            )
+            .unwrap();
+            transaction.programs[0].public_data_hash = context.hash().unwrap();
+            (transaction, context)
+        }
+
+        let entry = standard_program_entry(StandardProgramKind::Nft, 10, None).unwrap();
+        let program_id = entry.id().unwrap();
+        let mut state = ShieldedState::<4>::new(20);
+        state.register_program(entry).unwrap();
+        let application = StandardApplication::Nft {
+            collection_id: [1; 32],
+            token_id: [2; 32],
+            serial: 7,
+            transfer_nonce: 1,
+        };
+        let prior = field(41);
+        let first_next = field(42);
+        let mut first = transaction(state.root(), 1, 50);
+        first.programs.push(ProgramCall {
+            program_id,
+            function_id: STANDARD_FUNCTION_ID,
+            public_data_hash: [0; 32],
+        });
+        let (first, first_context) = bind(first, &application, prior, first_next);
+        let before = state.encode_snapshot();
+        let mut issuance_v5 = before.clone();
+        issuance_v5[0] = ISSUANCE_SNAPSHOT_VERSION;
+        issuance_v5.truncate(issuance_v5.len() - 1);
+        let migrated_v5 = ShieldedState::<4>::decode_snapshot(&issuance_v5).unwrap();
+        assert_eq!(
+            migrated_v5
+                .standard_program_state(&program_id, &application)
+                .unwrap(),
+            None
+        );
+        let first_delta = state
+            .apply_contextual_transaction(&first, 10, &[first_context])
+            .unwrap();
+        assert_eq!(
+            state
+                .standard_program_state(&program_id, &application)
+                .unwrap(),
+            Some(first_next)
+        );
+        let restored = ShieldedState::<4>::decode_snapshot(&state.encode_snapshot()).unwrap();
+        assert_eq!(
+            restored
+                .standard_program_state(&program_id, &application)
+                .unwrap(),
+            Some(first_next)
+        );
+
+        let competing_application = StandardApplication::Nft {
+            collection_id: [1; 32],
+            token_id: [2; 32],
+            serial: 7,
+            transfer_nonce: 2,
+        };
+        let mut competing = transaction(state.root(), 2, 51);
+        competing.programs.push(ProgramCall {
+            program_id,
+            function_id: STANDARD_FUNCTION_ID,
+            public_data_hash: [0; 32],
+        });
+        let (competing, competing_context) =
+            bind(competing, &competing_application, prior, field(43));
+        let after_first = state.encode_snapshot();
+        assert_eq!(
+            state
+                .apply_contextual_transaction(&competing, 10, &[competing_context])
+                .err(),
+            Some(StateError::InvalidProgramContext)
+        );
+        assert_eq!(state.encode_snapshot(), after_first);
+
+        let mut chained = transaction(state.root(), 3, 52);
+        chained.programs.push(ProgramCall {
+            program_id,
+            function_id: STANDARD_FUNCTION_ID,
+            public_data_hash: [0; 32],
+        });
+        let chained_next = field(44);
+        let (chained, chained_context) =
+            bind(chained, &competing_application, first_next, chained_next);
+        let chained_delta = state
+            .apply_contextual_transaction(&chained, 10, &[chained_context])
+            .unwrap();
+        assert_eq!(
+            state
+                .standard_program_state(&program_id, &competing_application)
+                .unwrap(),
+            Some(chained_next)
+        );
+        state.rollback(chained_delta);
+        assert_eq!(state.encode_snapshot(), after_first);
+        state.rollback(first_delta);
         assert_eq!(state.encode_snapshot(), before);
     }
 

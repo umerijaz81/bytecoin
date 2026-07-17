@@ -11,6 +11,7 @@ use crate::types::{pack_32, write_varint, DecodeError, Reader};
 
 pub const STANDARD_APPLICATION_VERSION: u8 = 1;
 const STANDARD_SCHEMA_DOMAIN: &[u8] = b"bytecoin.onyx.v6.standard-program.schema.v1";
+const STANDARD_STATE_KEY_DOMAIN: &[u8] = b"bytecoin.onyx.v6.standard-program.state-key.v1";
 pub const NFT_SCHEMA_HASH: [u8; 32] = [
     0x20, 0x47, 0x30, 0x97, 0x8f, 0x78, 0x8b, 0x8d, 0x1e, 0x45, 0x8e, 0xe8, 0x1c, 0x1c, 0x12, 0xff,
     0x39, 0xd0, 0x44, 0x4f, 0x17, 0x4f, 0xe9, 0xd1, 0x92, 0x24, 0x6d, 0x80, 0x89, 0x0b, 0xb1, 0x32,
@@ -412,6 +413,59 @@ impl StandardApplication {
         hash
     }
 
+    /// Stable consensus key for one state-machine instance. Mutable operation fields (NFT nonce and
+    /// swap branch) are deliberately excluded so competing transitions serialize on the same key.
+    pub fn state_key(&self, program_id: &[u8; 32]) -> Result<[u8; 32], StandardProgramError> {
+        self.validate_fields()?;
+        let mut identity = Vec::new();
+        identity.push(self.kind() as u8);
+        match self {
+            Self::Nft {
+                collection_id,
+                token_id,
+                serial,
+                ..
+            } => {
+                identity.extend_from_slice(collection_id);
+                identity.extend_from_slice(token_id);
+                identity.extend_from_slice(&serial.to_le_bytes());
+            }
+            Self::Vesting {
+                schedule_id,
+                beneficiary,
+                unlock_height,
+            } => {
+                identity.extend_from_slice(schedule_id);
+                identity.extend_from_slice(beneficiary);
+                identity.extend_from_slice(&unlock_height.to_le_bytes());
+            }
+            Self::Multisig {
+                policy_commitment,
+                action_digest,
+                ..
+            } => {
+                identity.extend_from_slice(policy_commitment);
+                identity.extend_from_slice(action_digest);
+            }
+            Self::Swap {
+                swap_id,
+                hashlock,
+                timeout_height,
+                ..
+            } => {
+                identity.extend_from_slice(swap_id);
+                identity.extend_from_slice(hashlock);
+                identity.extend_from_slice(&timeout_height.to_le_bytes());
+            }
+        }
+        let mut hash = Sha256::new();
+        hash.update(STANDARD_STATE_KEY_DOMAIN);
+        hash.update(program_id);
+        hash.update((identity.len() as u64).to_le_bytes());
+        hash.update(identity);
+        Ok(hash.finalize().into())
+    }
+
     fn derived_schema_hash(kind: StandardProgramKind) -> [u8; 32] {
         let suffix = match kind {
             StandardProgramKind::Nft => {
@@ -563,6 +617,57 @@ mod tests {
         assert_eq!(
             contextual_public_inputs(&context(encoded, 1), StandardProgramKind::Vesting),
             Err(StandardProgramError::WrongKind)
+        );
+    }
+
+    #[test]
+    fn state_keys_exclude_operation_choices_but_bind_instance_identity() {
+        let nft = StandardApplication::Nft {
+            collection_id: [1; 32],
+            token_id: [2; 32],
+            serial: 3,
+            transfer_nonce: 1,
+        };
+        let nft_next_nonce = StandardApplication::Nft {
+            collection_id: [1; 32],
+            token_id: [2; 32],
+            serial: 3,
+            transfer_nonce: 2,
+        };
+        let different_serial = StandardApplication::Nft {
+            collection_id: [1; 32],
+            token_id: [2; 32],
+            serial: 4,
+            transfer_nonce: 1,
+        };
+        assert_eq!(
+            nft.state_key(&[9; 32]).unwrap(),
+            nft_next_nonce.state_key(&[9; 32]).unwrap()
+        );
+        assert_ne!(
+            nft.state_key(&[9; 32]).unwrap(),
+            different_serial.state_key(&[9; 32]).unwrap()
+        );
+        assert_ne!(
+            nft.state_key(&[9; 32]).unwrap(),
+            nft.state_key(&[8; 32]).unwrap()
+        );
+
+        let swap = StandardApplication::Swap {
+            swap_id: [3; 32],
+            hashlock: Fp::from(5).to_repr(),
+            timeout_height: 100,
+            refund: false,
+        };
+        let refund = StandardApplication::Swap {
+            swap_id: [3; 32],
+            hashlock: Fp::from(5).to_repr(),
+            timeout_height: 100,
+            refund: true,
+        };
+        assert_eq!(
+            swap.state_key(&[9; 32]).unwrap(),
+            refund.state_key(&[9; 32]).unwrap()
         );
     }
 
