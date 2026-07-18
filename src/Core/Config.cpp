@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <boost/algorithm/string.hpp>
 #include <iostream>
+#include <stdexcept>
 #include "CryptoNoteConfig.hpp"
 #include "common/Base64.hpp"
 #include "common/CommandLine.hpp"
@@ -63,6 +64,37 @@ static std::string get_net(common::CommandLine &cmd) {
 	return "main";
 }
 
+static Timestamp get_bounded_timestamp(common::CommandLine &cmd, const char *option, Timestamp current,
+    Timestamp minimum, Timestamp maximum) {
+	const char *value = cmd.get(option);
+	if (value == nullptr)
+		return current;
+	try {
+		const Timestamp parsed = common::integer_cast<Timestamp>(value);
+		if (parsed < minimum || parsed > maximum)
+			throw std::out_of_range("outside accepted range");
+		return parsed;
+	} catch (const std::exception &) {
+		throw Config::ConfigError("Command line option " + std::string(option) + " must be in range " +
+		                          std::to_string(minimum) + ".." + std::to_string(maximum));
+	}
+}
+
+static uint8_t get_dandelion_probability(common::CommandLine &cmd, uint8_t current) {
+	const char *value = cmd.get("--dandelion-fluff-probability");
+	if (value == nullptr)
+		return current;
+	try {
+		const uint16_t parsed = common::integer_cast<uint16_t>(value);
+		if (parsed > 100)
+			throw std::out_of_range("outside accepted range");
+		return static_cast<uint8_t>(parsed);
+	} catch (const std::exception &) {
+		throw Config::ConfigError(
+		    "Command line option --dandelion-fluff-probability must be in range 0..100");
+	}
+}
+
 Config::Config(common::CommandLine &cmd)
     : net(get_net(cmd))
     , is_archive(cmd.get_bool("--archive"))
@@ -93,6 +125,17 @@ Config::Config(common::CommandLine &cmd)
 	archive_omit_source_addresses = !cmd.get_bool("--archive-keep-source-addresses");
 	wallet_sync_privacy           = cmd.get_bool("--wallet-sync-privacy");
 	dandelion_enabled             = !cmd.get_bool("--disable-dandelion");
+	dandelion_epoch_seconds = get_bounded_timestamp(
+	    cmd, "--dandelion-epoch-seconds", dandelion_epoch_seconds, 1, 24 * 60 * 60);
+	dandelion_embargo_min_seconds = get_bounded_timestamp(
+	    cmd, "--dandelion-embargo-min-seconds", dandelion_embargo_min_seconds, 1, 10 * 60);
+	dandelion_embargo_max_seconds = get_bounded_timestamp(
+	    cmd, "--dandelion-embargo-max-seconds", dandelion_embargo_max_seconds, 1, 10 * 60);
+	if (dandelion_embargo_min_seconds > dandelion_embargo_max_seconds)
+		throw ConfigError("Command line option --dandelion-embargo-min-seconds cannot exceed "
+		                  "--dandelion-embargo-max-seconds");
+	dandelion_fluff_probability_percent =
+	    get_dandelion_probability(cmd, dandelion_fluff_probability_percent);
 	if (const char *pa = cmd.get("--p2p-proxy")) {
 		std::vector<NetworkAddress> proxy;
 		parse_peer_and_add_to_container(pa, proxy, "--p2p-proxy");

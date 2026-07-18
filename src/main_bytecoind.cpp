@@ -39,6 +39,10 @@ Options:
   --export-blocks=<folder-path>          Perform hot export of blockchain into specified folder as blocks.bin and blockindexes.bin, then exit. This overwrites existing files.
   --archive                              Work as an archive node [default: off].
   --disable-dandelion                    Disable Dandelion++ stem relay and diffuse transactions immediately.
+  --dandelion-epoch-seconds=<seconds>    Keep the selected outbound stem peer for 1..86400 seconds [default: 600].
+  --dandelion-embargo-min-seconds=<s>    Minimum stem liveness embargo, 1..600 seconds [default: 10].
+  --dandelion-embargo-max-seconds=<s>    Maximum stem liveness embargo, 1..600 seconds [default: 30].
+  --dandelion-fluff-probability=<0..100> Probability that each stem hop begins diffusion [default: 10].
   --p2p-proxy=<ip:port>                  Route all outbound P2P connections through a no-auth SOCKS5 proxy.
   --p2p-advertise-anonymity-address=<host:port> Advertise a canonical v3 onion/I2P service to v6 peers.
   --paranoid-checks                      Perform consensus checks for blocks in checkpoints range (very slow sync))";

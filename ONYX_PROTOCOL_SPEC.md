@@ -352,9 +352,12 @@ predates both the wallet and the shielded tree.
 
 The first O6 component is implemented as a negotiated P2P v5 Dandelion++ relay with epoch-stable
 outbound selection, probabilistic diffusion, bounded hops, randomized embargo, loop/disconnect
-recovery and v4 fallback. O6 also includes fail-closed outbound SOCKS5 routing with numeric targets
-and bounded no-auth negotiation. Hidden-service peer identities, Tor/I2P leak/integration testing,
-peer scoring and adversarial simulation remain required. RandomX v2.0.1 is integrated behind a dormant
+recovery and v4 fallback. Bounded policy controls, cross-platform adversarial simulation and a real
+five-daemon/miner/wallet socket topology qualification cover the internal relay boundary; legacy-v4
+binary interoperability, public soak and independent review remain. O6 also includes fail-closed
+outbound SOCKS5 routing with numeric targets and bounded no-auth negotiation. Canonical proxy-only
+hidden-service peer identities and Linux adversarial proxy/DNS-tripwire integration are implemented;
+real Tor/I2P service integration, cross-platform packet capture and independent review remain. RandomX v2.0.1 is integrated behind a dormant
 hard-fork boundary with branch-derived delayed seed epochs, full-memory/native-architecture gates,
 multi-epoch reorg/reopen campaigns, and real-process canonical/corrupt template qualification. Independent
 review, published native-hardware benchmarks, longer public soak, reproducible releases and operational

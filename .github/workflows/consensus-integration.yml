@@ -55,7 +55,7 @@ jobs:
       - name: Configure consensus tests
         run: cmake -S . -B build-consensus -DUSE_SQLITE=ON -DONYX_ZK=OFF
       - name: Build consensus tests
-        run: cmake --build build-consensus --parallel 2 --target tests minerd bytecoind
+        run: cmake --build build-consensus --parallel 2 --target tests minerd bytecoind walletd
       - name: Smoke-test miner command line
         working-directory: build-consensus
         run: ../bin/minerd --help
@@ -64,6 +64,12 @@ jobs:
           python3 tests/miner/test_corrupt_template_process.py
           --minerd bin/minerd
           --bytecoind bin/bytecoind
+      - name: Qualify Dandelion relay across real daemon sockets
+        run: >-
+          python3 tests/network/test_dandelion_process.py
+          --bytecoind bin/bytecoind
+          --walletd bin/walletd
+          --minerd bin/minerd
       - name: Run blockchain and RandomX reorganization tests
         working-directory: build-consensus
         run: ../bin/tests --blockchain

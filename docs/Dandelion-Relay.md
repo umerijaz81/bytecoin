@@ -4,6 +4,12 @@ Bytecoin P2P protocol v5 adds a negotiated stem transaction message. Dandelion++
 default; `bytecoind --disable-dandelion` restores immediate diffusion for compatibility and debugging.
 The option reduces transaction-origin privacy and is not recommended for normal operation.
 
+The non-consensus policy can be tuned with `--dandelion-epoch-seconds` (1 to 86400),
+`--dandelion-embargo-min-seconds` and `--dandelion-embargo-max-seconds` (each 1 to 600, minimum no
+greater than maximum), and `--dandelion-fluff-probability` (0 to 100 percent). Defaults remain 600,
+10, 30 and 10 respectively. Values outside those bounds fail startup; a zero fluff probability still
+has bounded liveness because loop, disconnect and embargo recovery remain active.
+
 ## Relay state
 
 Locally submitted transactions and valid transactions received in a stem are processed as follows:
@@ -35,10 +41,18 @@ proves every pending stem recovers to fluff, every live peer remains eligible, c
 resets reputation, score bounds/decay hold and repeated failures receive materially less traffic. It
 passed on Linux, macOS and Windows in GitHub Actions run `29523898138`.
 
-The implementation still needs socket-level multi-daemon transaction topology tests, long-running
-sanitizer fuzzing, testnet soak and independent review before release. The delivery score limits
-repeated use of unreliable live peers; it is not Sybil resistance and does not infer operator, subnet
-or autonomous-system identity.
+`tests/network/test_dandelion_process.py` adds a socket-level qualification with five isolated real
+daemon processes plus real wallet and miner processes. It mines spendable testnet funds and proves
+that a transaction reaches the sole outbound stem peer while an inbound observer stays unaware;
+selected-peer fluff reflection does not end the embargo; expiry and selected-peer disconnect both
+recover to diffusion; and `--disable-dandelion` diffuses immediately. It also rejects out-of-range
+policy configuration before startup. The consensus-integration workflow builds all required binaries
+and runs this qualification on Linux.
+
+The implementation still needs long-running sanitizer fuzzing, public testnet soak, real legacy-v4
+binary interoperability and independent review before release. The delivery score limits repeated
+use of unreliable live peers; it is not Sybil resistance and does not infer operator, subnet or
+autonomous-system identity.
 
 The protocol constants are intentionally conservative defaults, not consensus rules. Changing them
 does not change transaction validity, but wire-version changes must remain negotiated to preserve

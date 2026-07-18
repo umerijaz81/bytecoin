@@ -71,7 +71,12 @@ DEPRECATED AND NOT RECOMMENDED as entailing security risk. Please always run byt
   --bytecoind-bind-address=<ip:port>    IP and port for bytecoind RPC [default: 127.0.0.1:8081].
   --seed-node-address=<ip:port>         Specify node (one or more) to start connecting to.
   --priority-node-address=<ip:port>     Specify node (one or more) to connect to and attempt to keep the connection open.
-  --exclusive-node-address=<ip:port>    Specify node (one or more) to exclusive connect to, ignoring all other nodes.)";
+  --exclusive-node-address=<ip:port>    Specify node (one or more) to exclusive connect to, ignoring all other nodes.
+  --disable-dandelion                   Disable Dandelion++ stem relay and diffuse transactions immediately.
+  --dandelion-epoch-seconds=<seconds>   Keep the selected outbound stem peer for 1..86400 seconds [default: 600].
+  --dandelion-embargo-min-seconds=<s>   Minimum stem liveness embargo, 1..600 seconds [default: 10].
+  --dandelion-embargo-max-seconds=<s>   Maximum stem liveness embargo, 1..600 seconds [default: 30].
+  --dandelion-fluff-probability=<0..100> Probability that each stem hop begins diffusion [default: 10].)";
 
 static const bool separate_thread_for_bytecoind = true;
 
