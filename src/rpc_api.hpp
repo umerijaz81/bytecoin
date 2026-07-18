@@ -484,6 +484,23 @@ struct CreateOnyxStandardProgramDeployment {
 	};
 };
 
+struct CreateOnyxStandardProgramCall {
+	static std::string method() { return "create_onyx_standard_program_call"; }
+	struct Request {
+		std::string program_id;
+		Height valid_from_height = 0;
+		Height expiry_height = 0;
+		std::string application;  // canonical application bytes, hex encoded
+		std::string prior_state;  // canonical 32-byte field, hex encoded
+		std::string next_state;   // canonical 32-byte field, hex encoded
+		std::string witness;      // concatenated canonical 32-byte fields, hex encoded
+	};
+	struct Response {
+		BinaryArray binary_transaction;
+		Hash transaction_hash{};
+	};
+};
+
 struct CreateOnyxTokenIssuance {
 	static std::string method() { return "create_onyx_token_issuance"; }
 	struct Request {
@@ -784,6 +801,19 @@ struct GetOnyxSupplyAudit {
 		uint64_t current_block_program_cost = 0;
 		Hash commitment_root{};
 		Height block_height = 0;
+	};
+};
+
+struct GetOnyxStandardProgramState {
+	static std::string method() { return "get_onyx_standard_program_state"; }
+	struct Request {
+		std::string program_id;
+		std::string application;  // canonical application bytes, hex encoded
+	};
+	struct Response {
+		Height block_height = 0;
+		bool found = false;
+		Hash state{};
 	};
 };
 
@@ -1150,6 +1180,8 @@ void ser_members(cn::api::walletd::CreateOnyxProgramDeployment::Request &v, ISer
 void ser_members(cn::api::walletd::CreateOnyxProgramDeployment::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxStandardProgramDeployment::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxStandardProgramDeployment::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxStandardProgramCall::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::CreateOnyxStandardProgramCall::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTokenIssuance::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxTokenIssuance::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxBridge::Request &v, ISeria &s);
@@ -1175,6 +1207,8 @@ void ser_members(cn::api::cnd::GetStatus::Request &v, ISeria &s);
 void ser_members(cn::api::cnd::GetStatus::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetOnyxSupplyAudit::Request &v, ISeria &s);
 void ser_members(cn::api::cnd::GetOnyxSupplyAudit::Response &v, ISeria &s);
+void ser_members(cn::api::cnd::GetOnyxStandardProgramState::Request &v, ISeria &s);
+void ser_members(cn::api::cnd::GetOnyxStandardProgramState::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetBlockHeader::Request &v, ISeria &s);
 void ser_members(cn::api::cnd::GetBlockHeader::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetRawBlock::Request &v, ISeria &s);

@@ -6,7 +6,7 @@ use crate::authorization::{verify_authorized_transaction, AuthorizationError};
 use crate::program::{ProgramEntry, ProgramError, MAX_MANIFEST_BYTES};
 use crate::proof::{multi_transfer_backend_id, verify_multi_transfer_proof, ProofError};
 use crate::standard_programs::{standard_artifact, standard_program_entry, StandardProgramKind};
-use crate::token_program::{standard_token_program, TokenProgramError};
+use crate::token_program::{standard_token_program, TokenProgramError, TOKEN_MANIFEST_PREFIX};
 use crate::transaction::{read_bytes, write_bytes, AuthorizedTransaction, TransactionError};
 use crate::types::{write_varint, DecodeError, Reader};
 
@@ -159,13 +159,36 @@ impl AuthorizedProgramDeployment {
                 )?);
             }
         }
-        standard_token_program::<DEPTH>(
+        if !self.token_manifest.starts_with(TOKEN_MANIFEST_PREFIX)
+            || self.token_manifest.len() < TOKEN_MANIFEST_PREFIX.len() + 12
+        {
+            return Err(ProgramDeploymentError::InvalidManifest);
+        }
+        let offset = TOKEN_MANIFEST_PREFIX.len();
+        let encoded_depth = u64::from_le_bytes(
+            self.token_manifest[offset..offset + 8]
+                .try_into()
+                .map_err(|_| ProgramDeploymentError::InvalidManifest)?,
+        );
+        let encoded_k = u32::from_le_bytes(
+            self.token_manifest[offset + 8..offset + 12]
+                .try_into()
+                .map_err(|_| ProgramDeploymentError::InvalidManifest)?,
+        );
+        if encoded_depth != DEPTH as u64 || encoded_k != k {
+            return Err(ProgramDeploymentError::InvalidManifest);
+        }
+        let entry = standard_token_program::<DEPTH>(
             k,
-            &self.token_manifest,
+            &self.token_manifest[offset + 12..],
             self.activation_height,
             self.deactivation_height,
         )
-        .map_err(|_| ProgramDeploymentError::InvalidManifest)
+        .map_err(|_| ProgramDeploymentError::InvalidManifest)?;
+        if entry.manifest != self.token_manifest {
+            return Err(ProgramDeploymentError::InvalidManifest);
+        }
+        Ok(entry)
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ProgramDeploymentError> {
@@ -314,7 +337,7 @@ mod tests {
     fn deployment() -> AuthorizedProgramDeployment {
         let manifest = b"TEST/DEPLOY".to_vec();
         let entry = standard_token_program::<2>(14, &manifest, 11, Some(100)).unwrap();
-        let mut result = deployment_skeleton(manifest);
+        let mut result = deployment_skeleton(entry.manifest.clone());
         result.funding.preimage.spends[0].value_commitment =
             crate::value_commitment_circuit::value_commitment_bytes(
                 MIN_PROGRAM_DEPLOYMENT_FEE + 1,
@@ -380,6 +403,11 @@ mod tests {
                 Some(ProgramDeploymentError::InvalidManifest)
             );
         }
+        let raw_generic = deployment_skeleton(b"TEST/DEPLOY".to_vec());
+        assert_eq!(
+            raw_generic.program_entry::<2>(14).err(),
+            Some(ProgramDeploymentError::InvalidManifest)
+        );
     }
 
     #[test]
@@ -450,10 +478,12 @@ mod tests {
                 .to_affine();
         let authority = authority_key.coordinates().unwrap();
 
-        let manifest = b"private-deployed-token/TEST".to_vec();
+        let manifest_payload = b"private-deployed-token/TEST".to_vec();
         let activation_height = 3;
         let entry =
-            standard_token_program::<DEPTH>(K, &manifest, activation_height, Some(100)).unwrap();
+            standard_token_program::<DEPTH>(K, &manifest_payload, activation_height, Some(100))
+                .unwrap();
+        let manifest = entry.manifest.clone();
         let program_id = entry.id().unwrap();
         let mut input_note = std::array::from_fn(|index| Fp::from(index as u64 + 300));
         input_note[1] = crate::types::network_field(&network);

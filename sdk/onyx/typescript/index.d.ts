@@ -7,6 +7,7 @@ export type OnyxWalletMethod =
   | "create_onyx_token_transaction"
   | "create_onyx_program_deployment"
   | "create_onyx_standard_program_deployment"
+  | "create_onyx_standard_program_call"
   | "create_onyx_token_issuance"
   | "create_onyx_bridge"
   | "finalize_onyx_bridge";

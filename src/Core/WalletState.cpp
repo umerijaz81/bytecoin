@@ -226,13 +226,14 @@ bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient,
 		}
 		if (pending.version != m_currency.onyx_transaction_version ||
 		    (pending.onyx_type != parameters::ONYX_TYPE_TRANSFER &&
-		        pending.onyx_type != parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT))
+		        pending.onyx_type != parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT &&
+		        pending.onyx_type != parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL))
 			continue;
 		BinaryArray reserved;
-		const bool reserved_ok = pending.onyx_type == parameters::ONYX_TYPE_TRANSFER
-		    ? zk::Halo2ProofSystem::wallet_reserve_spends(
+		const bool reserved_ok = pending.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT
+		    ? zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
 		          proving_snapshot, seed, network, pending.onyx_envelope, &reserved)
-		    : zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
+		    : zk::Halo2ProofSystem::wallet_reserve_spends(
 		          proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
 		if (!reserved_ok)
 			return false;
@@ -267,13 +268,14 @@ bool WalletState::create_onyx_token_transfer(const std::array<uint8_t, 91> &reci
 		}
 		if (pending.version != m_currency.onyx_transaction_version ||
 		    (pending.onyx_type != parameters::ONYX_TYPE_TRANSFER &&
-		        pending.onyx_type != parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT))
+		        pending.onyx_type != parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT &&
+		        pending.onyx_type != parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL))
 			continue;
 		BinaryArray reserved;
-		const bool reserved_ok = pending.onyx_type == parameters::ONYX_TYPE_TRANSFER
-		    ? zk::Halo2ProofSystem::wallet_reserve_spends(
+		const bool reserved_ok = pending.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT
+		    ? zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
 		          proving_snapshot, seed, network, pending.onyx_envelope, &reserved)
-		    : zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
+		    : zk::Halo2ProofSystem::wallet_reserve_spends(
 		          proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
 		if (!reserved_ok)
 			return false;
@@ -316,6 +318,9 @@ bool WalletState::create_onyx_program_deployment(Amount max_supply, const Binary
 			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
 		else if (pending.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT)
 			ok = zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
+			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
+		else if (pending.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL)
+			ok = zk::Halo2ProofSystem::wallet_reserve_spends(
 			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
 		else
 			continue;
@@ -362,6 +367,9 @@ bool WalletState::create_onyx_standard_program_deployment(uint8_t kind, Height i
 		else if (pending.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT)
 			ok = zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
 			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
+		else if (pending.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL)
+			ok = zk::Halo2ProofSystem::wallet_reserve_spends(
+			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
 		else
 			continue;
 		if (!ok)
@@ -371,6 +379,54 @@ bool WalletState::create_onyx_standard_program_deployment(uint8_t kind, Height i
 	return zk::Halo2ProofSystem::wallet_create_standard_program_deployment(proving_snapshot, seed,
 	    kind, inclusion_height, activation_height, deactivation_height, expiry_height, fee,
 	    parameters::ONYX_CIRCUIT_K, envelope, program_id);
+#else
+	return false;
+#endif
+}
+
+bool WalletState::create_onyx_standard_program_call(const std::array<uint8_t, 32> &program_id,
+    Height inclusion_height, Height valid_from_height, Height expiry_height,
+    const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
+    const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
+    BinaryArray *envelope) const {
+#ifdef onyx_USE_ZK
+	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || application.empty() ||
+	    witness.empty() || witness.size() % 32 != 0 || envelope == nullptr)
+		return false;
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+	std::array<uint8_t, 16> network{};
+	std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+	BinaryArray proving_snapshot = m_onyx_wallet_snapshot;
+	for (const auto &entry : payment_queue) {
+		if (entry.in_blockchain())
+			continue;
+		Transaction pending;
+		try {
+			seria::from_binary(pending, entry.binary_transaction);
+		} catch (const std::exception &) {
+			return false;
+		}
+		if (pending.version != m_currency.onyx_transaction_version)
+			continue;
+		BinaryArray reserved;
+		bool ok = true;
+		if (pending.onyx_type == parameters::ONYX_TYPE_TRANSFER ||
+		    pending.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL)
+			ok = zk::Halo2ProofSystem::wallet_reserve_spends(
+			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
+		else if (pending.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT)
+			ok = zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
+			    proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
+		else
+			continue;
+		if (!ok)
+			return false;
+		proving_snapshot = std::move(reserved);
+	}
+	return zk::Halo2ProofSystem::wallet_create_standard_program_call(proving_snapshot, seed, program_id,
+	    inclusion_height, valid_from_height, expiry_height, application, prior_state, next_state,
+	    witness, parameters::ONYX_CIRCUIT_K, envelope);
 #else
 	return false;
 #endif

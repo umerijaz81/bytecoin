@@ -104,9 +104,9 @@ context per call. Its signed proof field is a bounded versioned bundle containin
 ordered program proof per context. `apply_contextual_transaction` validates all contexts before state mutation.
 The verification API authenticates the complete bundle, dispatches a fixed native or single-program-asset base
 proof, enforces registry activation and cost, regenerates the exact export-bound compiler descriptor, and checks
-each ordered compiler proof over the 22-field context plus a public true result. Consensus C ABI activation and
-standard-circuit audits have not landed, so the existing token-family dispatch remains the only activated program
-path.
+each ordered compiler proof over the 22-field context plus a public true result. Envelope type `4` exposes this
+path to consensus. Mempool admission dry-runs the full transition, indexes both nullifiers and stable program-state
+keys, and evicts conflicts when a block wins. Block apply and undo commit the resulting snapshot atomically.
 
 The four approved follow-on standards now share a versioned native application-data decoder. It derives typed
 public suffixes for NFT identity/nonces, vesting schedules, multisig policy thresholds, and swap hashlock/timeout
@@ -116,8 +116,8 @@ the standard ABI boundary. Canonical source packages for all four profiles now l
 backend. NFT proves current-owner knowledge; vesting proves beneficiary knowledge and unlock height; multisig
 reconstructs a fixed 16-slot, active-participant-distinct policy while counting action-bound approvals; swap separates preimage claim from
 timed refund. Each package reproduces its export descriptor and passes a randomized positive proof plus a
-policy-specific rejected witness. They remain outside the activated allowlist until deployment, wallet, audit
-and testnet gates land.
+policy-specific rejected witness. Their canonical deployments, wallet prover, C ABI, C++ consensus adapter and
+RPC/SDK profiles are wired, while production activation remains blocked on independent audit and testnet gates.
 
 The dependency-free Python and TypeScript SDKs expose the same four canonical application-data builders and
 frozen schema identifiers as version 1.1.0. Both reject zero/wrong-length identifiers, noncanonical Pasta
@@ -136,8 +136,9 @@ spends and token outputs then native change. One authorization transcript covers
 commitment, program call, proof byte, and the fee. This permits normal miner fees without allowing
 token value to offset native value or vice versa.
 
-Only the standard token transfer, mixed native-fee transfer, and capped issuance functions currently
-satisfy these consensus execution gates. Every other call continues to fail closed. Walletd now
+Only the standard token transfer, mixed native-fee transfer, capped issuance and the four pinned type-4 standard
+profiles satisfy these consensus execution gates. Every unknown or runtime-supplied program continues to fail
+closed. Walletd now
 constructs the canonical capped-token manifest, derives the issuer from its Onyx seed, funds the
 deployment from shielded native notes, binds the reserved deployment call into both authorization
 signatures, returns the Program ID, and reserves pending deployment nullifiers. SDK vectors are

@@ -27,6 +27,8 @@ dist/
 
 # Tests
 tests/scratchpad/
+tests/scratchpad-randomx/
+tests/scratchpad-randomx-randomized/
 
 # Mac specific
 .DS_Store

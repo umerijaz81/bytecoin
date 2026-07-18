@@ -4,6 +4,7 @@
 
 #include "test_hash.hpp"
 
+#include <chrono>
 #include <fstream>
 
 #include <map>

@@ -42,6 +42,8 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
         json_rpc::make_member_method(&WalletNode::on_create_onyx_program_deployment)},
     {api::walletd::CreateOnyxStandardProgramDeployment::method(),
         json_rpc::make_member_method(&WalletNode::on_create_onyx_standard_program_deployment)},
+    {api::walletd::CreateOnyxStandardProgramCall::method(),
+        json_rpc::make_member_method(&WalletNode::on_create_onyx_standard_program_call)},
     {api::walletd::CreateOnyxTokenIssuance::method(),
         json_rpc::make_member_method(&WalletNode::on_create_onyx_token_issuance)},
     {api::walletd::CreateOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_create_onyx_bridge)},
@@ -615,6 +617,52 @@ bool WalletNode::on_create_onyx_standard_program_deployment(http::Client *, http
 	response.binary_transaction = seria::to_binary(transaction);
 	response.transaction_hash = get_transaction_hash(transaction);
 	std::copy(program_id.begin(), program_id.end(), response.program_id.data);
+	return true;
+}
+
+bool WalletNode::on_create_onyx_standard_program_call(http::Client *, http::RequestBody &&,
+    json_rpc::Request &&, api::walletd::CreateOnyxStandardProgramCall::Request &&request,
+    api::walletd::CreateOnyxStandardProgramCall::Response &response) {
+	check_wallet_open();
+	if (get_wallet_state().db_empty())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	std::array<uint8_t, 32> program_id{};
+	std::array<uint8_t, 32> prior_state{};
+	std::array<uint8_t, 32> next_state{};
+	BinaryArray application;
+	BinaryArray witness;
+	if (!common::from_hex(request.program_id, program_id.data(), program_id.size()))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx Program ID encoding");
+	if (!common::from_hex(request.prior_state, prior_state.data(), prior_state.size()) ||
+	    !common::from_hex(request.next_state, next_state.data(), next_state.size()))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program state encoding");
+	if (!common::from_hex(request.application, &application) || application.empty())
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program application encoding");
+	if (!common::from_hex(request.witness, &witness) || witness.empty() || witness.size() % 32 != 0)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program witness encoding");
+	const Height tip = get_wallet_state().get_tip_height();
+	if (tip == std::numeric_limits<Height>::max())
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx inclusion height overflow");
+	const Height inclusion = tip + 1;
+	const Height valid_from = request.valid_from_height == 0 ? inclusion : request.valid_from_height;
+	Height expiry = request.expiry_height;
+	if (expiry == 0) {
+		if (tip > std::numeric_limits<Height>::max() - 20)
+			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
+		expiry = tip + 20;
+	}
+	if (valid_from > inclusion || inclusion > expiry || expiry - inclusion > parameters::ONYX_MAX_EXPIRY_DISTANCE)
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Standard program validity outside consensus window");
+	BinaryArray envelope;
+	if (!get_wallet_state().create_onyx_standard_program_call(program_id, inclusion, valid_from, expiry,
+	        application, prior_state, next_state, witness, &envelope))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx standard program call");
+	Transaction transaction;
+	transaction.version = m_currency.onyx_transaction_version;
+	transaction.onyx_type = parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
+	transaction.onyx_envelope = std::move(envelope);
+	response.binary_transaction = seria::to_binary(transaction);
+	response.transaction_hash = get_transaction_hash(transaction);
 	return true;
 }
 

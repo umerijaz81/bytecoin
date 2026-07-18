@@ -1044,6 +1044,250 @@ pub extern "C" fn onyx_verify_apply_transfer(
     })
 }
 
+fn apply_standard_contextual_to_snapshot<const DEPTH: usize>(
+    snapshot: &[u8],
+    envelope: &program_context::ContextualAuthorizedTransaction,
+    block_height: u64,
+    circuit_k: u32,
+) -> Result<Vec<u8>, ()> {
+    let mut state = state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?;
+    envelope
+        .verify_standard(
+            state.program_registry(),
+            block_height,
+            DEPTH as u32,
+            circuit_k,
+        )
+        .map_err(|_| ())?;
+    state
+        .apply_contextual_transaction(
+            &envelope.transaction.preimage,
+            block_height,
+            &envelope.contexts,
+        )
+        .map_err(|_| ())?;
+    Ok(state.encode_snapshot())
+}
+
+/// Verify a pinned standard-program proof bundle and atomically apply its value and program-state
+/// transitions to an existing registry-bearing consensus snapshot.
+#[no_mangle]
+pub extern "C" fn onyx_verify_apply_standard_program_transaction(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+    expected_network: *const u8,
+    block_height: u64,
+    snapshot_out: *mut *mut u8,
+    snapshot_len_out: *mut usize,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    nullifiers_out: *mut u8,
+    nullifier_capacity: usize,
+    nullifier_count_out: *mut usize,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
+            || expected_network.is_null()
+            || !(10..=20).contains(&circuit_k)
+            || snapshot_out.is_null()
+            || snapshot_len_out.is_null()
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || nullifiers_out.is_null()
+            || nullifier_count_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+            *expiry_height_out = 0;
+            *nullifier_count_out = 0;
+            *commitment_count_out = 0;
+        }
+        let envelope = match program_context::ContextualAuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(envelope) => envelope,
+            Err(_) => return -2,
+        };
+        let preimage = &envelope.transaction.preimage;
+        if nullifier_capacity < preimage.spends.len()
+            || commitment_capacity < preimage.outputs.len()
+        {
+            return -4;
+        }
+        let network = unsafe { slice::from_raw_parts(expected_network, 16) };
+        if preimage.network_id.as_slice() != network
+            || block_height > preimage.expiry_height
+            || preimage.expiry_height - block_height > MAX_EXPIRY_DISTANCE_BLOCKS
+        {
+            return -5;
+        }
+        let snapshot = unsafe { slice::from_raw_parts(snapshot, snapshot_len) };
+        let next = match merkle_depth {
+            2 => apply_standard_contextual_to_snapshot::<2>(
+                snapshot,
+                &envelope,
+                block_height,
+                circuit_k,
+            ),
+            4 => apply_standard_contextual_to_snapshot::<4>(
+                snapshot,
+                &envelope,
+                block_height,
+                circuit_k,
+            ),
+            32 => apply_standard_contextual_to_snapshot::<32>(
+                snapshot,
+                &envelope,
+                block_height,
+                circuit_k,
+            ),
+            _ => return -3,
+        };
+        let next = match next {
+            Ok(next) => next,
+            Err(_) => return -5,
+        };
+        if next.len() > MAX_STATE_SNAPSHOT_BYTES {
+            return -6;
+        }
+        let (ptr, len) = into_raw(next);
+        unsafe {
+            *snapshot_out = ptr;
+            *snapshot_len_out = len;
+            std::ptr::copy_nonoverlapping(preimage.network_id.as_ptr(), network_out, 16);
+            std::ptr::copy_nonoverlapping(preimage.anchor.bytes().as_ptr(), anchor_out, 32);
+            *expiry_height_out = preimage.expiry_height;
+            *nullifier_count_out = preimage.spends.len();
+            *commitment_count_out = preimage.outputs.len();
+            for (index, spend) in preimage.spends.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    spend.nullifier.0.as_ptr(),
+                    nullifiers_out.add(index * 32),
+                    32,
+                );
+            }
+            for (index, output) in preimage.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+        }
+        1
+    })
+}
+
+/// Extract the signed value-layer delta from a contextual standard-program envelope. This helper
+/// is intentionally state-independent so pool bookkeeping can remove an already-applied envelope;
+/// consensus admission must still use `onyx_verify_apply_standard_program_transaction`.
+#[no_mangle]
+pub extern "C" fn onyx_extract_authenticated_standard_program_delta(
+    encoded: *const u8,
+    encoded_len: usize,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    nullifiers_out: *mut u8,
+    nullifier_capacity: usize,
+    nullifier_count_out: *mut usize,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+    state_keys_out: *mut u8,
+    state_key_capacity: usize,
+    state_key_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || nullifiers_out.is_null()
+            || nullifier_count_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+            || state_keys_out.is_null()
+            || state_key_count_out.is_null()
+        {
+            return -1;
+        }
+        let envelope = match program_context::ContextualAuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(envelope) => envelope,
+            Err(_) => return -2,
+        };
+        let preimage = &envelope.transaction.preimage;
+        if nullifier_capacity < preimage.spends.len()
+            || commitment_capacity < preimage.outputs.len()
+            || state_key_capacity < envelope.contexts.len()
+        {
+            return -4;
+        }
+        if authorization::verify_authorized_transaction(&envelope.transaction).is_err() {
+            return 0;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(preimage.network_id.as_ptr(), network_out, 16);
+            std::ptr::copy_nonoverlapping(preimage.anchor.bytes().as_ptr(), anchor_out, 32);
+            *expiry_height_out = preimage.expiry_height;
+            *nullifier_count_out = preimage.spends.len();
+            *commitment_count_out = preimage.outputs.len();
+            *state_key_count_out = envelope.contexts.len();
+            for (index, spend) in preimage.spends.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    spend.nullifier.0.as_ptr(),
+                    nullifiers_out.add(index * 32),
+                    32,
+                );
+            }
+            for (index, output) in preimage.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+            for (index, context) in envelope.contexts.iter().enumerate() {
+                let application =
+                    match standard_programs::StandardApplication::decode(&context.application_data)
+                    {
+                        Ok(application) => application,
+                        Err(_) => return -2,
+                    };
+                let key = match application.state_key(&context.program_id) {
+                    Ok(key) => key,
+                    Err(_) => return -2,
+                };
+                std::ptr::copy_nonoverlapping(key.as_ptr(), state_keys_out.add(index * 32), 32);
+            }
+        }
+        1
+    })
+}
+
 /// Verify and apply a one-way legacy bridge envelope. The C++ caller must additionally validate
 /// the returned ownership signature against the disclosed legacy output public key, then atomically
 /// record the returned key image in legacy spent state together with this snapshot.
@@ -1222,6 +1466,62 @@ pub extern "C" fn onyx_state_supply_audit(
     })
 }
 
+/// Query the consensus-tracked state for a stable standard-program application identity.
+#[no_mangle]
+pub extern "C" fn onyx_state_standard_program_state(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    program_id: *const u8,
+    application: *const u8,
+    application_len: usize,
+    state_out: *mut u8,
+    found_out: *mut u8,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || program_id.is_null()
+            || application.is_null()
+            || application_len == 0
+            || application_len > program_context::MAX_PROGRAM_PUBLIC_DATA_BYTES
+            || state_out.is_null()
+            || found_out.is_null()
+        {
+            return -1;
+        }
+        let state = match state::ShieldedState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(snapshot, snapshot_len)
+        }) {
+            Ok(state) => state,
+            Err(_) => return -2,
+        };
+        let application = match standard_programs::StandardApplication::decode(unsafe {
+            slice::from_raw_parts(application, application_len)
+        }) {
+            Ok(application) => application,
+            Err(_) => return -3,
+        };
+        let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
+            .try_into()
+            .unwrap();
+        let value = match state.standard_program_state(&program_id, &application) {
+            Ok(value) => value,
+            Err(_) => return -3,
+        };
+        unsafe {
+            *found_out = u8::from(value.is_some());
+            if let Some(value) = value {
+                let bytes = value.bytes();
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), state_out, 32);
+            } else {
+                std::ptr::write_bytes(state_out, 0, 32);
+            }
+        }
+        1
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn onyx_verify_bridge(
     encoded: *const u8,
@@ -1382,7 +1682,7 @@ pub extern "C" fn onyx_wallet_scan(
             || note_count_out.is_null()
             || root_out.is_null()
             || encoded_len == 0
-            || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
             || !(10..=20).contains(&circuit_k)
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || (snapshot.is_null() && snapshot_len != 0)
@@ -1446,6 +1746,13 @@ pub extern "C" fn onyx_wallet_scan(
                         .scan_transfer(&keys, &issuance.transaction)
                         .map_err(|_| ())
                 }),
+            4 => program_context::ContextualAuthorizedTransaction::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|envelope| {
+                    wallet
+                        .scan_transfer(&keys, &envelope.transaction)
+                        .map_err(|_| ())
+                }),
             _ => return -3,
         };
         if scanned.is_err() {
@@ -1500,7 +1807,7 @@ pub extern "C" fn onyx_wallet_scan_viewing(
             || note_count_out.is_null()
             || root_out.is_null()
             || encoded_len == 0
-            || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
             || !(10..=20).contains(&circuit_k)
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || (snapshot.is_null() && snapshot_len != 0)
@@ -1558,6 +1865,13 @@ pub extern "C" fn onyx_wallet_scan_viewing(
                         .scan_transfer(&keys, &issuance.transaction)
                         .map_err(|_| ())
                 }),
+            4 => program_context::ContextualAuthorizedTransaction::decode(encoded)
+                .map_err(|_| ())
+                .and_then(|envelope| {
+                    wallet
+                        .scan_transfer(&keys, &envelope.transaction)
+                        .map_err(|_| ())
+                }),
             _ => return -3,
         };
         if scanned.is_err() {
@@ -1604,7 +1918,7 @@ pub extern "C" fn onyx_wallet_reserve_spends(
             || expected_network.is_null()
             || encoded.is_null()
             || encoded_len == 0
-            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
             || snapshot_out.is_null()
             || snapshot_len_out.is_null()
         {
@@ -1633,11 +1947,13 @@ pub extern "C" fn onyx_wallet_reserve_spends(
             Ok(wallet) => wallet,
             Err(_) => return -2,
         };
-        let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
-            slice::from_raw_parts(encoded, encoded_len)
-        }) {
+        let encoded = unsafe { slice::from_raw_parts(encoded, encoded_len) };
+        let transaction = match transaction::AuthorizedTransaction::decode(encoded) {
             Ok(transaction) => transaction,
-            Err(_) => return -2,
+            Err(_) => match program_context::ContextualAuthorizedTransaction::decode(encoded) {
+                Ok(envelope) => envelope.transaction,
+                Err(_) => return -2,
+            },
         };
         if wallet.reserve_transfer_spends(&keys, &transaction).is_err() {
             return -2;
@@ -2394,7 +2710,7 @@ pub extern "C" fn onyx_wallet_create_standard_program_deployment(
             || expiry_height < inclusion_height
             || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
             || fee < program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE
-            || circuit_k != standard_programs::STANDARD_CIRCUIT_K
+            || !(10..=20).contains(&circuit_k)
             || deployment_out.is_null()
             || deployment_len_out.is_null()
             || program_id_out.is_null()
@@ -2449,6 +2765,133 @@ pub extern "C" fn onyx_wallet_create_standard_program_deployment(
             *deployment_out = ptr;
             *deployment_len_out = len;
             std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+        }
+        1
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_standard_program_call(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    program_id: *const u8,
+    inclusion_height: u64,
+    valid_from_height: u64,
+    expiry_height: u64,
+    application: *const u8,
+    application_len: usize,
+    prior_state: *const u8,
+    next_state: *const u8,
+    witness: *const u8,
+    witness_count: usize,
+    circuit_k: u32,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if wallet_snapshot.is_null()
+            || wallet_snapshot_len == 0
+            || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || program_id.is_null()
+            || application.is_null()
+            || application_len == 0
+            || application_len > program_context::MAX_PROGRAM_PUBLIC_DATA_BYTES
+            || prior_state.is_null()
+            || next_state.is_null()
+            || witness.is_null()
+            || witness_count == 0
+            || witness_count > 48
+            || valid_from_height > inclusion_height
+            || inclusion_height > expiry_height
+            || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
+            || !(10..=20).contains(&circuit_k)
+            || transaction_out.is_null()
+            || transaction_len_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            *transaction_out = std::ptr::null_mut();
+            *transaction_len_out = 0;
+        }
+        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+            slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
+        }) {
+            Ok(wallet) => wallet,
+            Err(_) => return -2,
+        };
+        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+            .try_into()
+            .unwrap();
+        let keys = match keys::MasterSeed::new(seed).derive(wallet.network_id()) {
+            Ok(keys) => keys,
+            Err(_) => return -2,
+        };
+        let program_id: [u8; 32] = unsafe { slice::from_raw_parts(program_id, 32) }
+            .try_into()
+            .unwrap();
+        let application = match standard_programs::StandardApplication::decode(unsafe {
+            slice::from_raw_parts(application, application_len)
+        }) {
+            Ok(application) => application,
+            Err(_) => return -1,
+        };
+        let prior_state = match state::CanonicalField::from_bytes(
+            unsafe { slice::from_raw_parts(prior_state, 32) }
+                .try_into()
+                .unwrap(),
+        ) {
+            Some(value) => value,
+            None => return -1,
+        };
+        let next_state = match state::CanonicalField::from_bytes(
+            unsafe { slice::from_raw_parts(next_state, 32) }
+                .try_into()
+                .unwrap(),
+        ) {
+            Some(value) => value,
+            None => return -1,
+        };
+        let witness_bytes = unsafe { slice::from_raw_parts(witness, witness_count * 32) };
+        let mut witness_fields = Vec::with_capacity(witness_count);
+        for encoded in witness_bytes.chunks_exact(32) {
+            let Some(value) = state::CanonicalField::from_bytes(encoded.try_into().unwrap()) else {
+                return -1;
+            };
+            witness_fields.push(value);
+        }
+        let envelope = match wallet.build_standard_program_call(
+            &keys,
+            program_id,
+            valid_from_height,
+            expiry_height,
+            application,
+            prior_state,
+            next_state,
+            witness_fields,
+            circuit_k,
+        ) {
+            Ok(envelope) => envelope,
+            Err(_) => return -5,
+        };
+        if envelope
+            .verify_standard(wallet.program_registry(), inclusion_height, 32, circuit_k)
+            .is_err()
+        {
+            return -2;
+        }
+        let encoded = match envelope.encode() {
+            Ok(encoded) if encoded.len() <= program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES => {
+                encoded
+            }
+            _ => return -6,
+        };
+        let (ptr, len) = into_raw(encoded);
+        unsafe {
+            *transaction_out = ptr;
+            *transaction_len_out = len;
         }
         1
     })
@@ -2953,6 +3396,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ffi_standard_state_query_reports_absent_identity() {
+        let snapshot = state::ShieldedState::<32>::new(3).encode_snapshot();
+        let program_id = [9u8; 32];
+        let application = standard_programs::StandardApplication::Nft {
+            collection_id: [1u8; 32],
+            token_id: [2u8; 32],
+            serial: 3,
+            transfer_nonce: 1,
+        }
+        .encode()
+        .unwrap();
+        let mut value = [0xffu8; 32];
+        let mut found = 0xff;
+        assert_eq!(
+            onyx_state_standard_program_state(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                program_id.as_ptr(),
+                application.as_ptr(),
+                application.len(),
+                value.as_mut_ptr(),
+                &mut found,
+            ),
+            1
+        );
+        assert_eq!(found, 0);
+        assert_eq!(value, [0u8; 32]);
+    }
+
+    #[test]
     fn poseidon_is_deterministic_and_nonzero() {
         assert_eq!(onyx_abi_version(), ABI_VERSION);
         let input = [7u8; 64];
@@ -3018,6 +3491,29 @@ mod tests {
         );
         assert_eq!(
             onyx_verify_authorized_transfer(std::ptr::null(), 1, 32, 20),
+            -1
+        );
+        let mut expiry = u64::MAX;
+        let mut nullifier_count = usize::MAX;
+        let mut commitment_count = usize::MAX;
+        let mut state_key_count = usize::MAX;
+        assert_eq!(
+            onyx_extract_authenticated_standard_program_delta(
+                input.as_ptr(),
+                program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES + 1,
+                out.as_mut_ptr(),
+                out.as_mut_ptr(),
+                &mut expiry,
+                out.as_mut_ptr(),
+                1,
+                &mut nullifier_count,
+                out.as_mut_ptr(),
+                1,
+                &mut commitment_count,
+                out.as_mut_ptr(),
+                1,
+                &mut state_key_count,
+            ),
             -1
         );
         assert_eq!(

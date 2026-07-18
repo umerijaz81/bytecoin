@@ -117,11 +117,22 @@ public:
 	static bool verify_apply_token_issuance(const BinaryArray &snapshot, const BinaryArray &encoded,
 	    uint32_t merkle_depth, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedTokenIssuance *issuance);
+	static bool verify_apply_standard_program_transaction(const BinaryArray &snapshot,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+	    BinaryArray *next_snapshot, VerifiedTransferDelta *delta);
+	// State-independent authenticated extraction is only for pool cleanup after full verification.
+	static bool extract_authenticated_standard_program_delta(
+	    const BinaryArray &encoded, VerifiedTransferDelta *delta,
+	    std::vector<std::array<uint8_t, 32>> *state_keys);
 	static bool verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
 	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
 	static bool verify_bridge(const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta);
 	static bool state_supply_audit(const BinaryArray &snapshot, SupplyAudit *audit);
+	static bool state_standard_program_state(const BinaryArray &snapshot,
+	    const std::array<uint8_t, 32> &program_id, const BinaryArray &application,
+	    std::array<uint8_t, 32> *state, bool *found);
 	static bool wallet_address(const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, uint32_t address_index, std::array<uint8_t, 91> *address);
 	static bool full_viewing_key(const std::array<uint8_t, 32> &seed,
@@ -163,6 +174,12 @@ public:
 	    uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,
 	    uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
 	    std::array<uint8_t, 32> *program_id);
+	static bool wallet_create_standard_program_call(const BinaryArray &wallet_snapshot,
+	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 32> &program_id,
+	    uint64_t inclusion_height, uint64_t valid_from_height, uint64_t expiry_height,
+	    const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
+	    const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
+	    uint32_t circuit_k, BinaryArray *transaction);
 	static bool wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,

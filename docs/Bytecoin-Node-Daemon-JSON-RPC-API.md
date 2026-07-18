@@ -25,12 +25,33 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | 1.  | `check_sendproof`     | Checks validity of a sendproof.                               |
 | 2.  | `get_block_header`    | TODO.                                                         |
 |     | `get_onyx_supply_audit` | Returns rollback-safe Onyx bridge, fee, circulating-supply, commitment, and height totals. |
+|     | `get_onyx_standard_program_state` | Returns the canonical state commitment for one deployed standard-program application. |
 | 3.  | `get_raw_block`       | Gets raw block from the blockchain.                           |
 | 4.  | `get_raw_transaction` | Gets raw transaction from the blockchain.                     |
 | 5.  | `get_statistics`      | Gets statistics about running `bytecoind`.                    |
 | 6.  | `get_status`          | Returns status of `bytecoind`.                                |
 | 7.  | `sync_blocks`         | Gets blockchain blocks for `walletd` and block explorer sync. |
 | 8.  | `sync_mem_pool`       | Gets difference to transaction pool.                          |
+
+### Onyx standard-program state query
+
+`get_onyx_standard_program_state` is a read-only snapshot query. The request supplies a 32-byte
+hexadecimal `program_id` and the exact canonical hexadecimal `application` bytes used by the standard
+profile. The response contains the current `block_height`, `found`, and the 32-byte `state` commitment.
+When `found` is false, `state` is zero. Callers must use the profile-specific canonical application
+builder; the daemon does not reinterpret or normalize application data.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"nft-state",
+  "method":"get_onyx_standard_program_state",
+  "params":{
+    "program_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "application":"0101"
+  }
+}
+```
 
 ### Creating transactions
 

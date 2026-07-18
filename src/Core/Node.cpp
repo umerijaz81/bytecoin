@@ -332,6 +332,8 @@ std::unordered_map<std::string, Node::JSONRPCHandlerFunction> Node::m_jsonrpc_ha
     {api::cnd::GetStatus::method(), json_rpc::make_member_method(&Node::on_get_status)},
     {api::cnd::GetStatus::method2(), json_rpc::make_member_method(&Node::on_get_status)},
     {api::cnd::GetOnyxSupplyAudit::method(), json_rpc::make_member_method(&Node::on_get_onyx_supply_audit)},
+    {api::cnd::GetOnyxStandardProgramState::method(),
+        json_rpc::make_member_method(&Node::on_get_onyx_standard_program_state)},
     {api::cnd::GetStatistics::method(), json_rpc::make_member_method(&Node::on_get_statistics)},
     {api::cnd::GetArchive::method(), json_rpc::make_member_method(&Node::on_get_archive)},
     {api::cnd::SendTransaction::method(), json_rpc::make_member_method(&Node::on_send_transaction)},
@@ -581,6 +583,30 @@ bool Node::on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_r
 	response.program_count = audit.program_count;
 	response.current_block_program_cost = audit.current_block_program_cost;
 	std::copy(audit.commitment_root.begin(), audit.commitment_root.end(), response.commitment_root.data);
+	return true;
+#else
+	throw json_rpc::Error(json_rpc::INTERNAL_ERROR, "Onyx consensus state requires the ZK backend");
+#endif
+}
+
+bool Node::on_get_onyx_standard_program_state(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::cnd::GetOnyxStandardProgramState::Request &&request,
+    api::cnd::GetOnyxStandardProgramState::Response &response) {
+	response.block_height = m_block_chain.get_tip_height();
+	std::array<uint8_t, 32> program_id{};
+	BinaryArray application;
+	if (!common::from_hex(request.program_id, program_id.data(), program_id.size()) ||
+	    !common::from_hex(request.application, &application) || application.empty())
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program identity encoding");
+	BinaryArray snapshot;
+	if (!m_block_chain.get_onyx_snapshot(&snapshot) || snapshot.empty())
+		return true;
+#ifdef onyx_USE_ZK
+	std::array<uint8_t, 32> state{};
+	if (!zk::Halo2ProofSystem::state_standard_program_state(
+	        snapshot, program_id, application, &state, &response.found))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program application or state snapshot");
+	std::copy(state.begin(), state.end(), response.state.data);
 	return true;
 #else
 	throw json_rpc::Error(json_rpc::INTERNAL_ERROR, "Onyx consensus state requires the ZK backend");

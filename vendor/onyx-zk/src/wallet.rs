@@ -12,9 +12,14 @@ use crate::authorization::{
     prepare_same_owner_spends, sign_binding_authorization, sign_prepared_spends,
 };
 use crate::bridge::{AuthorizedBridge, BridgePreimage};
+use crate::compiler_backend::{create_compiler_proof_for_export, CompilerWitness};
 use crate::keys::{EncryptedNote, FullViewingKey, KeyBundle, RecipientAddress};
 use crate::note_commitment_circuit::NOTE_COMMITMENT_INPUTS;
 use crate::program::{ProgramEntry, ProgramRegistry};
+use crate::program_context::{
+    ContextualAuthorizedTransaction, ContextualProofBundle, ProgramContext, ProgramStateTransition,
+    CONTEXTUAL_PROGRAM_BACKEND,
+};
 use crate::program_deployment::{
     deployment_hash, AuthorizedProgramDeployment, MAX_PROGRAM_ACTIVATION_DELAY,
     PROGRAM_DEPLOYMENT_FUNCTION_ID,
@@ -24,7 +29,10 @@ use crate::proof::{
     create_token_issuance_proof, multi_transfer_backend_id, BridgeWitness, MixedTokenWitness,
     MultiSpendWitness, MultiTransferWitness, TokenIssuanceWitness, BRIDGE_BACKEND,
 };
-use crate::standard_programs::{standard_program_entry, StandardProgramKind};
+use crate::standard_programs::{
+    contextual_public_inputs, kind_for_schema, standard_artifact, standard_program_entry,
+    StandardApplication, StandardProgramKind, STANDARD_CIRCUIT_K, STANDARD_FUNCTION_ID,
+};
 use crate::state::{CanonicalField, MerklePath, WitnessError, WitnessTree, ONYX_MERKLE_DEPTH};
 use crate::token_issuance::{sign_issuer_authorization, AuthorizedTokenIssuance};
 use crate::token_program::{
@@ -67,6 +75,18 @@ pub enum WalletBuildError {
     InvalidRecipient,
     Crypto,
     InsufficientFunds,
+}
+
+struct StandardCallBuild {
+    valid_from_height: u64,
+    state: ProgramStateTransition,
+    application: StandardApplication,
+    witness: Vec<CanonicalField>,
+}
+
+struct BuiltNativeTransfer {
+    transaction: AuthorizedTransaction,
+    context: Option<ProgramContext>,
 }
 
 #[cfg(test)]
@@ -546,7 +566,9 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             memo,
             circuit_k,
             vec![],
+            None,
         )
+        .map(|built| built.transaction)
     }
 
     pub fn build_program_deployment(
@@ -609,21 +631,97 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         // A one-unit self-payment gives the generic native builder a canonical non-zero output;
         // every remaining selected unit returns as shielded change and only `fee` is destroyed.
         let self_address = keys.address(0).map_err(|_| WalletBuildError::Crypto)?;
-        let funding = self.build_native_transfer(
-            keys,
-            &self_address,
-            1,
-            fee,
-            expiry_height,
-            vec![],
-            circuit_k,
-            vec![call],
-        )?;
+        let funding = self
+            .build_native_transfer(
+                keys,
+                &self_address,
+                1,
+                fee,
+                expiry_height,
+                vec![],
+                circuit_k,
+                vec![call],
+                None,
+            )?
+            .transaction;
         Ok(AuthorizedProgramDeployment {
             token_manifest: manifest,
             activation_height,
             deactivation_height,
             funding,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_standard_program_call(
+        &self,
+        keys: &KeyBundle,
+        program_id: [u8; 32],
+        valid_from_height: u64,
+        expiry_height: u64,
+        application: StandardApplication,
+        prior_state: CanonicalField,
+        next_state: CanonicalField,
+        witness: Vec<CanonicalField>,
+        circuit_k: u32,
+    ) -> Result<ContextualAuthorizedTransaction, WalletBuildError> {
+        if !(10..=20).contains(&circuit_k)
+            || valid_from_height > expiry_height
+            || prior_state == next_state
+            || witness.is_empty()
+        {
+            return Err(WalletBuildError::InvalidValue);
+        }
+        let (entry, function) = self
+            .programs
+            .active_function(&program_id, STANDARD_FUNCTION_ID, valid_from_height)
+            .map_err(|_| WalletBuildError::InvalidValue)?;
+        let kind = kind_for_schema(&function.public_input_schema_hash)
+            .ok_or(WalletBuildError::InvalidValue)?;
+        let artifact = standard_artifact(kind);
+        if application.kind() != kind
+            || entry.backend != crate::compiler_backend::COMPILER_PROGRAM_BACKEND
+            || function.verifying_key != artifact.verifying_key
+        {
+            return Err(WalletBuildError::InvalidValue);
+        }
+        let expected_witness = match kind {
+            StandardProgramKind::Multisig => 48,
+            StandardProgramKind::Nft | StandardProgramKind::Vesting | StandardProgramKind::Swap => {
+                1
+            }
+        };
+        if witness.len() != expected_witness {
+            return Err(WalletBuildError::InvalidValue);
+        }
+        let call = ProgramCall {
+            program_id,
+            function_id: STANDARD_FUNCTION_ID,
+            public_data_hash: [0; 32],
+        };
+        let self_address = keys.address(0).map_err(|_| WalletBuildError::Crypto)?;
+        let built = self.build_native_transfer(
+            keys,
+            &self_address,
+            1,
+            0,
+            expiry_height,
+            vec![],
+            circuit_k,
+            vec![call],
+            Some(StandardCallBuild {
+                valid_from_height,
+                state: ProgramStateTransition {
+                    prior: prior_state.bytes(),
+                    next: next_state.bytes(),
+                },
+                application,
+                witness,
+            }),
+        )?;
+        Ok(ContextualAuthorizedTransaction {
+            transaction: built.transaction,
+            contexts: vec![built.context.ok_or(WalletBuildError::Crypto)?],
         })
     }
 
@@ -638,7 +736,8 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         memo: Vec<u8>,
         circuit_k: u32,
         programs: Vec<ProgramCall>,
-    ) -> Result<AuthorizedTransaction, WalletBuildError> {
+        standard_call: Option<StandardCallBuild>,
+    ) -> Result<BuiltNativeTransfer, WalletBuildError> {
         let required = amount
             .checked_add(fee)
             .filter(|value| amount != 0 && *value != 0)
@@ -821,12 +920,12 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             output_value_randomness: output_randomness.clone(),
             output_value_commitments: output_commitments,
         };
-        let backend_id = multi_transfer_backend_id(selected.len(), recipients.len());
+        let base_backend_id = multi_transfer_backend_id(selected.len(), recipients.len());
         let nullifier_bytes = nullifiers
             .iter()
             .map(|nullifier| nullifier.0)
             .collect::<Vec<_>>();
-        let proof = match (selected.len(), recipients.len()) {
+        let base_proof = match (selected.len(), recipients.len()) {
             (1, 1) => create_multi_transfer_proof::<DEPTH, 1, 1>(
                 circuit_k,
                 &witness,
@@ -858,6 +957,53 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             _ => return Err(WalletBuildError::Crypto),
         }
         .map_err(|_| WalletBuildError::Crypto)?;
+        let (backend_id, proof, context) = match standard_call {
+            Some(call) => {
+                if preimage.programs.len() != 1 || fee != 0 {
+                    return Err(WalletBuildError::InvalidValue);
+                }
+                let context = ProgramContext::from_transaction(
+                    &preimage,
+                    0,
+                    call.valid_from_height,
+                    Some(call.state),
+                    call.application
+                        .encode()
+                        .map_err(|_| WalletBuildError::InvalidValue)?,
+                )
+                .map_err(|_| WalletBuildError::InvalidValue)?;
+                preimage.programs[0].public_data_hash =
+                    context.hash().map_err(|_| WalletBuildError::Crypto)?;
+                let kind = call.application.kind();
+                let artifact = standard_artifact(kind);
+                let public_inputs = contextual_public_inputs(&context, kind)
+                    .map_err(|_| WalletBuildError::InvalidValue)?;
+                let private_witness = call
+                    .witness
+                    .iter()
+                    .map(|value| value.field())
+                    .collect::<Vec<_>>();
+                let mut parameters = public_inputs[..public_inputs.len() - 1].to_vec();
+                parameters.extend(private_witness);
+                let program_proof = create_compiler_proof_for_export(
+                    artifact.ir,
+                    STANDARD_CIRCUIT_K,
+                    artifact.export,
+                    CompilerWitness { parameters },
+                    &public_inputs,
+                )
+                .map_err(|_| WalletBuildError::Crypto)?;
+                let proof = ContextualProofBundle {
+                    base_backend_id,
+                    base_proof,
+                    program_proofs: vec![program_proof],
+                }
+                .encode()
+                .map_err(|_| WalletBuildError::Crypto)?;
+                (CONTEXTUAL_PROGRAM_BACKEND.to_owned(), proof, Some(context))
+            }
+            None => (base_backend_id, base_proof, None),
+        };
         let spend_signatures = sign_prepared_spends(&prepared, &preimage, &backend_id, &proof)
             .map_err(|_| WalletBuildError::Crypto)?;
         let binding_signature = sign_binding_authorization(
@@ -868,12 +1014,15 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             &output_randomness,
         )
         .map_err(|_| WalletBuildError::Crypto)?;
-        Ok(AuthorizedTransaction {
-            preimage,
-            backend_id,
-            proof,
-            spend_signatures,
-            binding_signature,
+        Ok(BuiltNativeTransfer {
+            transaction: AuthorizedTransaction {
+                preimage,
+                backend_id,
+                proof,
+                spend_signatures,
+                binding_signature,
+            },
+            context,
         })
     }
 
@@ -1411,6 +1560,8 @@ fn bounded_count(value: u64, maximum: usize) -> Result<usize, WalletError> {
 
 #[cfg(test)]
 mod tests {
+    use ff::PrimeField;
+    use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PrimitiveHash, P128Pow5T3};
     use halo2_proofs::pasta::Fp;
 
     use crate::keys::{encrypt_note_with_ephemeral, MasterSeed};
@@ -1584,6 +1735,79 @@ mod tests {
         assert_eq!(
             AuthorizedProgramDeployment::decode(&deployment.encode().unwrap()).unwrap(),
             deployment
+        );
+    }
+
+    #[test]
+    fn standard_program_call_builder_composes_base_and_nft_proofs() {
+        const DEPTH: usize = 2;
+        let network = [17; NETWORK_ID_BYTES];
+        let keys = MasterSeed::new([44; 32]).derive(network).unwrap();
+        let mut wallet = funded_wallet::<DEPTH>(&keys, network, &[1]);
+        let entry = standard_program_entry(StandardProgramKind::Nft, 10, None).unwrap();
+        let program_id = entry.id().unwrap();
+        wallet.register_program(entry).unwrap();
+
+        let collection_id = Fp::from(21).to_repr();
+        let token_id = Fp::from(22).to_repr();
+        let serial = Fp::from(33);
+        let owner_secret = Fp::from(34);
+        let poseidon = |left, right| {
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([left, right])
+        };
+        let collection = poseidon(Fp::from(21), Fp::zero());
+        let token = poseidon(Fp::from(22), Fp::zero());
+        let identity = poseidon(collection, token);
+        let instance = poseidon(identity, serial);
+        let prior = CanonicalField::from_field(poseidon(owner_secret, instance));
+        let next = CanonicalField::from_field(Fp::from(901));
+        let application = StandardApplication::Nft {
+            collection_id,
+            token_id,
+            serial: 33,
+            transfer_nonce: 1,
+        };
+        assert!(wallet
+            .build_standard_program_call(
+                &keys,
+                program_id,
+                10,
+                20,
+                application.clone(),
+                prior,
+                next,
+                vec![],
+                STANDARD_CIRCUIT_K,
+            )
+            .is_err());
+        let envelope = wallet
+            .build_standard_program_call(
+                &keys,
+                program_id,
+                10,
+                20,
+                application,
+                prior,
+                next,
+                vec![CanonicalField::from_field(owner_secret)],
+                STANDARD_CIRCUIT_K,
+            )
+            .unwrap();
+        envelope
+            .verify_standard(
+                wallet.program_registry(),
+                10,
+                DEPTH as u32,
+                STANDARD_CIRCUIT_K,
+            )
+            .unwrap();
+        assert_eq!(
+            envelope.contexts[0].state.as_ref().unwrap().prior,
+            prior.bytes()
+        );
+        assert_eq!(
+            ContextualAuthorizedTransaction::decode(&envelope.encode().unwrap()).unwrap(),
+            envelope
         );
     }
 

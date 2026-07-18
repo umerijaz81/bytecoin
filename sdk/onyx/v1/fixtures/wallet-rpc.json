@@ -30,6 +30,10 @@
       "response": {"jsonrpc": "2.0", "id": "standard-deploy", "result": {"binary_transaction": "0602", "transaction_hash": "49", "program_id": "12"}}
     },
     {
+      "request": {"jsonrpc": "2.0", "id": "standard-call", "method": "create_onyx_standard_program_call", "params": {"program_id": "12", "valid_from_height": 50, "expiry_height": 60, "application": "0101", "prior_state": "01", "next_state": "02", "witness": "03"}},
+      "response": {"jsonrpc": "2.0", "id": "standard-call", "result": {"binary_transaction": "0604", "transaction_hash": "4a"}}
+    },
+    {
       "request": {"jsonrpc": "2.0", "id": "issue", "method": "create_onyx_token_issuance", "params": {"address": "onyx1", "program_id": "11", "amount": 10, "expiry_height": 60, "memo": "mint"}},
       "response": {"jsonrpc": "2.0", "id": "issue", "result": {"binary_transaction": "0603", "transaction_hash": "47", "sequence": 0}}
     },

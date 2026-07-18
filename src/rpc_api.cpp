@@ -415,6 +415,21 @@ void ser_members(api::walletd::CreateOnyxStandardProgramDeployment::Response &v,
 	seria_kv("program_id", v.program_id, s);
 }
 
+void ser_members(api::walletd::CreateOnyxStandardProgramCall::Request &v, ISeria &s) {
+	seria_kv("program_id", v.program_id, s);
+	seria_kv("valid_from_height", v.valid_from_height, s);
+	seria_kv("expiry_height", v.expiry_height, s);
+	seria_kv("application", v.application, s);
+	seria_kv("prior_state", v.prior_state, s);
+	seria_kv("next_state", v.next_state, s);
+	seria_kv("witness", v.witness, s);
+}
+
+void ser_members(api::walletd::CreateOnyxStandardProgramCall::Response &v, ISeria &s) {
+	seria_kv("binary_transaction", v.binary_transaction, s);
+	seria_kv("transaction_hash", v.transaction_hash, s);
+}
+
 void ser_members(api::walletd::CreateOnyxTokenIssuance::Request &v, ISeria &s) {
 	seria_kv("address", v.address, s);
 	seria_kv("program_id", v.program_id, s);
@@ -568,6 +583,17 @@ void ser_members(api::cnd::GetOnyxSupplyAudit::Response &v, ISeria &s) {
 	seria_kv("current_block_program_cost", v.current_block_program_cost, s);
 	seria_kv("commitment_root", v.commitment_root, s);
 	seria_kv("block_height", v.block_height, s);
+}
+
+void ser_members(api::cnd::GetOnyxStandardProgramState::Request &v, ISeria &s) {
+	seria_kv("program_id", v.program_id, s);
+	seria_kv("application", v.application, s);
+}
+
+void ser_members(api::cnd::GetOnyxStandardProgramState::Response &v, ISeria &s) {
+	seria_kv("block_height", v.block_height, s);
+	seria_kv("found", v.found, s);
+	seria_kv("state", v.state, s);
 }
 
 void ser_members(api::cnd::GetBlockHeader::Request &v, ISeria &s) {

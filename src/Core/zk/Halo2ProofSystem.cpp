@@ -206,6 +206,81 @@ bool Halo2ProofSystem::verify_apply_token_issuance(const BinaryArray &snapshot, 
 	return true;
 }
 
+bool Halo2ProofSystem::verify_apply_standard_program_transaction(const BinaryArray &snapshot,
+    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+    BinaryArray *next_snapshot, VerifiedTransferDelta *delta) {
+	if (snapshot.empty() || encoded.empty() || next_snapshot == nullptr || delta == nullptr)
+		return false;
+	uint8_t *next_ptr = nullptr;
+	size_t next_len = 0;
+	VerifiedTransferDelta result;
+	std::array<uint8_t, 32 * 2> nullifiers{};
+	std::array<uint8_t, 32 * 2> commitments{};
+	size_t nullifier_count = 0;
+	size_t commitment_count = 0;
+	const int rc = onyx_verify_apply_standard_program_transaction(snapshot.data(), snapshot.size(),
+	    encoded.data(), encoded.size(), merkle_depth, circuit_k, expected_network.data(), block_height,
+	    &next_ptr, &next_len, result.network.data(), result.anchor.data(), &result.expiry_height,
+	    nullifiers.data(), 2, &nullifier_count, commitments.data(), 2, &commitment_count);
+	if (rc != 1 || next_ptr == nullptr || next_len == 0 || nullifier_count > 2 || commitment_count > 2) {
+		if (next_ptr != nullptr)
+			onyx_free(next_ptr, next_len);
+		return false;
+	}
+	try {
+		next_snapshot->assign(next_ptr, next_ptr + next_len);
+	} catch (...) {
+		onyx_free(next_ptr, next_len);
+		throw;
+	}
+	onyx_free(next_ptr, next_len);
+	result.fee = 0;
+	result.nullifiers.resize(nullifier_count);
+	result.commitments.resize(commitment_count);
+	for (size_t i = 0; i != nullifier_count; ++i)
+		std::copy(nullifiers.begin() + i * 32, nullifiers.begin() + (i + 1) * 32,
+		    result.nullifiers[i].begin());
+	for (size_t i = 0; i != commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.commitments[i].begin());
+	*delta = std::move(result);
+	return true;
+}
+
+bool Halo2ProofSystem::extract_authenticated_standard_program_delta(
+    const BinaryArray &encoded, VerifiedTransferDelta *delta,
+    std::vector<std::array<uint8_t, 32>> *state_keys) {
+	if (encoded.empty() || delta == nullptr || state_keys == nullptr)
+		return false;
+	VerifiedTransferDelta result;
+	std::array<uint8_t, 32 * 2> nullifiers{};
+	std::array<uint8_t, 32 * 2> commitments{};
+	size_t nullifier_count = 0;
+	size_t commitment_count = 0;
+	std::array<uint8_t, 32 * 8> keys{};
+	size_t key_count = 0;
+	const int rc = onyx_extract_authenticated_standard_program_delta(encoded.data(), encoded.size(),
+	    result.network.data(), result.anchor.data(), &result.expiry_height, nullifiers.data(), 2,
+	    &nullifier_count, commitments.data(), 2, &commitment_count, keys.data(), 8, &key_count);
+	if (rc != 1 || nullifier_count > 2 || commitment_count > 2 || key_count > 8)
+		return false;
+	result.fee = 0;
+	result.nullifiers.resize(nullifier_count);
+	result.commitments.resize(commitment_count);
+	for (size_t i = 0; i != nullifier_count; ++i)
+		std::copy(nullifiers.begin() + i * 32, nullifiers.begin() + (i + 1) * 32,
+		    result.nullifiers[i].begin());
+	for (size_t i = 0; i != commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.commitments[i].begin());
+	*delta = std::move(result);
+	state_keys->resize(key_count);
+	for (size_t i = 0; i != key_count; ++i)
+		std::copy(keys.begin() + i * 32, keys.begin() + (i + 1) * 32, (*state_keys)[i].begin());
+	return true;
+}
+
 bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta) {
@@ -258,6 +333,21 @@ bool Halo2ProofSystem::state_supply_audit(const BinaryArray &snapshot, SupplyAud
 	        &result.program_count, &result.current_block_program_cost, result.commitment_root.data()) != 1)
 		return false;
 	*audit = result;
+	return true;
+}
+
+bool Halo2ProofSystem::state_standard_program_state(const BinaryArray &snapshot,
+    const std::array<uint8_t, 32> &program_id, const BinaryArray &application,
+    std::array<uint8_t, 32> *state, bool *found) {
+	if (snapshot.empty() || application.empty() || state == nullptr || found == nullptr)
+		return false;
+	uint8_t present = 0;
+	std::array<uint8_t, 32> value{};
+	if (onyx_state_standard_program_state(snapshot.data(), snapshot.size(), program_id.data(),
+	        application.data(), application.size(), value.data(), &present) != 1 || present > 1)
+		return false;
+	*state = value;
+	*found = present != 0;
 	return true;
 }
 
@@ -532,6 +622,36 @@ bool Halo2ProofSystem::wallet_create_standard_program_deployment(const BinaryArr
 	}
 	try {
 		deployment->assign(ptr, ptr + len);
+	} catch (...) {
+		onyx_free(ptr, len);
+		throw;
+	}
+	onyx_free(ptr, len);
+	return true;
+}
+
+bool Halo2ProofSystem::wallet_create_standard_program_call(const BinaryArray &wallet_snapshot,
+    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 32> &program_id,
+    uint64_t inclusion_height, uint64_t valid_from_height, uint64_t expiry_height,
+    const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
+    const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
+    uint32_t circuit_k, BinaryArray *transaction) {
+	if (wallet_snapshot.empty() || application.empty() || witness.empty() || witness.size() % 32 != 0 ||
+	    transaction == nullptr)
+		return false;
+	uint8_t *ptr = nullptr;
+	size_t len = 0;
+	const int rc = onyx_wallet_create_standard_program_call(wallet_snapshot.data(),
+	    wallet_snapshot.size(), seed.data(), program_id.data(), inclusion_height, valid_from_height,
+	    expiry_height, application.data(), application.size(), prior_state.data(), next_state.data(),
+	    witness.data(), witness.size() / 32, circuit_k, &ptr, &len);
+	if (rc != 1 || ptr == nullptr || len == 0) {
+		if (ptr != nullptr)
+			onyx_free(ptr, len);
+		return false;
+	}
+	try {
+		transaction->assign(ptr, ptr + len);
 	} catch (...) {
 		onyx_free(ptr, len);
 		throw;

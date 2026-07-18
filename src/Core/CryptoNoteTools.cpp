@@ -209,6 +209,15 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 			*fee = 0;
 			return true;
 		}
+		if (tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL) {
+			zk::Halo2ProofSystem::VerifiedTransferDelta delta;
+			std::vector<std::array<uint8_t, 32>> state_keys;
+			if (!zk::Halo2ProofSystem::extract_authenticated_standard_program_delta(
+			        tx.onyx_envelope, &delta, &state_keys))
+				return false;
+			*fee = 0;
+			return true;
+		}
 		return false;
 	}
 #endif

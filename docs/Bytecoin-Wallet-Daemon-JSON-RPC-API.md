@@ -62,6 +62,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | `create_onyx_token_transaction` | Transfers a private standard token while paying the miner fee from native Onyx notes in the same proof. |
 | `create_onyx_program_deployment` | Deploys a capped private fungible-token program, funded and authorized by native Onyx notes. |
 | `create_onyx_standard_program_deployment` | Deploys one pinned NFT, vesting, multisig, or atomic-swap program artifact. |
+| `create_onyx_standard_program_call` | Creates a stateful call to a deployed pinned NFT, vesting, multisig, or atomic-swap program. |
 | `create_onyx_token_issuance` | Privately issues tokens under a wallet-owned active capped program and its next consensus sequence. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
@@ -249,6 +250,36 @@ deactivation, fee, expiry, nullifier reservation, and response fields follow
     "deactivation_height":0,
     "fee":100000,
     "expiry_height":0
+  }
+}
+```
+
+#### `create_onyx_standard_program_call`
+
+This method creates envelope type `4` for an already deployed pinned standard program. It accepts the
+32-byte hexadecimal `program_id`, an optional `valid_from_height`, an optional `expiry_height`, canonical
+hexadecimal `application` bytes, 32-byte hexadecimal `prior_state` and `next_state` commitments, and a
+nonempty hexadecimal `witness` whose length is a multiple of 32 bytes. A zero `valid_from_height` uses the
+next expected inclusion height. The wallet composes a native authorized-transfer proof with the exact pinned
+standard proof and reserves spends from every pending Onyx transfer, deployment, or standard call.
+
+The response returns `binary_transaction` and `transaction_hash`. Consensus requires the deployed program to
+be active, the stored application state to equal `prior_state`, and the proof to authorize the transition to
+`next_state`; competing pending transitions for the same stable state key are rejected.
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"call-nft",
+  "method":"create_onyx_standard_program_call",
+  "params":{
+    "program_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "valid_from_height":0,
+    "expiry_height":0,
+    "application":"0101",
+    "prior_state":"0000000000000000000000000000000000000000000000000000000000000001",
+    "next_state":"0000000000000000000000000000000000000000000000000000000000000002",
+    "witness":"0000000000000000000000000000000000000000000000000000000000000003"
   }
 }
 ```

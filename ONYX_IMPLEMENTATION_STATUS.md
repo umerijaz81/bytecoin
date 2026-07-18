@@ -13,7 +13,7 @@ unreachable until the release gates below are independently satisfied.
 | O2 private transfer | Shape-bound Halo2 transfer circuits, spend and binding authorization, value conservation, expiry/network binding, negative mutation tests and cost limits. | Independent circuit audit and published laptop benchmarks at frozen release parameters. |
 | O3 wallet | Seed/key hierarchy, Onyx addresses, full viewing keys, scanning, historical witnesses, proving, recovery snapshots, pending reservations, native/token balances and wallet RPC. | End-to-end multi-node devnet recovery, backup, hardware-wallet and operator acceptance tests. |
 | O4 migration | One-way legacy-to-Onyx shield, legacy ownership signature, key-image replay prevention, atomic supply accounting, undo and supply-audit RPC. | Operational migration rehearsal, incident rollback procedure and independent supply-invariant audit. |
-| O5 standard programs | Canonical registry, activation/deactivation, cost accounting, funded capped-token deployment, private issuance, mixed token/native-fee transfers, wallet-derived registry state, status RPC, versioned ABI profile, golden RPC fixtures, and semantically versioned reproducible Python and JavaScript/TypeScript SDK packages around the deterministic descriptor/RPC boundary. | Additional native-language bindings, arbitrary-program compiler pipeline and audited standard programs; external audit. |
+| O5 standard programs | Canonical registry, activation/deactivation, cost accounting, funded capped-token deployment, private issuance, mixed token/native-fee transfers, and stateful NFT/vesting/multisig/swap calls. Type-4 calls compose native authorization with a pinned standard proof, apply atomically, reserve pending nullifiers/state keys, expose wallet construction and daemon state queries, and are represented in the versioned Python and JavaScript/TypeScript RPC profiles. | Additional native-language bindings, completion/audit of the arbitrary-program compiler pipeline, independent circuit/consensus review, and public testnet qualification. |
 
 ## Remaining implementation work
 
@@ -53,12 +53,13 @@ unreachable until the release gates below are independently satisfied.
    authorized transaction and exactly one context and proof per ordered call; authorization covers the complete
    versioned proof bundle. The rollback-safe contextual state path validates every ordered context before mutation.
    Exact registered native/single-program-asset base dispatch and export-bound compiler proof composition are
-   implemented behind the non-activated Rust boundary. A canonical native decoder now derives typed public
-   suffixes for NFT, vesting, multisig and swap profiles and enforces state/timelock invariants. Consensus C ABI
-   wiring remains. Four pinned source packages reproduce export-bound descriptors at `k=16`; real proof vectors
+   implemented through the consensus C ABI and C++ state adapter. A canonical native decoder now derives typed public
+   suffixes for NFT, vesting, multisig and swap profiles and enforces state/timelock invariants. Four pinned source
+   packages reproduce export-bound descriptors at `k=16`; real proof vectors
    cover NFT owner continuity, vesting timelocks, pairwise-distinct 1–16 threshold custody and swap claim/refund
-   semantics, including insufficient-approval and duplicate-participant rejections. Deployment/SDK plumbing and
-   review remain. Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and
+   semantics, including insufficient-approval and duplicate-participant rejections. Canonical deployments, wallet
+   proving, RPC/SDK profiles, state queries, reorg-safe application and mempool state-conflict eviction are wired;
+   independent review remains. Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and
    frozen schema hashes with strict uint64, identifier, threshold, boolean and Pasta-field validation; wallet/RPC
    proving flows remain. Canonical IR/descriptor artifacts are digest-pinned, reproducibly regenerated, embedded
    in Rust and used by a caller-artifact-free standard verifier and activation-bound registry-entry builder.

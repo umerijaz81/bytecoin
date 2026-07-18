@@ -61,7 +61,7 @@ int onyx_verify_and_extract_transfer(
     const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
     uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out, uint64_t *fee_out,
     uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
-    uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
+	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
 
 /* Verify an authorized transfer, enforce network and expiry, and atomically advance the canonical
  * shielded-state snapshot. Pass NULL/0 for the first snapshot and a nonzero anchor window. The
@@ -115,6 +115,27 @@ int onyx_verify_apply_token_issuance(
     uint8_t **snapshot_out, size_t *snapshot_len_out, uint8_t program_id_out[32],
     uint64_t *sequence_out, uint64_t *issued_amount_out);
 
+/* Verify a pinned contextual standard-program bundle and atomically apply both its shielded-value
+ * delta and prior->next program-state transition. The snapshot must already contain the deployed
+ * registry entry. */
+int onyx_verify_apply_standard_program_transaction(
+    const uint8_t *snapshot, size_t snapshot_len,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t expected_network[16], uint64_t block_height,
+    uint8_t **snapshot_out, size_t *snapshot_len_out,
+    uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out,
+    uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
+	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
+
+/* Extract an authorization-checked contextual value delta for post-verification pool bookkeeping.
+ * This does not verify program proofs or state and is never a consensus-admission substitute. */
+int onyx_extract_authenticated_standard_program_delta(
+    const uint8_t *encoded, size_t encoded_len,
+    uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out,
+    uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
+	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out,
+	uint8_t *state_keys_out, size_t state_key_capacity, size_t *state_key_count_out);
+
 /* Decode the rollback-safe consensus snapshot and return its public supply-accounting totals. */
 int onyx_state_supply_audit(
     const uint8_t *snapshot, size_t snapshot_len,
@@ -122,6 +143,12 @@ int onyx_state_supply_audit(
     uint64_t *circulating_supply_out, uint64_t *leaf_count_out,
     uint64_t *program_count_out, uint64_t *current_block_program_cost_out,
     uint8_t root_out[32]);
+
+/* Query a stable standard-application identity in a depth-32 consensus snapshot. */
+int onyx_state_standard_program_state(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t program_id[32],
+    const uint8_t *application, size_t application_len, uint8_t state_out[32],
+    uint8_t *found_out);
 
 /* Verify a bridge proof and extract the public legacy ownership statement without applying state. */
 int onyx_verify_bridge(
@@ -213,6 +240,17 @@ int onyx_wallet_create_standard_program_deployment(
     uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
     uint64_t expiry_height, uint64_t fee, uint32_t circuit_k,
     uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
+/* Build a one-call contextual transaction for a deployed pinned standard program. application is
+ * the canonical StandardApplication v1 encoding. witness is witness_count consecutive canonical
+ * 32-byte Pasta fields (1 for NFT/vesting/swap; 48 for multisig). The call is a zero-fee, one-unit
+ * native self-transfer that supplies the authorized base value layer. */
+int onyx_wallet_create_standard_program_call(
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len, const uint8_t seed[32],
+    const uint8_t program_id[32], uint64_t inclusion_height, uint64_t valid_from_height,
+    uint64_t expiry_height, const uint8_t *application, size_t application_len,
+    const uint8_t prior_state[32], const uint8_t next_state[32],
+    const uint8_t *witness, size_t witness_count, uint32_t circuit_k,
+    uint8_t **transaction_out, size_t *transaction_len_out);
 int onyx_wallet_create_token_issuance(
     const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
     const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],

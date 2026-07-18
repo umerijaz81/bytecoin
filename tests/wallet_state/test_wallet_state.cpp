@@ -374,7 +374,9 @@ void test_wallet_state(common::CommandLine &cmd) {
 				//				}
 			}
 		}
-		ws.add_transaction(ha, crypto::cn_fast_hash(&ha, sizeof(ha)), PreparedWalletTransaction{}, ptx);
+		PreparedWalletTransaction prepared;
+		prepared.tx.version = 1;
+		ws.add_transaction(ha, crypto::cn_fast_hash(&ha, sizeof(ha)), prepared, ptx);
 		const Timestamp uti =
 		    TEST_TIMESTAMP + ha * currency.difficulty_target + random() % currency.block_future_time_limit;
 		wm.unlock(ha, uti);

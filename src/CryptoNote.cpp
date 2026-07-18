@@ -295,7 +295,8 @@ void ser_members(TransactionPrefix &v, ISeria &s, bool is_root) {
 		seria_kv_binary("onyx_type", &v.onyx_type, 1, s);
 		if (v.onyx_type != parameters::ONYX_TYPE_TRANSFER && v.onyx_type != parameters::ONYX_TYPE_BRIDGE &&
 		    v.onyx_type != parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT &&
-		    v.onyx_type != parameters::ONYX_TYPE_TOKEN_ISSUANCE)
+		    v.onyx_type != parameters::ONYX_TYPE_TOKEN_ISSUANCE &&
+		    v.onyx_type != parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL)
 			throw std::runtime_error("Unknown Onyx envelope type " + common::to_string(v.onyx_type));
 		s.object_key("onyx_envelope");
 		size_t size = v.onyx_envelope.size();

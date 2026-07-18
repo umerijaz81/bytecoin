@@ -134,7 +134,15 @@ int main(int argc, const char *argv[]) {
 	for (const auto &t : all)
 		if (found_on_cmd_line == 0 || cmd.get_bool(t.first.c_str())) {
 			std::cout << format_test_name("Running test " + t.first) << std::endl;
-			t.second();
+			try {
+				t.second();
+			} catch (const std::exception &ex) {
+				std::cerr << "Test " << t.first << " failed: " << ex.what() << std::endl;
+				return 1;
+			} catch (...) {
+				std::cerr << "Test " << t.first << " failed with an unknown exception" << std::endl;
+				return 1;
+			}
 		}
 	std::cout << format_test_name("Done!") << std::endl;
 	return 0;

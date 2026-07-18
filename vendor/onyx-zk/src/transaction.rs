@@ -149,7 +149,9 @@ impl TransactionPreimage {
 
     /// Stable note-encryption context. Ephemeral keys and ciphertexts are excluded to avoid a
     /// construction cycle; associated data binds them separately together with output index and
-    /// commitment.
+    /// commitment. Program identifiers and functions are included, but contextual public-data
+    /// hashes are finalized after ciphertext construction and are authenticated by transaction
+    /// authorization plus the program proof.
     pub fn encryption_binding(&self) -> Result<[u8; 32], TransactionError> {
         self.validate()?;
         let mut bytes = Vec::new();
@@ -173,7 +175,6 @@ impl TransactionPreimage {
         for program in &self.programs {
             bytes.extend_from_slice(&program.program_id);
             write_varint(program.function_id.into(), &mut bytes);
-            bytes.extend_from_slice(&program.public_data_hash);
         }
         let mut hash = Sha256::new();
         hash.update(ENCRYPTION_BINDING_DOMAIN);
@@ -476,6 +477,11 @@ mod tests {
         ciphertext.outputs[0].ciphertext[0] ^= 1;
         ciphertext.outputs[0].ephemeral_key[0] ^= 1;
         assert_eq!(ciphertext.encryption_binding().unwrap(), binding);
+        let mut contextual_hash = ciphertext.clone();
+        contextual_hash.programs[0].public_data_hash[0] ^= 1;
+        assert_eq!(contextual_hash.encryption_binding().unwrap(), binding);
+        contextual_hash.programs[0].program_id[0] ^= 1;
+        assert_ne!(contextual_hash.encryption_binding().unwrap(), binding);
         let mut commitment = tx;
         commitment.outputs[0].commitment = field(12);
         assert_ne!(commitment.encryption_binding().unwrap(), binding);
