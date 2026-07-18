@@ -86,7 +86,9 @@ unreachable until the release gates below are independently satisfied.
    x86-64/ARM64 equality, RV64GC v2 vectors under QEMU and an actual branch-seed epoch reorganization
    are CI-gated. A fourteen-switch randomized multi-epoch campaign persists both branches, reopens the
    database and reorganizes onto the retained branch while checking every selected seed ancestor.
-   Remaining: independent review, longer public long-sync/reorg soak, corrupt-template process tests,
+   The real daemon/miner process path accepts and submits a canonical template, while mock-daemon cases
+   prove fail-closed retry without hashing/submission for malformed metadata, blobs, seeds, parent and
+   coinbase-height bindings. Remaining: independent review, longer public long-sync/reorg soak,
    published throughput/power benchmarks on native qualification hardware and public soak.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.

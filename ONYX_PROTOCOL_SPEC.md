@@ -355,9 +355,10 @@ outbound selection, probabilistic diffusion, bounded hops, randomized embargo, l
 recovery and v4 fallback. O6 also includes fail-closed outbound SOCKS5 routing with numeric targets
 and bounded no-auth negotiation. Hidden-service peer identities, Tor/I2P leak/integration testing,
 peer scoring and adversarial simulation remain required. RandomX v2.0.1 is integrated behind a dormant
-hard-fork boundary with branch-derived delayed seed epochs and a node/miner KAT, but independent review,
-full-memory mining, reorg/multi-architecture testing and benchmarks remain open, as do reproducible
-releases and operational testnet evidence.
+hard-fork boundary with branch-derived delayed seed epochs, full-memory/native-architecture gates,
+multi-epoch reorg/reopen campaigns, and real-process canonical/corrupt template qualification. Independent
+review, published native-hardware benchmarks, longer public soak, reproducible releases and operational
+testnet evidence remain open.
 
 ## 11. Required tests
 

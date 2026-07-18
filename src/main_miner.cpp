@@ -8,6 +8,7 @@
 #include <thread>
 #include "Core/Config.hpp"
 #include "Core/CryptoNoteTools.hpp"
+#include "Core/Currency.hpp"
 #include "Core/Difficulty.hpp"
 #include "Core/TransactionExtra.hpp"
 #include "CryptoNoteConfig.hpp"
@@ -195,6 +196,7 @@ private:
 class HTTPMiner {
 public:
 	const MiningConfig &mining_config;
+	const Currency &currency;
 
 	http::Agent getwork_agent;
 	std::unique_ptr<http::Request> getwork_request;
@@ -224,8 +226,9 @@ public:
 	// In MM boast is included into reserved space in block
 	// In CM boast is included into cm_nonce
 
-	explicit HTTPMiner(const MiningConfig &mining_config)
+	HTTPMiner(const MiningConfig &mining_config, const Currency &currency)
 	    : mining_config(mining_config)
+	    , currency(currency)
 	    , getwork_agent(mining_config.bytecoind_ip, mining_config.bytecoind_port)
 	    , submit_agent(mining_config.bytecoind_ip, mining_config.bytecoind_port)
 	    , getwork_retry(std::bind(&HTTPMiner::send_getwork, this))
@@ -395,6 +398,65 @@ public:
 			    std::cout << "Network Error getting currency id (will retry in 5 sec) err=" << err << std::endl;
 		    });
 	}
+	void install_block_template(api::cnd::GetBlockTemplate::Response resp) {
+		if (resp.pow_algorithm != "cryptonight" && resp.pow_algorithm != "randomx-v2")
+			throw std::runtime_error("unsupported proof-of-work algorithm '" + resp.pow_algorithm + "'");
+		if (resp.difficulty == 0)
+			throw std::runtime_error("zero mining difficulty");
+		if (resp.height == 0 || resp.height > parameters::MAX_BLOCK_NUMBER)
+			throw std::runtime_error("candidate height is out of bounds");
+		if (resp.top_block_hash == Hash{})
+			throw std::runtime_error("top block hash is zero");
+		if (resp.blocktemplate_blob.empty() ||
+		    resp.blocktemplate_blob.size() > parameters::BLOCK_CAPACITY_VOTE_MAX + parameters::MAX_HEADER_SIZE)
+			throw std::runtime_error("block template size is out of bounds");
+		if (resp.pow_algorithm == "randomx-v2" && resp.pow_seed_hash == Hash{})
+			throw std::runtime_error("RandomX seed hash is zero");
+		if (resp.pow_algorithm == "cryptonight" && resp.pow_seed_hash != Hash{})
+			throw std::runtime_error("CryptoNight template carries an unexpected RandomX seed");
+		if (!mining_config.cm && !mining_config.boast.empty()) {
+			if (resp.reserved_offset > resp.blocktemplate_blob.size() ||
+			    mining_config.boast.size() > resp.blocktemplate_blob.size() - resp.reserved_offset)
+				throw std::runtime_error("reserved nonce range is outside the block template");
+			for (size_t i = 0; i != mining_config.boast.size(); ++i)
+				resp.blocktemplate_blob[resp.reserved_offset + i] = mining_config.boast[i];
+		}
+
+		BlockTemplate candidate;
+		seria::from_binary(candidate, resp.blocktemplate_blob);
+		if (candidate.previous_block_hash != resp.top_block_hash)
+			throw std::runtime_error("template parent does not match top_block_hash");
+		if (candidate.base_transaction.inputs.size() != 1)
+			throw std::runtime_error("template coinbase input count is not one");
+		const auto *coinbase = boost::get<InputCoinbase>(&candidate.base_transaction.inputs.front());
+		if (coinbase == nullptr || coinbase->height != resp.height)
+			throw std::runtime_error("template coinbase height does not match response height");
+		const bool expected_randomx = currency.uses_randomx(candidate.major_version, resp.height);
+		if ((resp.pow_algorithm == "randomx-v2") != expected_randomx)
+			throw std::runtime_error("proof-of-work algorithm does not match template version and height");
+
+		block_response = std::move(resp);
+		if (block_response.pow_algorithm != "randomx-v2") {
+			randomx_hash_pool.reset();
+			randomx_dataset_handle.reset();
+		}
+		block = std::move(candidate);
+		set_root_extra_to_solo_mining_tag(block);
+		difficulty = block_response.difficulty;
+		nonce      = crypto::rand<uint32_t>();
+		if (mining_config.miner_secret != Hash{}) {
+			block.timestamp = block.root_block.timestamp =
+			    1550000000 + block_response.height * parameters::DIFFICULTY_TARGET;
+			nonce = 0;
+		}
+		std::cout << "Miner received getblocktemplate difficulty=" << difficulty
+		          << " algorithm=" << block_response.pow_algorithm
+		          << " top_block_hash=" << block_response.top_block_hash
+		          << " #tx=" << block.transaction_hashes.size() << std::endl;
+		for (const auto &ha : block.transaction_hashes)
+			std::cout << "tx=" << ha << std::endl;
+		getwork_retry.once(0.1f);
+	}
 	void send_getwork() {
 		if (need_currency_id) {
 			return send_getcurrency_id();
@@ -416,36 +478,14 @@ public:
 			    api::cnd::GetBlockTemplate::Response resp;
 			    json_rpc::Error err_resp;
 			    if (json_rpc::parse_response(response.body, resp, err_resp)) {
-				    if (resp.pow_algorithm != "cryptonight" && resp.pow_algorithm != "randomx-v2") {
-					    std::cout << "Unsupported proof-of-work algorithm '" << resp.pow_algorithm
-					              << "' (will retry in 10 sec)" << std::endl;
-					    getwork_retry.once(10);
-					    return;
+				    try {
+					    install_block_template(std::move(resp));
+				    } catch (const std::exception &ex) {
+					    difficulty = 0;
+					    std::cout << "Rejected block template: " << common::what(ex)
+					              << " (will retry in 1 sec)" << std::endl;
+					    getwork_retry.once(1);
 				    }
-				    if (!mining_config.cm)
-					    for (size_t i = 0; i != mining_config.boast.size(); ++i)
-						    resp.blocktemplate_blob.at(resp.reserved_offset + i) = mining_config.boast[i];
-				    block_response = resp;
-				    if (resp.pow_algorithm != "randomx-v2") {
-					    randomx_hash_pool.reset();
-					    randomx_dataset_handle.reset();
-				    }
-				    seria::from_binary(block, resp.blocktemplate_blob);
-				    set_root_extra_to_solo_mining_tag(block);
-				    difficulty = resp.difficulty;
-				    nonce      = crypto::rand<uint32_t>();
-				    if (mining_config.miner_secret != Hash{}) {
-					    block.timestamp = block.root_block.timestamp =
-					        1550000000 + resp.height * parameters::DIFFICULTY_TARGET;
-					    nonce = 0;
-				    }
-				    std::cout << "Miner received getblocktemplate difficulty=" << difficulty
-				              << " algorithm=" << resp.pow_algorithm << " top_block_hash=" << resp.top_block_hash
-				              << " #tx=" << block.transaction_hashes.size()
-				              << std::endl;
-				    for (const auto &ha : block.transaction_hashes)
-					    std::cout << "tx=" << ha << std::endl;
-				    getwork_retry.once(0.1f);
 			    } else {
 				    getwork_retry.once(10);
 				    std::cout << "Json Error getting blocktemplate (will retry in 10 sec) code=" << err_resp.code
@@ -467,6 +507,8 @@ public:
 		if (cmd.show_help(Config::prepare_usage(USAGE).c_str(), cn::app_version()))
 			return 0;
 		MiningConfig mining_config(cmd);
+		Config config(cmd);
+		Currency currency(config);
 		if (cmd.show_errors())
 			return 1;
 		if (mining_config.mining_address.empty()) {
@@ -477,7 +519,7 @@ public:
 		boost::asio::io_context io;
 		platform::EventLoop run_loop(io);
 
-		HTTPMiner miner(mining_config);
+		HTTPMiner miner(mining_config, currency);
 		while (!io.stopped()) {
 			io.poll();
 			if (!miner.on_idle())

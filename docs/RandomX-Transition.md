@@ -14,7 +14,9 @@ be lowered until independent review, public testnet soak and release governance 
 - Validation derives the key from the candidate block's parent branch. It never substitutes the
   active-chain block at that height, so a valid side chain and a reorganization use their own key.
 - `get_block_template` returns `pow_algorithm` and `pow_seed_hash`; the bundled miner rejects unknown
-  algorithm identifiers and uses the exact seed returned by the node.
+  algorithms, zero or misplaced seeds, zero difficulty, oversized/noncanonical blobs, invalid reserve
+  ranges, parent/coinbase-height mismatches, and algorithm/version/activation inconsistencies before
+  enabling hashing. A rejected response is retried without terminating or submitting work.
 
 The implementation pins upstream RandomX `v2.0.1` (`aaafe71322df6602c21a5c72937ac284724ae561`),
 the corrected release that avoids a
@@ -30,9 +32,11 @@ full-memory equality test on x86-64 and ARM64, contains a RISC-V/QEMU vector gat
 reorganizes competing branches through distinct delayed-seed epochs. A deterministic pseudo-random
 campaign additionally forces fourteen active-branch switches, commits both branches, reopens the
 database and reorganizes onto the previously inactive persisted branch while checking the exact seed
-ancestor after every switch. Remaining release qualification includes independent review, still
-longer public sync/reorg soak, corrupt-template process tests, published mining throughput/power
-benchmarks and public testnet soak.
+ancestor after every switch. A real-process qualification now launches the daemon and miner, accepts
+and submits one canonical template, then serves twelve corrupt or inconsistent templates from a mock
+daemon and proves the miner neither hashes nor submits them while remaining available to retry.
+Remaining release qualification includes independent review, still longer public sync/reorg soak,
+published mining throughput/power benchmarks and public testnet soak.
 
 The repeated two-epoch branch test passed in the full consensus job on 2026-07-16 (GitHub Actions
 run `29514198541`).

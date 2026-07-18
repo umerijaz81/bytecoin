@@ -15,6 +15,7 @@ on:
       - "src/p2p/**"
       - "src/main_miner.cpp"
       - "tests/blockchain/**"
+      - "tests/miner/**"
       - "tests/network/**"
       - "vendor/randomx/**"
   pull_request:
@@ -31,6 +32,7 @@ on:
       - "src/p2p/**"
       - "src/main_miner.cpp"
       - "tests/blockchain/**"
+      - "tests/miner/**"
       - "tests/network/**"
       - "vendor/randomx/**"
 
@@ -53,10 +55,15 @@ jobs:
       - name: Configure consensus tests
         run: cmake -S . -B build-consensus -DUSE_SQLITE=ON -DONYX_ZK=OFF
       - name: Build consensus tests
-        run: cmake --build build-consensus --parallel 2 --target tests minerd
+        run: cmake --build build-consensus --parallel 2 --target tests minerd bytecoind
       - name: Smoke-test miner command line
         working-directory: build-consensus
         run: ../bin/minerd --help
+      - name: Reject corrupt mining templates without hashing or submission
+        run: >-
+          python3 tests/miner/test_corrupt_template_process.py
+          --minerd bin/minerd
+          --bytecoind bin/bytecoind
       - name: Run blockchain and RandomX reorganization tests
         working-directory: build-consensus
         run: ../bin/tests --blockchain

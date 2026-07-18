@@ -73,7 +73,9 @@ re-architecting.
   validation derives the seed from that branch. The miner now shares one full-memory dataset across
   persistent worker VMs, bounds initialization/hash thread counts, supports require-or-fail large pages
   and retains an explicit single-thread light mode. Native x86-64/ARM64 full-memory equality and a real
-  two-branch epoch reorganization are CI-gated. See `docs/RandomX-Transition.md`.
+  two-branch epoch reorganization are CI-gated. The real daemon/miner template path and twelve
+  mock-daemon corruption/downgrade cases are process-tested fail closed before hashing or submission.
+  See `docs/RandomX-Transition.md`.
 - **Remaining:** independent consensus review, published throughput/power benchmarks on native
   qualification hardware, deeper randomized reorg/long-sync qualification and public testnet
   activation/soak. The RV64GC v2 vectors are CI-gated under QEMU.
