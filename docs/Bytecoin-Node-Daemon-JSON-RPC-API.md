@@ -30,7 +30,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 |-----|-----------------------|---------------------------------------------------------------|
 | 1.  | `check_sendproof`     | Checks validity of a sendproof.                               |
 | 2.  | `get_block_header`    | TODO.                                                         |
-|     | `get_onyx_supply_audit` | Returns rollback-safe Onyx bridge, fee, circulating-supply, commitment, and height totals. |
+|     | `get_onyx_supply_audit` | Returns rollback-safe Onyx bridge, fee, circulating-supply, commitment, and height totals; expensive snapshot auditing is cached by exact tip hash. |
 |     | `get_onyx_standard_program_state` | Returns the canonical state commitment for one deployed standard-program application. |
 | 3.  | `get_raw_block`       | Gets raw block from the blockchain.                           |
 | 4.  | `get_raw_transaction` | Gets raw transaction from the blockchain.                     |

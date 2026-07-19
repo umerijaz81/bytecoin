@@ -122,7 +122,8 @@ an explicit non-release build option, rejected at runtime in normal walletd, and
 marker scanning in CI. The mempool admits at most 256 zero-fee standard-program calls and checks that
 cap before Halo2 verification; insertion, eviction, removal and reorganization bookkeeping preserve
 the bound. This is relay/admission policy, not block consensus. Supply-audit caching from the latest
-static review remains separate hardening work.
+static review is also implemented: the full snapshot audit is cached by exact tip hash, so repeated
+unauthenticated calls at one tip copy a stable response while same-height reorganizations recompute.
 
 ### Release readiness
 

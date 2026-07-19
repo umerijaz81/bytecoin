@@ -568,10 +568,19 @@ void Node::relay_transaction_dandelion(
 
 bool Node::on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_rpc::Request &&,
     api::cnd::GetOnyxSupplyAudit::Request &&, api::cnd::GetOnyxSupplyAudit::Response &response) {
+	const Hash tip = m_block_chain.get_tip_bid();
+	if (m_onyx_supply_audit_cache_valid && m_onyx_supply_audit_cache_tip == tip) {
+		response = m_onyx_supply_audit_cache_response;
+		return true;
+	}
 	response.block_height = m_block_chain.get_tip_height();
 	BinaryArray snapshot;
-	if (!m_block_chain.get_onyx_snapshot(&snapshot) || snapshot.empty())
+	if (!m_block_chain.get_onyx_snapshot(&snapshot) || snapshot.empty()) {
+		m_onyx_supply_audit_cache_tip      = tip;
+		m_onyx_supply_audit_cache_response = response;
+		m_onyx_supply_audit_cache_valid    = true;
 		return true;
+	}
 #ifdef onyx_USE_ZK
 	zk::Halo2ProofSystem::SupplyAudit audit;
 	if (!zk::Halo2ProofSystem::state_supply_audit(snapshot, &audit))
@@ -583,6 +592,9 @@ bool Node::on_get_onyx_supply_audit(http::Client *, http::RequestBody &&, json_r
 	response.program_count = audit.program_count;
 	response.current_block_program_cost = audit.current_block_program_cost;
 	std::copy(audit.commitment_root.begin(), audit.commitment_root.end(), response.commitment_root.data);
+	m_onyx_supply_audit_cache_tip      = tip;
+	m_onyx_supply_audit_cache_response = response;
+	m_onyx_supply_audit_cache_valid    = true;
 	return true;
 #else
 	throw json_rpc::Error(json_rpc::INTERNAL_ERROR, "Onyx consensus state requires the ZK backend");

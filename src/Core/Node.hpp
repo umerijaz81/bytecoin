@@ -105,6 +105,9 @@ protected:
 	void advance_long_poll();
 
 	logging::LoggerRef m_log;
+	bool m_onyx_supply_audit_cache_valid = false;
+	Hash m_onyx_supply_audit_cache_tip{};
+	api::cnd::GetOnyxSupplyAudit::Response m_onyx_supply_audit_cache_response;
 	const std::unique_ptr<PeerDB> m_peer_db;  // compilation speed optimization
 	P2P m_p2p;
 	platform::UDPMulticast multicast;

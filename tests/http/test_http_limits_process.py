@@ -25,9 +25,9 @@ def unused_port():
     return port
 
 
-def rpc_body():
+def rpc_body(method="get_status"):
     return json.dumps(
-        {"jsonrpc": "2.0", "id": "status", "method": "get_status", "params": {}},
+        {"jsonrpc": "2.0", "id": method, "method": method, "params": {}},
         separators=(",", ":"),
     ).encode("ascii")
 
@@ -43,18 +43,31 @@ def http_request(body, extra_headers=b""):
     )
 
 
-def rpc_status(port):
+def rpc_result(port, method="get_status"):
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/json_rpc",
-        data=rpc_body(),
+        data=rpc_body(method),
         headers={"Content-Type": "application/json-rpc"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=5) as response:
         decoded = json.loads(response.read().decode("utf-8"))
     if "result" not in decoded:
-        raise RuntimeError(f"unexpected status response: {decoded}")
+        raise RuntimeError(f"unexpected {method} response: {decoded}")
     return decoded["result"]
+
+
+def rpc_status(port):
+    return rpc_result(port)
+
+
+def test_supply_audit_cache_stability(process, port):
+    first = rpc_result(port, "get_onyx_supply_audit")
+    second = rpc_result(port, "get_onyx_supply_audit")
+    if first != second or "block_height" not in first:
+        raise RuntimeError(f"tip-stable supply audit responses differ: {first!r} != {second!r}")
+    assert_alive(process, port)
+    print("tip-keyed Onyx supply audit response is stable across repeated calls")
 
 
 def wait_for_rpc(process, port, timeout=30):
@@ -206,6 +219,7 @@ def run(binary):
                 test_oversized_body(process, rpc_port)
                 test_oversized_header(process, rpc_port)
                 test_duplicate_content_length(process, rpc_port)
+                test_supply_audit_cache_stability(process, rpc_port)
                 test_connection_cap(process, rpc_port)
                 test_header_timeout(process, rpc_port)
             except Exception:
