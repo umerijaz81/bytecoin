@@ -55,6 +55,12 @@ int main(int argc, const char *argv[]) try {
 		return 0;
 
 	Config config(cmd);
+#ifdef BYTECOIN_TEST_P2P_VERSION
+	static_assert(BYTECOIN_TEST_P2P_VERSION == P2PProtocolVersion::AMETHYST,
+	    "Only the isolated protocol-v4 interoperability fixture is supported");
+	config.p2p_advertised_version = BYTECOIN_TEST_P2P_VERSION;
+	config.dandelion_enabled      = false;
+#endif
 	Currency currency(config);
 
 	const std::string coin_folder = config.get_data_folder();

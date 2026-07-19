@@ -97,6 +97,7 @@ public:
 	Timestamp p2p_no_incoming_handshake_disconnect_timeout = 30;
 	Timestamp p2p_no_incoming_message_disconnect_timeout   = 60 * 6;
 	Timestamp p2p_no_outgoing_message_ping_timeout         = 60 * 4;
+	uint8_t p2p_advertised_version                         = P2PProtocolVersion::ANONYMITY_ADDRESSES;
 	bool dandelion_enabled                                 = true;
 	Timestamp dandelion_epoch_seconds                      = 10 * 60;
 	Timestamp dandelion_embargo_min_seconds                = 10;

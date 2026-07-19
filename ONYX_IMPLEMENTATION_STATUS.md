@@ -70,11 +70,13 @@ unreachable until the release gates below are independently satisfied.
    embargo/fluff recovery, hop limits, disconnect recovery, legacy-peer fallback, bounded delivery
    scoring/decay and weighted randomized peer rotation. A selected peer's own fluff reflection cannot
    cancel its embargo. A deterministic 64-peer/20,000-transaction adversarial campaign is CI-gated
-   across all three platforms. A five-daemon socket-level qualification now mines spendable funds
+   across all three platforms. A four-daemon socket-level qualification now mines spendable funds
    through real miner/wallet processes and proves stem-only visibility, reflected-fluff loop resistance,
-   embargo recovery, disconnect recovery and immediate disabled-mode compatibility diffusion. Bounded
-   epoch, embargo and fluff-probability controls fail closed on invalid input. Remaining: real legacy-v4
-   binary interoperability, fuzz soak, public testnet topology soak and independent network-privacy review.
+   embargo recovery, disconnect recovery and immediate negotiated-v4 compatibility diffusion. Its
+   non-default v4 fixture shares the production parser/consensus/socket stack and exposes no runtime
+   downgrade switch. Bounded epoch, embargo and fluff-probability controls fail closed on invalid input.
+   Remaining: historical released-v4 binary matrix, fuzz soak, public testnet topology soak and independent
+   network-privacy review.
 2. Fail-closed no-auth SOCKS5 outbound transport is implemented with numeric proxy/peer addresses,
    bounded negotiation and no local destination lookup. Canonical v3 onion and I2P b32 destination
    framing is fail-closed, and protocol v6 carries canonical proxy-only onion/I2P identities through

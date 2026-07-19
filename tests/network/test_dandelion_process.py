@@ -301,7 +301,7 @@ def run(args):
         wallet_file, wallet_data = create_wallet(args.walletd, root)
         ports = {name: unused_port() for name in (
             "a_p2p", "a_rpc", "b_p2p", "b_rpc", "c_p2p", "c_rpc",
-            "d_p2p", "d_rpc", "e_p2p", "e_rpc", "wallet_rpc", "dummy",
+            "v4_p2p", "v4_rpc", "wallet_rpc", "dummy",
         )}
         try:
             node_b = start_node(
@@ -323,16 +323,11 @@ def run(args):
                 ports["a_p2p"],
             )
             processes.append(node_c)
-            node_d = start_node(
-                args.bytecoind, root, "node-d-compatibility", ports["d_p2p"], ports["d_rpc"],
-                ports["a_p2p"], ["--disable-dandelion"],
+            node_v4 = start_node(
+                args.v4_bytecoind, root, "node-v4-observer", ports["v4_p2p"], ports["v4_rpc"],
+                ports["a_p2p"],
             )
-            processes.append(node_d)
-            node_e = start_node(
-                args.bytecoind, root, "node-e-compat-observer", ports["e_p2p"], ports["e_rpc"],
-                ports["d_p2p"],
-            )
-            processes.append(node_e)
+            processes.append(node_v4)
 
             wait_until(
                 "isolated relay topology",
@@ -340,7 +335,8 @@ def run(args):
                     node_status(ports["a_rpc"])["outgoing_peer_count"] == 1
                     and node_status(ports["a_rpc"])["incoming_peer_count"] >= 2
                     and node_status(ports["b_rpc"])["incoming_peer_count"] >= 1
-                    and node_status(ports["d_rpc"])["incoming_peer_count"] >= 1
+                    and node_status(ports["v4_rpc"])["outgoing_peer_count"] == 1
+                    and "Handshake request version=4" in node_a.read_output()
                 ),
                 processes,
                 timeout=30,
@@ -357,7 +353,7 @@ def run(args):
                 raise RuntimeError("qualification wallet did not contain two addresses")
 
             mine_blocks(args.minerd, root, ports["a_rpc"], addresses[0], 15)
-            for name in ("a", "b", "c", "d", "e"):
+            for name in ("a", "b", "c", "v4"):
                 rpc_port = ports[f"{name}_rpc"]
                 wait_until(
                     f"node {name} chain synchronization",
@@ -400,17 +396,15 @@ def run(args):
             print("stem-peer disconnect recovery passed")
 
             tx3_hash, tx3_binary = create_transaction(ports["wallet_rpc"], addresses[1], addresses[0])
-            assert_pool_absent("node E", ports["e_rpc"], tx3_hash)
+            assert_pool_absent("node v4", ports["v4_rpc"], tx3_hash)
+            assert_pool_absent("node C", ports["c_rpc"], tx3_hash)
             sent_at = time.monotonic()
-            result = rpc_call(
-                ports["d_rpc"], "send_transaction", {"binary_transaction": tx3_binary}
-            )
-            if result["send_result"] != "broadcast":
-                raise RuntimeError(f"node D returned unexpected send result: {result}")
-            wait_for_pool("node E", ports["e_rpc"], tx3_hash, processes, timeout=4)
+            send_from_wallet(ports["wallet_rpc"], tx3_binary)
+            wait_for_pool("node v4", ports["v4_rpc"], tx3_hash, processes, timeout=4)
+            wait_for_pool("node C", ports["c_rpc"], tx3_hash, processes, timeout=4)
             if time.monotonic() - sent_at >= 4:
-                raise RuntimeError("Dandelion-disabled compatibility diffusion was delayed")
-            print("Dandelion-disabled immediate-diffusion compatibility path passed")
+                raise RuntimeError("protocol-v4 compatibility diffusion was delayed by a stem embargo")
+            print("negotiated protocol-v4 immediate-diffusion fallback passed")
         except Exception:
             for process in processes:
                 try:
@@ -426,13 +420,15 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bytecoind", required=True, type=pathlib.Path)
+    parser.add_argument("--v4-bytecoind", required=True, type=pathlib.Path)
     parser.add_argument("--walletd", required=True, type=pathlib.Path)
     parser.add_argument("--minerd", required=True, type=pathlib.Path)
     args = parser.parse_args()
     args.bytecoind = args.bytecoind.resolve()
+    args.v4_bytecoind = args.v4_bytecoind.resolve()
     args.walletd = args.walletd.resolve()
     args.minerd = args.minerd.resolve()
-    for binary in (args.bytecoind, args.walletd, args.minerd):
+    for binary in (args.bytecoind, args.v4_bytecoind, args.walletd, args.minerd):
         if not binary.is_file():
             parser.error(f"binary does not exist: {binary}")
     run(args)

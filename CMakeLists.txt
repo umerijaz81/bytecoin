@@ -280,10 +280,13 @@ if(NOT "${SANITIZE}" STREQUAL "fuzzer,address,undefined")
 if(WIN32)
     add_executable(walletd src/main_walletd.cpp src/bytecoin.rc) # .rc works only if referenced directly in add_executable
     add_executable(${CRYPTONOTE_NAME}d src/main_bytecoind.cpp src/bytecoin.rc) # .rc works only if referenced directly in add_executable
+    add_executable(${CRYPTONOTE_NAME}d-v4-test-fixture EXCLUDE_FROM_ALL src/main_bytecoind.cpp src/bytecoin.rc)
 else()
     add_executable(walletd src/main_walletd.cpp)
     add_executable(${CRYPTONOTE_NAME}d src/main_bytecoind.cpp)
+    add_executable(${CRYPTONOTE_NAME}d-v4-test-fixture EXCLUDE_FROM_ALL src/main_bytecoind.cpp)
 endif()
+target_compile_definitions(${CRYPTONOTE_NAME}d-v4-test-fixture PRIVATE BYTECOIN_TEST_P2P_VERSION=4)
 
 add_executable(minerd src/main_miner.cpp)
 add_executable(tests src/main_tests.cpp tests/io.hpp tests/Random.hpp

@@ -80,7 +80,7 @@ Timestamp P2PProtocolBasic::get_local_time() const { return platform::now_unix_t
 
 BasicNodeData P2PProtocolBasic::get_my_node_data() const {
 	BasicNodeData node_data;
-	node_data.version    = P2PProtocolVersion::ANONYMITY_ADDRESSES;
+	node_data.version    = config.p2p_advertised_version;
 	node_data.local_time = get_local_time();
 	node_data.peer_id    = my_unique_number;
 	node_data.my_port    = config.p2p_external_port;

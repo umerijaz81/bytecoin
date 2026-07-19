@@ -99,10 +99,11 @@ re-architecting.
   outbound peer per epoch, per-hop probabilistic fluff, a hop limit, randomized embargo timers and
   immediate loop/disconnect recovery. V4 peers retain diffusion compatibility. The default is on;
   `--disable-dandelion` opts out. Unit/adversarial campaigns run across all supported CI platforms;
-  a real five-daemon/miner/wallet topology test proves stem visibility, reflected-fluff embargo
-  preservation, timeout/disconnect recovery and disabled-mode diffusion. Epoch, embargo and fluff
-  probability are bounded non-consensus operator settings. Real legacy-v4 binary interoperability,
-  public soak and independent review remain. See `docs/Dandelion-Relay.md` for the state machine and limitations.
+  a real four-daemon/miner/wallet topology test proves stem visibility, reflected-fluff embargo
+  preservation, timeout/disconnect recovery and immediate negotiated-v4 diffusion. Its non-default
+  v4 fixture uses the production parser/consensus/socket stack without a runtime downgrade switch.
+  Epoch, embargo and fluff probability are bounded non-consensus operator settings. Historical
+  release-binary coverage, public soak and independent review remain. See `docs/Dandelion-Relay.md`.
 - **Tor/I2P proxy (implemented, validation pending):** `--p2p-proxy=<ip:port>` routes every outbound
   P2P connection through a no-auth SOCKS5 proxy with no direct fallback and a bounded handshake.
   Protocol v6 adds canonical onion/I2P seed, priority, advertised-service and persistent peer-DB

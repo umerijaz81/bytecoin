@@ -41,18 +41,21 @@ proves every pending stem recovers to fluff, every live peer remains eligible, c
 resets reputation, score bounds/decay hold and repeated failures receive materially less traffic. It
 passed on Linux, macOS and Windows in GitHub Actions run `29523898138`.
 
-`tests/network/test_dandelion_process.py` adds a socket-level qualification with five isolated real
-daemon processes plus real wallet and miner processes. It mines spendable testnet funds and proves
+`tests/network/test_dandelion_process.py` adds a socket-level qualification with four isolated real
+daemon processes plus real wallet and miner processes. One non-default daemon target advertises only
+protocol v4 while retaining the production parser, consensus and socket stack; there is no production
+CLI downgrade switch. The test mines spendable testnet funds and proves
 that a transaction reaches the sole outbound stem peer while an inbound observer stays unaware;
 selected-peer fluff reflection does not end the embargo; expiry and selected-peer disconnect both
-recover to diffusion; and `--disable-dandelion` diffuses immediately. It also rejects out-of-range
-policy configuration before startup. The consensus-integration workflow builds all required binaries
-and runs this qualification on Linux.
+recover to diffusion; and after that v5+ stem peer disconnects, the v4 peer receives immediate
+compatibility diffusion without waiting for the embargo. It also rejects out-of-range policy
+configuration before startup. The consensus-integration workflow builds all required binaries and
+runs this qualification on Linux.
 
-The implementation still needs long-running sanitizer fuzzing, public testnet soak, real legacy-v4
-binary interoperability and independent review before release. The delivery score limits repeated
-use of unreliable live peers; it is not Sybil resistance and does not infer operator, subnet or
-autonomous-system identity.
+The implementation still needs long-running sanitizer fuzzing, public testnet soak, a matrix against
+historically released v4 binaries and independent review before release. The delivery score limits
+repeated use of unreliable live peers; it is not Sybil resistance and does not infer operator, subnet
+or autonomous-system identity.
 
 The protocol constants are intentionally conservative defaults, not consensus rules. Changing them
 does not change transaction validity, but wire-version changes must remain negotiated to preserve
