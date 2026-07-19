@@ -47,6 +47,10 @@ public:
 
 class BlockChainState : public BlockChain, private IBlockChainState {
 public:
+	static constexpr size_t MAX_POOL_ZERO_FEE_STANDARD_CALLS = 256;
+	static bool can_accept_zero_fee_standard_call(size_t current_count) {
+		return current_count < MAX_POOL_ZERO_FEE_STANDARD_CALLS;
+	}
 	class Exception : public std::runtime_error {
 	public:
 		using std::runtime_error::runtime_error;
@@ -176,6 +180,7 @@ private:
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_standard_state_tx;
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_program_tx;
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_issuance_tx;
+	size_t m_memory_state_zero_fee_standard_calls = 0;
 	std::set<std::pair<Amount, Hash>> m_memory_state_fee_tx;
 	size_t m_memory_state_total_size = 0;
 

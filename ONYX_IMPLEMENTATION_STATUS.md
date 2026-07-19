@@ -119,8 +119,10 @@ can be loaded from a size-bounded protected file; POSIX group/other access is re
 process-argument option is rejected, and TLS termination remains mandatory for non-local exposure.
 The secret-bearing hardware-wallet emulator is excluded from default/release source lists, guarded by
 an explicit non-release build option, rejected at runtime in normal walletd, and checked by artifact
-marker scanning in CI. Zero-fee standard-call pool policy and supply-audit caching from the latest
-static review remain separate hardening work.
+marker scanning in CI. The mempool admits at most 256 zero-fee standard-program calls and checks that
+cap before Halo2 verification; insertion, eviction, removal and reorganization bookkeeping preserve
+the bound. This is relay/admission policy, not block consensus. Supply-audit caching from the latest
+static review remains separate hardening work.
 
 ### Release readiness
 

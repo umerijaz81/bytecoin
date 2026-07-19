@@ -755,6 +755,7 @@ void BlockChainState::on_reorganization(
 		m_memory_state_onyx_standard_state_tx.clear();
 		m_memory_state_onyx_program_tx.clear();
 		m_memory_state_onyx_issuance_tx.clear();
+		m_memory_state_zero_fee_standard_calls = 0;
 		m_memory_state_fee_tx.clear();
 		m_memory_state_total_size = 0;
 		for (auto &&msf : old_memory_state_tx) {
@@ -813,6 +814,13 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	    m_config.paranoid_checks || check_sigs, true);
 	const Amount my_fee_per_byte = my_fee / my_size;
 #ifdef onyx_USE_ZK
+	const bool is_zero_fee_standard_call = tx.version == m_currency.onyx_transaction_version &&
+	                                           tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
+	// Enforce the cheap admission bound before proof verification. Once full, unauthenticated callers
+	// cannot make the node spend more Halo2 verification CPU or pool memory on this zero-fee class.
+	if (is_zero_fee_standard_call &&
+	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
+		return false;
 	zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
 	std::vector<std::array<uint8_t, 32>> onyx_standard_state_keys;
 	std::array<uint8_t, 32> onyx_program_id{};
@@ -997,6 +1005,10 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 #endif
 	// insert all before throw
 	invariant(all_inserted, "memory_state_fee_tx empty");
+#ifdef onyx_USE_ZK
+	if (is_zero_fee_standard_call)
+		++m_memory_state_zero_fee_standard_calls;
+#endif
 	m_memory_state_total_size += my_size;
 	while (m_memory_state_total_size > m_max_pool_size) {
 		invariant(!m_memory_state_fee_tx.empty(), "memory_state_fee_tx empty");
@@ -1073,6 +1085,9 @@ void BlockChainState::remove_from_pool(Hash tid) {
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL) {
+		invariant(m_memory_state_zero_fee_standard_calls != 0,
+		    "zero-fee standard-call pool counter underflow");
+		--m_memory_state_zero_fee_standard_calls;
 		zk::Halo2ProofSystem::VerifiedTransferDelta delta;
 		std::vector<std::array<uint8_t, 32>> state_keys;
 		invariant(zk::Halo2ProofSystem::extract_authenticated_standard_program_delta(

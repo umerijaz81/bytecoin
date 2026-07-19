@@ -66,6 +66,15 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;
 
+	// Pool policy is intentionally non-consensus, but its exact boundary must remain deterministic
+	// across nodes and reject before expensive standard-program proof verification.
+	invariant(BlockChainState::can_accept_zero_fee_standard_call(
+	              BlockChainState::MAX_POOL_ZERO_FEE_STANDARD_CALLS - 1),
+	    "zero-fee standard-call pool rejected below its cap");
+	invariant(!BlockChainState::can_accept_zero_fee_standard_call(
+	              BlockChainState::MAX_POOL_ZERO_FEE_STANDARD_CALLS),
+	    "zero-fee standard-call pool accepted at its cap");
+
 	// 1. Zero-mixin / undersized ring MUST be rejected under Jade (the loophole is closed).
 	{
 		const Transaction tx = build_tx(currency.jade_transaction_version, 1);
