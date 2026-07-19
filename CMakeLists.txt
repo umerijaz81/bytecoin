@@ -14,6 +14,7 @@ message("SANITIZE adds clang sanitizer options. Examples thread or address,undef
 option(BETTER_DEBUG "Disables optimizations. We do not use standard debug/realease configurations because they change too much" OFF)
 option(CRYPTO128 "Uses faster crypto" OFF)
 option(REPRODUCIBLE_BUILD "Normalize build paths and nondeterministic linker metadata" OFF)
+option(BYTECOIN_HARDWARE_EMULATOR "Build the secret-bearing hardware-wallet test emulator (never enable for release artifacts)" OFF)
 set(BYTECOIN_OPENSSL_ROOT "" CACHE PATH "OpenSSL prefix containing include/ and platform libraries")
 # Onyx (V6) zero-knowledge backend (vendor/onyx-zk, Rust/Halo2). OFF by default so the C++-only
 # build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
@@ -143,6 +144,12 @@ file(GLOB SRC_CORE src/Core/*.cpp src/Core/*.hpp
         src/CryptoNote.hpp src/CryptoNote.cpp
         src/rpc_api.hpp src/rpc_api.cpp
         vendor/hmac/*.h vendor/hmac/*.c)
+if(BYTECOIN_HARDWARE_EMULATOR)
+    add_definitions(-DBYTECOIN_HARDWARE_EMULATOR=1)
+    message(WARNING "Hardware-wallet emulator enabled: resulting binaries are NOT release artifacts")
+else()
+    list(FILTER SRC_CORE EXCLUDE REGEX "/hardware/Emulator\\.(cpp|hpp)$")
+endif()
 file(GLOB SRC_HTTP src/http/*.cpp src/http/*.hpp)
 file(GLOB SRC_PLATFORM
         src/platform/ExclusiveLock.cpp src/platform/ExclusiveLock.hpp

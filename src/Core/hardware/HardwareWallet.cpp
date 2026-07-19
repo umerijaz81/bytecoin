@@ -11,7 +11,6 @@
 #include "crypto/crypto_helpers.hpp"
 
 #if !defined(__EMSCRIPTEN__)
-#include "Emulator.hpp"
 #include "Ledger.hpp"
 #if !platform_USE_QT
 #include "Trezor.hpp"

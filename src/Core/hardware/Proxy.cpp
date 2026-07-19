@@ -3,7 +3,7 @@
 
 #include "Proxy.hpp"
 #include <iostream>
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && defined(BYTECOIN_HARDWARE_EMULATOR)
 #include "Emulator.hpp"
 #endif
 #include "common/exception.hpp"
@@ -11,13 +11,14 @@
 using namespace crypto;
 using namespace cn::hardware;
 
+#ifdef BYTECOIN_HARDWARE_EMULATOR
 static std::string debug_mnemonic;
-
 void Proxy::debug_set_mnemonic(const std::string &mnemonic) { debug_mnemonic = mnemonic; }
+#endif
 
 Proxy::Proxy(std::unique_ptr<HardwareWallet> &&proxy) : m_proxy(std::move(proxy)) {
 	m_wallet_key = m_proxy->get_wallet_key();
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && defined(BYTECOIN_HARDWARE_EMULATOR)
 	// Now we create emulator
 	try {
 		if (!debug_mnemonic.empty()) {

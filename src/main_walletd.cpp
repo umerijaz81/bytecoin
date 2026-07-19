@@ -373,8 +373,14 @@ int main(int argc, const char *argv[]) try {
 	Config config(cmd);
 	Currency currency(config);
 	const std::string coin_folder = config.get_data_folder();
-	if (const char *pa = cmd.get("--emulate-hardware-wallet"))  // Undocumented, used for debugging
+	if (const char *pa = cmd.get("--emulate-hardware-wallet")) {  // Undocumented, test builds only
+#ifdef BYTECOIN_HARDWARE_EMULATOR
 		hardware::Proxy::debug_set_mnemonic(pa);
+#else
+		(void)pa;
+		wrong_args("--emulate-hardware-wallet is unavailable in release builds");
+#endif
+	}
 
 	boost::optional<std::string> walletd_http_auth = read_walletd_http_auth(cmd);
 

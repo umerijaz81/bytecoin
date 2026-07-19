@@ -203,6 +203,10 @@ $bytecoin/build> cmake -DUSE_SQLITE=1 ..
 $bytecoin/build> time make -j8
 ```
 
+`BYTECOIN_HARDWARE_EMULATOR` is `OFF` by default and must remain off for every distributable build.
+Enabling it compiles a secret-bearing validation emulator into walletd and makes the result explicitly
+ineligible for release. CI scans normal walletd artifacts for emulator-only secret markers.
+
 ## Building on 32-bit x86 platforms, iOS, Android and other ARM platforms
 
 Bytecoin works on 32-bit systems if SQLite is used instead of LMDB (we've experienced lots of problems building and running with lmdb in 32-bit compatibility mode, especially on iOS).

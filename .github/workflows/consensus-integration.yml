@@ -71,6 +71,8 @@ jobs:
         run: python3 tests/http/test_http_limits_process.py --bytecoind bin/bytecoind
       - name: Enforce wallet authentication secret handling
         run: python3 tests/security/test_wallet_auth_process.py --walletd bin/walletd
+      - name: Exclude hardware emulator from release-capable walletd
+        run: python3 tests/security/test_release_emulator_absence.py --walletd bin/walletd
       - name: Qualify Dandelion relay across real daemon sockets
         run: >-
           python3 tests/network/test_dandelion_process.py

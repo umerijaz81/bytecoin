@@ -117,8 +117,10 @@ Unhandled transport and JSON-RPC exceptions are logged generically and return st
 instead of internal exception strings. Wallet RPC credentials use content-independent comparison and
 can be loaded from a size-bounded protected file; POSIX group/other access is rejected, the legacy
 process-argument option is rejected, and TLS termination remains mandatory for non-local exposure.
-Release-only hardware-emulator removal, zero-fee standard-call pool policy and supply-audit caching
-from the latest static review remain separate hardening work.
+The secret-bearing hardware-wallet emulator is excluded from default/release source lists, guarded by
+an explicit non-release build option, rejected at runtime in normal walletd, and checked by artifact
+marker scanning in CI. Zero-fee standard-call pool policy and supply-audit caching from the latest
+static review remain separate hardening work.
 
 ### Release readiness
 

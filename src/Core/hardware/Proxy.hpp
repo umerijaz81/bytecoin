@@ -57,7 +57,9 @@ public:
 
 	void proof_start(const common::BinaryArray &data) override;
 
+#ifdef BYTECOIN_HARDWARE_EMULATOR
 	static void debug_set_mnemonic(const std::string &mnemonic);
+#endif
 };
 
 }}  // namespace cn::hardware
