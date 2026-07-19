@@ -163,7 +163,7 @@ bool WalletNode::on_json_rpc(
 		}
 		method_found = true;
 		if (!m_config.walletd_authorization.empty() &&
-		    request.r.basic_authorization != m_config.walletd_authorization) {
+		    !common::constant_time_equal(request.r.basic_authorization, m_config.walletd_authorization)) {
 			response.r.headers.push_back({"WWW-Authenticate", "Basic realm=\"Wallet\", charset=\"UTF-8\""});
 			response.r.status = 401;
 			return true;

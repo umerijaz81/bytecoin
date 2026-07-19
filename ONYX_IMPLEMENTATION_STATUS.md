@@ -114,9 +114,11 @@ proves 413 rejection, streaming-header cutoff, duplicate-length rejection, conne
 accept recovery, slow-header eviction and daemon liveness. These are transport/resource limits, not
 consensus rules.
 Unhandled transport and JSON-RPC exceptions are logged generically and return stable generic errors
-instead of internal exception strings. Authentication transport, release-only hardware-emulator
-removal, zero-fee standard-call pool policy and supply-audit caching from the latest static review
-remain separate hardening work.
+instead of internal exception strings. Wallet RPC credentials use content-independent comparison and
+can be loaded from a size-bounded protected file; POSIX group/other access is rejected, the legacy
+process-argument option is rejected, and TLS termination remains mandatory for non-local exposure.
+Release-only hardware-emulator removal, zero-fee standard-call pool policy and supply-audit caching
+from the latest static review remain separate hardening work.
 
 ### Release readiness
 

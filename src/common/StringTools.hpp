@@ -40,6 +40,17 @@ std::string pod_to_hex(const T &s) {
 
 bool starts_with(const std::string &str, const std::string &str2);
 bool ends_with(const std::string &str, const std::string &str2);
+// Compares every byte without content-dependent early exit. Length remains observable.
+inline bool constant_time_equal(const std::string &left, const std::string &right) {
+	const size_t maximum_size = left.size() > right.size() ? left.size() : right.size();
+	size_t difference         = left.size() ^ right.size();
+	for (size_t i = 0; i != maximum_size; ++i) {
+		const uint8_t left_byte  = i < left.size() ? static_cast<uint8_t>(left[i]) : 0;
+		const uint8_t right_byte = i < right.size() ? static_cast<uint8_t>(right[i]) : 0;
+		difference |= left_byte ^ right_byte;
+	}
+	return difference == 0;
+}
 
 inline bool split_string_helper(const std::string &str, size_t pos, const std::string &, std::string &head) {
 	head = str.substr(pos);

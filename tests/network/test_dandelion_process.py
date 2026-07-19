@@ -185,6 +185,9 @@ def create_wallet(walletd, root):
 
 
 def launch_wallet(walletd, root, wallet_file, wallet_data, wallet_port, origin_rpc):
+    auth_file = root / "walletd.auth"
+    auth_file.write_text(WALLET_AUTH + "\n", encoding="utf-8")
+    auth_file.chmod(0o600)
     process = Process(
         "walletd",
         [
@@ -193,7 +196,7 @@ def launch_wallet(walletd, root, wallet_file, wallet_data, wallet_port, origin_r
             f"--data-folder={wallet_data}",
             f"--wallet-file={wallet_file}",
             f"--wallet-password={WALLET_PASSWORD}",
-            f"--walletd-http-auth={WALLET_AUTH}",
+            f"--walletd-http-auth-file={auth_file}",
             f"--walletd-bind-address=127.0.0.1:{wallet_port}",
             f"--bytecoind-remote-address=127.0.0.1:{origin_rpc}",
         ],

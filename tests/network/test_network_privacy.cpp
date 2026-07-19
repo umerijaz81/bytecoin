@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include "common/StringTools.hpp"
 #include "p2p/Dandelion.hpp"
 #include "p2p/Socks5.hpp"
 
@@ -27,6 +28,9 @@ void require_rejected(Function function, const char *message) {
 }
 
 void test_dandelion_policy() {
+	require(common::constant_time_equal("user:secret", "user:secret"), "constant-time equality rejected equal input");
+	require(!common::constant_time_equal("user:secret", "user:secreu"), "constant-time equality accepted mismatch");
+	require(!common::constant_time_equal("user:secret", "user:secret-long"), "constant-time equality accepted length mismatch");
 	using cn::p2p::DandelionPolicy;
 	require(DandelionPolicy::should_fluff(false, 0, 20, 10, 99), "disabled relay did not fluff");
 	require(DandelionPolicy::should_fluff(true, 20, 20, 0, 99), "hop limit did not fluff");

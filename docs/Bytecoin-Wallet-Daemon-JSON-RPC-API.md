@@ -17,6 +17,13 @@ The built-in HTTP server accepts at most 128 simultaneous clients, 32 KiB of req
 closed fail-safe. Clients have 5 seconds to complete headers and 30 seconds to complete an allowed
 body. These limits apply before JSON-RPC dispatch. Keep walletd bound to localhost unless it is
 protected by an authenticated TLS reverse proxy.
+
+For unattended operation, store a single `user:password` credential in a file readable only by the
+walletd account and pass `--walletd-http-auth-file=<path>`. On POSIX systems walletd rejects files
+with any group/other permission bits; `chmod 600 <path>` is the usual setting. The former
+`--walletd-http-auth=<user:password>` option is rejected because command-line arguments can be read
+from process listings and shell history. HTTP Basic authentication does not encrypt traffic:
+keep walletd on localhost or place it behind an authenticated TLS-terminating reverse proxy.
 where:
 * `<ip>` is the IPv4 address of the `walletd` service. If the service is on a local machine, use `127.0.0.1` instead of `localhost`.
 * `<port>` is TCP port of `walletd`. By default the service is bound to `8070`.

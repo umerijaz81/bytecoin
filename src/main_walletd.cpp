@@ -4,6 +4,10 @@
 #include <boost/algorithm/string.hpp>
 #include <future>
 #include <random>
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include "Core/Config.hpp"
 #include "Core/Node.hpp"
 #include "Core/WalletHDsqlite.hpp"
@@ -16,6 +20,7 @@
 #include "logging/ConsoleLogger.hpp"
 #include "logging/LoggerManager.hpp"
 #include "platform/ExclusiveLock.hpp"
+#include "platform/Files.hpp"
 #include "platform/Network.hpp"
 #include "platform/PathTools.hpp"
 #include "platform/Time.hpp"
@@ -53,6 +58,7 @@ Running with selected wallet:
   --secrets-via-api                     Allow getting secrets using 'get_wallet_info' json RPC method.
   --launch-after-command                Launch daemon in case of using --create-wallet, --set-password, and --import-view-key flags.
   --walletd-bind-address=<ip:port>      IP and port for walletd RPC API [default: 127.0.0.1:8070].
+  --walletd-http-auth-file=<file-path>  Read walletd HTTP Basic <user>:<password> from a protected file.
   --data-folder=<folder-path>           Folder for wallet cache, blockchain, logs and peer DB [default: %appdata%/bytecoin].
   --bytecoind-remote-address=<address>  Connect to remote bytecoind suppressing running built-in daemon.
                                         Use <ip:port> or http://<ip:port> format to connect to a daemon via HTTP.
@@ -213,6 +219,45 @@ std::string read_non_empty(const char *option, common::CommandLine &cmd) {
 	return result;
 }
 
+boost::optional<std::string> read_walletd_http_auth(common::CommandLine &cmd) {
+	const char *legacy_value = cmd.get("--walletd-http-auth");
+	const char *file_value   = cmd.get("--walletd-http-auth-file");
+	if (legacy_value)
+		wrong_args("--walletd-http-auth was removed because it exposes credentials in process arguments; use --walletd-http-auth-file");
+	if (!file_value)
+		return boost::none;
+	const std::string path = boost::algorithm::trim_copy(std::string(file_value));
+	if (path.empty())
+		wrong_args("--walletd-http-auth-file requires a non-empty path");
+#ifndef _WIN32
+	struct stat info {};
+	const std::string expanded_path = platform::expand_path(path);
+	if (::stat(expanded_path.c_str(), &info) != 0 || !S_ISREG(info.st_mode))
+		wrong_args("Cannot stat walletd HTTP authorization file or it is not a regular file");
+	if ((info.st_mode & (S_IRWXG | S_IRWXO)) != 0)
+		wrong_args("walletd HTTP authorization file must not be accessible by group or other users (use chmod 600)");
+	if (info.st_uid != ::geteuid())
+		wrong_args("walletd HTTP authorization file must be owned by the walletd user");
+#endif
+	std::string credential;
+	try {
+		platform::FileStream file(path, platform::O_READ_EXISTING);
+		const uint64_t file_size = file.seek(0, SEEK_END);
+		if (file_size > 4096)
+			wrong_args("walletd HTTP authorization file exceeds 4096 bytes");
+		file.seek(0, SEEK_SET);
+		credential.resize(static_cast<size_t>(file_size));
+		if (!credential.empty())
+			file.read(&credential[0], credential.size());
+	} catch (const Wallet::Exception &) {
+		throw;
+	} catch (const std::exception &) {
+		wrong_args("Cannot read walletd HTTP authorization file");
+	}
+	credential = boost::algorithm::trim_copy(credential);
+	return credential;
+}
+
 std::unique_ptr<Wallet> open_wallet(const Currency &currency, logging::ILogger &log, const std::string &wallet_file,
     boost::optional<std::string> *password, bool readonly, common::console::UnicodeConsoleSetup &console_setup) {
 	if (!*password)
@@ -331,10 +376,7 @@ int main(int argc, const char *argv[]) try {
 	if (const char *pa = cmd.get("--emulate-hardware-wallet"))  // Undocumented, used for debugging
 		hardware::Proxy::debug_set_mnemonic(pa);
 
-	// --wallet-password and --walletd-http-auth are insecure but important for testing
-	boost::optional<std::string> walletd_http_auth;
-	if (const char *pa = cmd.get("--walletd-http-auth"))  // Undocumented, used for debugging
-		walletd_http_auth = boost::algorithm::trim_copy(std::string(pa));
+	boost::optional<std::string> walletd_http_auth = read_walletd_http_auth(cmd);
 
 	logging::LoggerManager logManagerWalletNode;
 	logManagerWalletNode.configure_default(config.get_data_folder("logs"), "walletd-", cn::app_version());

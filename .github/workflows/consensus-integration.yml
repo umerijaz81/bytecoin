@@ -11,12 +11,15 @@ on:
       - "src/Core/Config.*"
       - "src/Core/Node*"
       - "src/common/Ipv4Address.*"
+      - "src/common/StringTools.*"
       - "src/crypto/RandomX.*"
       - "src/p2p/**"
       - "src/main_miner.cpp"
+      - "src/main_walletd.cpp"
       - "tests/blockchain/**"
       - "tests/miner/**"
       - "tests/network/**"
+      - "tests/security/**"
       - "vendor/randomx/**"
   pull_request:
     paths:
@@ -66,6 +69,8 @@ jobs:
           --bytecoind bin/bytecoind
       - name: Enforce HTTP request and connection resource limits
         run: python3 tests/http/test_http_limits_process.py --bytecoind bin/bytecoind
+      - name: Enforce wallet authentication secret handling
+        run: python3 tests/security/test_wallet_auth_process.py --walletd bin/walletd
       - name: Qualify Dandelion relay across real daemon sockets
         run: >-
           python3 tests/network/test_dandelion_process.py
