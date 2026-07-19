@@ -113,9 +113,10 @@ accepting as soon as a slot is released. The JSON parser's existing
 proves 413 rejection, streaming-header cutoff, duplicate-length rejection, connection-cap blocking,
 accept recovery, slow-header eviction and daemon liveness. These are transport/resource limits, not
 consensus rules.
-Authentication transport, generic error redaction, release-only hardware-emulator removal, zero-fee
-standard-call pool policy and supply-audit caching from the latest static review remain separate
-hardening work.
+Unhandled transport and JSON-RPC exceptions are logged generically and return stable generic errors
+instead of internal exception strings. Authentication transport, release-only hardware-emulator
+removal, zero-fee standard-call pool policy and supply-audit caching from the latest static review
+remain separate hardening work.
 
 ### Release readiness
 

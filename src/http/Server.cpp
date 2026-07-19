@@ -220,9 +220,10 @@ void Server::on_client_handle_request(Client *who, RequestBody &&request) {
 		response.r.headers.push_back({"WWW-Authenticate", "Basic realm=\"" + e.realm + "\", charset=\"UTF-8\""});
 		response.r.status = 401;
 	} catch (const std::exception &e) {
-		std::cout << "HTTP request leads to throw/catch, what=" << common::what(e) << std::endl;
+		(void)e;
+		std::cout << "HTTP request rejected after internal exception" << std::endl;
 		response.r.status = 422;
-		response.set_body(common::what(e));
+		response.set_body(std::string{"invalid request"});
 	} catch (...) {
 		std::cout << "HTTP request leads to throw/catch" << std::endl;
 		response.r.status = 422;

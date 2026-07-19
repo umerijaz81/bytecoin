@@ -186,8 +186,8 @@ void Node::advance_long_poll() {
 				last_http_response.set_body(json_rpc::create_response_body(gbt_res, cli.original_json_request));
 			} catch (const json_rpc::Error &err) {
 				last_http_response.set_body(json_rpc::create_error_response_body(err, cli.original_json_request));
-			} catch (const std::exception &e) {
-				json_rpc::Error json_err(json_rpc::INTERNAL_ERROR, common::what(e));
+			} catch (const std::exception &) {
+				json_rpc::Error json_err(json_rpc::INTERNAL_ERROR);
 				last_http_response.set_body(json_rpc::create_error_response_body(json_err, cli.original_json_request));
 			}
 		}

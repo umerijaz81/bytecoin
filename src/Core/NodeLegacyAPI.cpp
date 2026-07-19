@@ -43,8 +43,8 @@ bool Node::on_json_rpc(http::Client *who, http::RequestBody &&request, http::Res
 		response.set_body(std::move(response_body));
 	} catch (const json_rpc::Error &err) {
 		response.set_body(json_rpc::create_error_response_body(err, jid, nas));
-	} catch (const std::exception &e) {
-		json_rpc::Error json_err(json_rpc::INTERNAL_ERROR, common::what(e));
+	} catch (const std::exception &) {
+		json_rpc::Error json_err(json_rpc::INTERNAL_ERROR);
 		response.set_body(json_rpc::create_error_response_body(json_err, jid, nas));
 	}
 	response.r.status = 200;
@@ -75,8 +75,8 @@ bool Node::on_binary_rpc(http::Client *who, http::RequestBody &&request, http::R
 		response.set_body(std::move(response_body));
 	} catch (const json_rpc::Error &err) {
 		response.set_body(json_rpc::create_binary_response_error_body(err, jid));
-	} catch (const std::exception &e) {
-		json_rpc::Error json_err(json_rpc::INTERNAL_ERROR, common::what(e));
+	} catch (const std::exception &) {
+		json_rpc::Error json_err(json_rpc::INTERNAL_ERROR);
 		response.set_body(json_rpc::create_binary_response_error_body(json_err, jid));
 	}
 	response.r.status = 200;

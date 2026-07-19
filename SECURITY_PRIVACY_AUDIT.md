@@ -29,6 +29,7 @@ layers (`src/Core/Node*.cpp`, `WalletSync.cpp`, `Archive.cpp`, `Config.cpp`).
 | Key-image subgroup check | `src/crypto/crypto.cpp:133`; `BlockChainState.cpp:172` | Closes the historical CryptoNote small-subgroup key-image hole. Legacy malicious key images are listed in `crypto.cpp:136-159`. |
 | Safe local bind defaults | `src/Core/Config.cpp:67,70` | `bytecoind` and `walletd` RPC bind to `127.0.0.1` by default. |
 | Bounded HTTP/JSON RPC input | `src/http/Client.*`, `RequestParser.*`, `Server.*`, `src/common/JsonValue.*` | 32 KiB headers, 4 MiB bodies, one unambiguous length, 128 live clients, 5-second header / 30-second body deadlines and 100 nesting levels; raw-socket process qualification is CI-gated. |
+| Generic RPC internal errors | `src/http/Server.cpp`, `src/Core/Node*.cpp`, `WalletNode*.cpp` | Unhandled exceptions remain locally observable but remote responses contain only stable generic text, preventing path/state/parser-detail disclosure. |
 | Multicast disabled on mainnet | `src/Core/Config.cpp:63` | Prevents LAN peer-enumeration deanonymization. |
 
 No coin-forging, signature-forging, or double-spend vector was found. **All findings below

@@ -106,13 +106,13 @@ void WalletNodeExt::open_wallet_cache(const http::RequestBody &raw_request, cons
                 last_http_response.set_body(json_rpc::create_response_body(response, raw_js_request));
                 http::Server::write(ext_who, std::move(last_http_response));
             }
-        } catch (const std::exception &ex) {
+        } catch (const std::exception &) {
             if (ext_who) {
                 http::ResponseBody last_http_response(raw_request.r);
                 last_http_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
                 last_http_response.r.status = 200;
                 last_http_response.set_body(json_rpc::create_error_response_body(
-                    json_rpc::Error(json_rpc::INTERNAL_ERROR, common::what(ex)), raw_js_request));
+                    json_rpc::Error(json_rpc::INTERNAL_ERROR), raw_js_request));
                 http::Server::write(ext_who, std::move(last_http_response));
             }
         }
