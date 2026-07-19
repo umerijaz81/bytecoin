@@ -3,9 +3,15 @@
 By default, Bytecoin Node Service (`bytecoind`, Node Daemon) is bound only to `127.0.0.1` (`localhost`) interface, so it can be accessed only from the same computer it runs on. This is done to reduce number of external attack vectors. `bytecoind` itself has access to only public information, but it sometimes runs in the same process with `walletd`, which has access to wallet keys. To bind `bytecoind` to all network interfaces, use `--bytecoind-bind-address=0.0.0.0:8081` command line argument (specifying port is mandatory).
 
 To make a JSON PRC request to the `bytecoind` you should make an HTTP POST request to an entry point:
+
 ```
 http://<ip>:<port>/json_rpc
 ```
+
+The built-in HTTP server accepts at most 128 simultaneous clients, 32 KiB of request headers and a
+4 MiB request body. Larger declared bodies receive HTTP 413; oversized or ambiguous headers are
+closed fail-safe. Clients have 5 seconds to complete headers and 30 seconds to complete an allowed
+body. These limits apply before JSON-RPC dispatch.
 where:
 * `<ip>` is IPv4 address of `bytecoind` service. If the service is on local machine, use `127.0.0.1` instead of `localhost`.
 * `<port>` is TCP port of `bytecoind`. By default the service is bound to `8081`.

@@ -14,8 +14,13 @@ Client::Client()
     : buffer(8192)
     , receiving_body(false)
     , waiting_write_response(false)
+	, request_timer(std::bind(&Client::on_request_timeout, this))
     , sock([this](bool, bool) { advance_state(true); }, std::bind(&Client::on_disconnect, this))
     , keep_alive(true) {}
+
+void Client::start_request_timeout() { request_timer.once(HEADER_TIMEOUT_SECONDS); }
+
+void Client::on_request_timeout() { sock.shutdown_both(); }
 
 void Client::disconnect() {
 	clear();
@@ -23,6 +28,7 @@ void Client::disconnect() {
 }
 
 void Client::clear() {
+	request_timer.cancel();
 	waiting_write_response = false;
 	keep_alive             = true;
 	parser.reset();
@@ -50,10 +56,12 @@ bool Client::read_next(RequestBody &req) {
 	parser.reset();
 	receiving_body         = false;
 	waiting_write_response = true;
+	request_timer.cancel();
 	return true;
 }
 
 void Client::write() {
+	const bool had_response = !responses.empty();
 	while (!responses.empty()) {
 		responses.front().copy_to(sock);
 		if (!responses.front().empty())
@@ -64,6 +72,8 @@ void Client::write() {
 		sock.shutdown_both();
 		keep_alive = true;
 	}
+	if (had_response && responses.empty() && !waiting_write_response && keep_alive)
+		start_request_timeout();
 }
 
 void Client::write(ResponseBody &&response) {
@@ -96,8 +106,19 @@ void Client::advance_state(bool called_from_runloop) {
 			sock.shutdown_both();  // Will potentially be called many times
 			return;
 		}
+		if (request.has_content_length() && request.content_length > MAX_REQUEST_BODY_SIZE) {
+			request_timer.cancel();
+			ResponseBody response(request);
+			response.r.status     = 413;
+			response.r.keep_alive = false;
+			response.set_body(std::string{"request body too large"});
+			waiting_write_response = true;
+			write(std::move(response));
+			return;
+		}
 		receiving_body = true;
 		receiving_body_stream.clear();
+		request_timer.once(BODY_TIMEOUT_SECONDS);
 	}
 	while (true) {
 		size_t expect_count = request.has_content_length() ? request.content_length : 0;

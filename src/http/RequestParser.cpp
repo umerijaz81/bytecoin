@@ -16,8 +16,9 @@ using namespace http;
 RequestParser::RequestParser() : state_(method_start) {}
 
 void RequestParser::reset() {
-	state_  = method_start;
-	lowcase = Header{};
+	state_       = method_start;
+	lowcase      = Header{};
+	parsed_size_ = 0;
 }
 
 RequestParser::state RequestParser::consume(RequestHeader &req, char input) {
@@ -160,6 +161,8 @@ RequestParser::state RequestParser::consume(RequestHeader &req, char input) {
 
 bool RequestParser::process_ready_header(RequestHeader &req) {
 	if (lowcase.name == "content-length") {
+		if (req.has_content_length())
+			return false;
 		try {
 			req.content_length = common::integer_cast<decltype(req.content_length)>(lowcase.value);  // std::stoull
 			req.headers.pop_back();

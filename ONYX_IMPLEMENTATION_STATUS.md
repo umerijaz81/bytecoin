@@ -103,6 +103,20 @@ unreachable until the release gates below are independently satisfied.
    value is not an implementation: its algorithm/dependency selection, key migration, address/public-key
    commitments, proof/signature sizes, hybrid downgrade rules, vectors and audit remain required.
 
+### Cross-cutting RPC hardening
+
+The shared bytecoind/walletd HTTP server now rejects request headers above 32 KiB, conflicting
+`Content-Length` headers and declared bodies above 4 MiB before body allocation. It bounds live
+clients at 128, requires headers within 5 seconds and an allowed body within 30 seconds, and resumes
+accepting as soon as a slot is released. The JSON parser's existing
+100-level array/object nesting bound is named and boundary-tested. A raw-socket real-daemon CI test
+proves 413 rejection, streaming-header cutoff, duplicate-length rejection, connection-cap blocking,
+accept recovery, slow-header eviction and daemon liveness. These are transport/resource limits, not
+consensus rules.
+Authentication transport, generic error redaction, release-only hardware-emulator removal, zero-fee
+standard-call pool policy and supply-audit caching from the latest static review remain separate
+hardening work.
+
 ### Release readiness
 
 Deterministic tracked-source archives, SPDX 2.3 SBOM generation, immutable dependency/vendored-tree

@@ -64,6 +64,8 @@ jobs:
           python3 tests/miner/test_corrupt_template_process.py
           --minerd bin/minerd
           --bytecoind bin/bytecoind
+      - name: Enforce HTTP request and connection resource limits
+        run: python3 tests/http/test_http_limits_process.py --bytecoind bin/bytecoind
       - name: Qualify Dandelion relay across real daemon sockets
         run: >-
           python3 tests/network/test_dandelion_process.py

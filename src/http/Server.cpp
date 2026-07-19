@@ -173,7 +173,7 @@ void Server::on_client_handler(Client *who) {
 void Server::accept_all() {
 	if (!la_socket)
 		return;
-	while (true) {  // clients.size() < max_incoming_connections
+	while (clients.size() < MAX_INCOMING_CONNECTIONS) {
 		if (!next_client) {
 			next_client = std::make_unique<Client>();
 			// We do not know Client * in constructor, so set handlers afterwards
@@ -185,6 +185,7 @@ void Server::accept_all() {
 			return;
 		auto who     = next_client.get();
 		clients[who] = std::move(next_client);
+		who->start_request_timeout();
 		//        std::cout << "HTTP Client accepted=" << cid << " addr=" << addr << std::endl;
 	}
 }
@@ -200,6 +201,10 @@ void Server::on_client_disconnected(Client *who) {
 	auto cli = std::move(cit->second);
 	cit      = clients.erase(cit);
 	d_handler(who);
+#ifndef __EMSCRIPTEN__
+	if (!next_client)
+		accept_all();
+#endif
 }
 
 void Server::on_client_handle_request(Client *who, RequestBody &&request) {

@@ -7,9 +7,16 @@ The Bytecoin Wallet Daemon (`walletd`, Bytecoin RPC Wallet) is designed to manag
 By default, the Bytecoin Wallet Daemon is only bound to `127.0.0.1` (`localhost`) interface, so it can only be reached from the same computer it runs on. To bind it to all interfaces, use `--walletd-bind-address=0.0.0.0:8070` command line argument (note that specifying port is mandatory).
 
 To make a JSON PRC request to the `walletd` you should make an HTTP POST request to an entry point:
+
 ```
 http://<ip>:<port>/json_rpc
 ```
+
+The built-in HTTP server accepts at most 128 simultaneous clients, 32 KiB of request headers and a
+4 MiB request body. Larger declared bodies receive HTTP 413; oversized or ambiguous headers are
+closed fail-safe. Clients have 5 seconds to complete headers and 30 seconds to complete an allowed
+body. These limits apply before JSON-RPC dispatch. Keep walletd bound to localhost unless it is
+protected by an authenticated TLS reverse proxy.
 where:
 * `<ip>` is the IPv4 address of the `walletd` service. If the service is on a local machine, use `127.0.0.1` instead of `localhost`.
 * `<port>` is TCP port of `walletd`. By default the service is bound to `8070`.

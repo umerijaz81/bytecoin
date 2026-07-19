@@ -920,7 +920,7 @@ void JsonValue::destruct_value() {
 }
 
 void JsonValue::read_array(size_t level, StreamContext &ctx) {
-	if (level > 100)
+	if (level > MAX_NESTING_DEPTH)
 		ctx.throw_error("Depth too big");
 	JsonValue::Array value;
 	char c = ctx.peek_non_ws_char();
@@ -1020,7 +1020,7 @@ void JsonValue::read_number(StreamContext &ctx, char first_char) {
 }
 
 void JsonValue::read_object(size_t level, StreamContext &ctx) {
-	if (level > 100)
+	if (level > MAX_NESTING_DEPTH)
 		ctx.throw_error("Depth too big");
 	char c = ctx.read_non_ws_char();
 	JsonValue::Object value;

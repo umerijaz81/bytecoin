@@ -54,6 +54,19 @@ static std::map<std::string, int64_t> cases2{
 };
 
 void test_json(const std::string &test_vectors_folder) {
+	const auto parses = [](const std::string &source) {
+		try {
+			common::JsonValue::from_string(source);
+			return true;
+		} catch (const std::exception &) {
+			return false;
+		}
+	};
+	const std::string maximum_depth = std::string(common::JsonValue::MAX_NESTING_DEPTH, '[') + "0" +
+	                                  std::string(common::JsonValue::MAX_NESTING_DEPTH, ']');
+	invariant(parses(maximum_depth), "JSON maximum nesting depth was rejected");
+	invariant(!parses("[" + maximum_depth + "]"), "JSON excessive nesting depth was accepted");
+
 	for (const auto &ca : cases1) {
 		common::JsonValue jv;
 		jv.set_number(ca.first);

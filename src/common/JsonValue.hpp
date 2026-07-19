@@ -15,6 +15,7 @@ namespace common {
 
 class JsonValue {
 public:
+	static constexpr size_t MAX_NESTING_DEPTH = 100;
 	typedef std::string Key;
 
 	typedef std::vector<JsonValue> Array;

@@ -15,6 +15,7 @@ namespace http {
 struct RequestHeader;
 
 class RequestParser {
+	static constexpr size_t MAX_HEADER_SIZE = 32 * 1024;
 	enum state {
 		method_start,
 		method,
@@ -47,8 +48,13 @@ public:
 
 	template<typename InputIterator>
 	InputIterator parse(RequestHeader &req, InputIterator begin, InputIterator end) {
-		while (begin != end && state_ != good && state_ != bad)
+		while (begin != end && state_ != good && state_ != bad) {
+			if (++parsed_size_ > MAX_HEADER_SIZE) {
+				state_ = bad;
+				break;
+			}
 			state_ = consume(req, *begin++);
+		}
 		return begin;
 	}
 	bool is_good() const { return state_ == good; }
@@ -57,6 +63,7 @@ public:
 private:
 	bool process_ready_header(RequestHeader &req);
 	Header lowcase;
+	size_t parsed_size_ = 0;
 	state consume(RequestHeader &req, char input);
 };
 

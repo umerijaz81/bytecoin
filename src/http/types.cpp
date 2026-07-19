@@ -15,7 +15,7 @@ struct smapping {
 	int code;
 	const char *text;
 } const smappings[] = {{200, "OK"}, {400, "Bad request"}, {401, "Unauthorized"}, {403, "Forbidden"}, {404, "Not found"},
-    {422, "Unprocessable Entity"}, {500, "Internal Error"}, {501, "Not implemented"},
+    {413, "Payload Too Large"}, {422, "Unprocessable Entity"}, {500, "Internal Error"}, {501, "Not implemented"},
     {502, "Service temporarily overloaded"}, {503, "Gateway timeout"}};
 
 std::string status_to_string(int status) {

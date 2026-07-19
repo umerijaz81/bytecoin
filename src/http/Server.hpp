@@ -53,6 +53,7 @@ class Server {
 public:
 	typedef std::function<bool(Client *who, RequestBody &&request, ResponseBody &response)> request_handler;
 	typedef std::function<void(Client *who)> disconnect_handler;
+	static constexpr size_t MAX_INCOMING_CONNECTIONS = 128;
 
 	explicit Server(
 	    const std::string &address, uint16_t port, request_handler &&r_handler, disconnect_handler &&d_handler);
