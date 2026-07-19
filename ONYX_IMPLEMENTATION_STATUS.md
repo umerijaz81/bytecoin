@@ -124,6 +124,10 @@ cap before Halo2 verification; insertion, eviction, removal and reorganization b
 the bound. This is relay/admission policy, not block consensus. Supply-audit caching from the latest
 static review is also implemented: the full snapshot audit is cached by exact tip hash, so repeated
 unauthenticated calls at one tip copy a stable response while same-height reorganizations recompute.
+Wallet and node documentation now states the legacy remote-decoy correlation limit prominently, the
+privacy sync flag is visible in walletd help, and walletd's internal logs omit construction requests,
+amount sets, decoy sets, hashes and raw transaction bodies. This prevents accidental hosted-service
+logging but cannot make an untrusted remote operator cryptographically trustworthy.
 
 ### Release readiness
 

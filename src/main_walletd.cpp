@@ -64,6 +64,7 @@ Running with selected wallet:
                                         Use <ip:port> or http://<ip:port> format to connect to a daemon via HTTP.
                                         Use https://<host:port> format to connect to a daemon via HTTPS.
   --bytecoind-authorization=<user:pass> HTTP basic authentication credentials for RPC API [default: ""].
+  --wallet-sync-privacy                Hide wallet age and sparse-chain fingerprints from a remote node (slower initial sync).
   --net=<main|stage|test>               Configure for mainnet, stagenet, or testnet [default: main].
 
 Options for BIP39 mnemonic creation:

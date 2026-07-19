@@ -24,6 +24,13 @@ with any group/other permission bits; `chmod 600 <path>` is the usual setting. T
 `--walletd-http-auth=<user:password>` option is rejected because command-line arguments can be read
 from process listings and shell history. HTTP Basic authentication does not encrypt traffic:
 keep walletd on localhost or place it behind an authenticated TLS-terminating reverse proxy.
+
+An untrusted remote bytecoind can correlate legacy decoy requests with the transaction later sent
+through it and infer the real ring member. Prefer a locally operated bytecoind. If remote operation is
+unavoidable, enable `--wallet-sync-privacy` to hide wallet age and sparse-chain fingerprints; this
+does not solve decoy/broadcast correlation. Walletd deliberately omits transaction construction,
+requested amounts, returned decoys, transaction hashes and raw transaction bodies from its logs.
+Onyx shielded transfers do not use the legacy amount-specific ring-decoy flow.
 where:
 * `<ip>` is the IPv4 address of the `walletd` service. If the service is on a local machine, use `127.0.0.1` instead of `localhost`.
 * `<port>` is TCP port of `walletd`. By default the service is bound to `8070`.

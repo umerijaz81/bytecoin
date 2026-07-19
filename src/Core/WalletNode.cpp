@@ -105,7 +105,7 @@ bool WalletNode::on_api_http_request(http::Client *who, http::RequestBody &&requ
 			return result;
 	}
 	m_log(logging::INFO) << "http_request node tunneling url=" << request.r.uri
-	                     << " start of body=" << request.body.substr(0, 200);
+	                     << " (request body deliberately omitted)";
 	http::RequestBody original_request;
 	original_request.r            = request.r;
 	request.r.http_version_major  = 1;
@@ -221,8 +221,6 @@ bool WalletNode::on_get_status(http::Client *who, http::RequestBody &&raw_reques
 	check_wallet_open();
 	response = create_status_response();
 	if (!response.ready_for_longpoll(request)) {
-		//		m_log(logging::INFO) << "on_get_status will long poll, json="
-		// << raw_request.body;
 		LongPollClient lpc;
 		lpc.original_who          = who;
 		lpc.original_request      = std::move(raw_request);
@@ -846,7 +844,7 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
     api::walletd::CreateTransaction::Response &response) {
 	check_wallet_open();
 	m_log(logging::TRACE) << "create_transaction request tip_height=" << get_wallet_state().get_tip_height()
-	                      << " body=" << raw_request.body;
+	                      << " (recipient and amount data omitted)";
 	for (auto &&tid : request.prevent_conflict_with_transactions) {
 		if (get_wallet_state().api_has_transaction(tid, true))
 			continue;
@@ -1040,11 +1038,11 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 	http::RequestBody new_request =
 	    json_rpc::create_request(api::cnd::url(), api::cnd::GetRandomOutputs::method(), ra_request);
 	new_request.r.basic_authorization = m_config.bytecoind_authorization;
-	m_log(logging::TRACE) << "sending get_random_outputs, body=" << new_request.body;
+	m_log(logging::TRACE) << "sending get_random_outputs (amount set omitted)";
 	add_waiting_command(who, std::move(raw_request), std::move(raw_js_request), std::move(new_request),
 	    [=](const WaitingClient &wc, http::ResponseBody &&random_response) mutable {
 		    m_log(logging::TRACE) << "got response to get_random_outputs, status=" << random_response.r.status
-		                          << " body " << random_response.body;
+		                          << " (decoy set omitted)";
 		    if (random_response.r.status != 200) {
 			    throw json_rpc::Error(api::walletd::CreateTransaction::BYTECOIND_REQUEST_ERROR,
 			        "got HTTP error as response on get_random_outputs");
@@ -1119,11 +1117,11 @@ bool WalletNode::on_create_sendproof(http::Client *who, http::RequestBody &&raw_
 	http::RequestBody new_request =
 	    json_rpc::create_request(api::cnd::url(), api::cnd::GetRawTransaction::method(), ra_request);
 	new_request.r.basic_authorization = m_config.bytecoind_authorization;
-	m_log(logging::TRACE) << "sending get_raw_transaction, body=" << new_request.body;
+	m_log(logging::TRACE) << "sending get_raw_transaction (hash omitted)";
 	add_waiting_command(who, std::move(raw_request), std::move(raw_js_request), std::move(new_request),
 	    [=](const WaitingClient &wc, http::ResponseBody &&raw_transaction_response) mutable {
 		    m_log(logging::TRACE) << "got response to get_raw_transaction, status=" << raw_transaction_response.r.status
-		                          << " body " << raw_transaction_response.body;
+		                          << " (transaction body omitted)";
 		    if (raw_transaction_response.r.status != 200)
 			    throw json_rpc::Error(api::walletd::CreateSendproof::BYTECOIND_REQUEST_ERROR,
 			        "got HTTP error to get_transaction request to " CRYPTONOTE_NAME "d");

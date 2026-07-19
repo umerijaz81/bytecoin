@@ -397,7 +397,6 @@ bool Node::on_get_status(http::Client *who, http::RequestBody &&raw_request, jso
     api::cnd::GetStatus::Request &&req, api::cnd::GetStatus::Response &res) {
 	res = create_status_response();
 	if (!res.ready_for_longpoll(req)) {
-		//	m_log(logging::INFO) << "on_get_status will long poll, json=" << raw_request.body;
 		LongPollClient lpc;
 		lpc.original_who          = who;
 		lpc.original_request      = raw_request;

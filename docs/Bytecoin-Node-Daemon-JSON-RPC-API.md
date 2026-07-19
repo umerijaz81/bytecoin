@@ -1595,6 +1595,10 @@ __Output:__
 #### About
 
 Fetches necessary quantity (`output_count`) of random outputs for desired `amounts` with respect to specified `confirmed_height_or_depth`. \
+Operators serving this method are in a privileged position: if the same customer later broadcasts
+the resulting legacy ring transaction through this node, the served decoy set can reveal the real
+input. Bytecoin does not log RPC bodies or decoy sets internally, but reverse proxies, packet capture,
+or modified operators can still observe them. Wallet users should prefer a local node.
 Response may have less outputs than asked for some amounts, if blockchain lacks enough.
 
 
