@@ -34,6 +34,16 @@ def main():
     source_present = [pattern for pattern in FORBIDDEN_SOURCE_PATTERNS if pattern in source]
     if source_present:
         raise RuntimeError(f"WalletNode contains privacy-sensitive body logging: {source_present}")
+    p2p_source = (
+        pathlib.Path(__file__).resolve().parents[2] / "src/Core/Node_P2PProtocolBytecoin.cpp"
+    ).read_text(encoding="utf-8")
+    if "<< get_address()" in p2p_source:
+        raise RuntimeError("P2P logs contain an unredacted peer-address stream")
+    basic_source = (
+        pathlib.Path(__file__).resolve().parents[2] / "src/p2p/P2PProtocolBasic.cpp"
+    ).read_text(encoding="utf-8")
+    if '<< " from " << get_address()' in basic_source:
+        raise RuntimeError("P2P handshake logs contain an unredacted peer address")
     print("walletd artifact contains no known privacy-sensitive RPC body log formats")
 
 

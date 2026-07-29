@@ -262,14 +262,17 @@ void P2P::accept_all() {
 			auto now = std::chrono::steady_clock::now();
 			if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_log_banned_timestamp).count() > 100) {
 				m_log_banned_timestamp = now;
-				m_log(logging::INFO) << "Accepted from banned address " << addr << " disconnecting immediately";
+				m_log(logging::DEBUGGING) << "Accepted from banned address "
+				                          << (m_config.log_peer_addresses ? addr : "<peer-redacted>")
+				                          << " disconnecting immediately";
 			}
 			next_client[incoming]->sock.close();
 			continue;
 		}
 		P2PClient *who                                 = next_client[incoming].get();
 		clients[incoming][next_client[incoming].get()] = std::move(next_client[incoming]);
-		m_log(logging::INFO) << "Accepted from addr=" << addr;
+		m_log(logging::DEBUGGING) << "Accepted from addr="
+		                          << (m_config.log_peer_addresses ? addr : "<peer-redacted>");
 		who->set_protocol(c_factory(who));
 	}
 }

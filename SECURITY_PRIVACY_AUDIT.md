@@ -35,6 +35,7 @@ layers (`src/Core/Node*.cpp`, `WalletSync.cpp`, `Archive.cpp`, `Config.cpp`).
 | Zero-fee Onyx pool bound | `src/Core/BlockChainState.*`, `tests/blockchain/test_jade_consensus.cpp` | At most 256 standard-program calls are admitted; a deterministic boundary check runs before proof verification and accounting follows insertion, eviction, removal and reorganization. Valid blocks remain governed by consensus cost limits. |
 | Tip-keyed supply-audit cache | `src/Core/Node.*` | The potentially large snapshot is audited once per exact block hash. Repeated calls return the cached response, while any forward tip change or same-height reorganization misses the cache. |
 | Hosted-node sensitive-body omission | `src/Core/WalletNode.cpp`, wallet/node RPC docs | Internal logs omit transaction construction bodies, requested legacy amounts, returned decoys, hashes and raw transactions. The remaining operator-observable decoy/broadcast correlation is documented and requires a local/trusted node or the Onyx path to avoid. |
+| Opt-in peer attribution | `src/Core/Config.*`, `Node*.cpp`, `Archive.cpp`, `PeerDB.cpp` | Archive source IPs and log-visible peer addresses are both off by default and require explicit privacy-sensitive options; the v3-to-v4 PeerDB reset is announced as rediscovery rather than an unexplained wipe. |
 | Multicast disabled on mainnet | `src/Core/Config.cpp:63` | Prevents LAN peer-enumeration deanonymization. |
 
 No coin-forging, signature-forging, or double-spend vector was found. **All findings below

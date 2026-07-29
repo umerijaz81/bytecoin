@@ -38,6 +38,8 @@ Options:
   --import-blocks=<folder-path>          Perform import of blockchain from specified folder as blocks.bin and blockindexes.bin, then exit.
   --export-blocks=<folder-path>          Perform hot export of blockchain into specified folder as blocks.bin and blockindexes.bin, then exit. This overwrites existing files.
   --archive                              Work as an archive node [default: off].
+  --archive-store-source-ips             Persist peer IP attribution in archive records (privacy-sensitive; default off).
+  --log-peer-addresses                   Include peer addresses in logs for temporary diagnostics (default off).
   --disable-dandelion                    Disable Dandelion++ stem relay and diffuse transactions immediately.
   --dandelion-epoch-seconds=<seconds>    Keep the selected outbound stem peer for 1..86400 seconds [default: 600].
   --dandelion-embargo-min-seconds=<s>    Minimum stem liveness embargo, 1..600 seconds [default: 10].

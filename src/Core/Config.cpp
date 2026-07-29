@@ -122,7 +122,11 @@ Config::Config(common::CommandLine &cmd)
     , trusted_public_key(P2P_STAT_TRUSTED_PUBLIC_KEY)
     , payment_queue_confirmations(720) {
 	// Privacy hardening flags (Phase 1). Archive omits peer IPs by default; opt back in if needed.
-	archive_omit_source_addresses = !cmd.get_bool("--archive-keep-source-addresses");
+	const bool legacy_store_source_addresses =
+	    cmd.get_bool("--archive-keep-source-addresses", "use --archive-store-source-ips instead");
+	archive_omit_source_addresses =
+	    !(cmd.get_bool("--archive-store-source-ips") || legacy_store_source_addresses);
+	log_peer_addresses = cmd.get_bool("--log-peer-addresses");
 	wallet_sync_privacy           = cmd.get_bool("--wallet-sync-privacy");
 	dandelion_enabled             = !cmd.get_bool("--disable-dandelion");
 	dandelion_epoch_seconds = get_bounded_timestamp(

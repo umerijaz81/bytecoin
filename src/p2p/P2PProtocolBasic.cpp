@@ -206,7 +206,8 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Request &&req) {
 
 	std::cout << "P2p p2p::Handshake request version=" << int(req.node_data.version)
 	          << " unique_number=" << req.node_data.peer_id << " current_height=" << req.payload_data.current_height
-	          << " from " << get_address() << std::endl;
+	          << " from "
+	          << (config.log_peer_addresses ? get_address().to_string() : std::string{"<peer-redacted>"}) << std::endl;
 	on_msg_handshake(std::move(req));
 }
 void P2PProtocolBasic::msg_handshake(p2p::Handshake::Response &&req) {
@@ -235,7 +236,8 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Response &&req) {
 	          << " unique_number=" << req.node_data.peer_id << " current_height=" << req.payload_data.current_height
 	          << " local_peerlist.size=" << req.local_peerlist.size() << " peerlist.size=" << req.peerlist.size()
 	          << " anonymity_peerlist.size=" << req.anonymity_peerlist.size()
-	          << " from " << get_address() << std::endl;
+	          << " from "
+	          << (config.log_peer_addresses ? get_address().to_string() : std::string{"<peer-redacted>"}) << std::endl;
 	on_msg_handshake(std::move(req));
 }
 

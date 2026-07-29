@@ -75,6 +75,7 @@ Options for built-in bytecoind (allowed when no --bytecoind-remote-address speci
 DEPRECATED AND NOT RECOMMENDED as entailing security risk. Please always run bytecoind as a separate process.
   --p2p-bind-address=<ip:port>          IP and port for P2P network protocol [default: 0.0.0.0:8080].
   --p2p-external-port=<port>            External port for P2P network protocol, if port forwarding used with NAT [default: 8080].
+  --log-peer-addresses                  Include peer addresses in logs for temporary diagnostics (default off).
   --bytecoind-bind-address=<ip:port>    IP and port for bytecoind RPC [default: 127.0.0.1:8081].
   --seed-node-address=<ip:port>         Specify node (one or more) to start connecting to.
   --priority-node-address=<ip:port>     Specify node (one or more) to connect to and attempt to keep the connection open.

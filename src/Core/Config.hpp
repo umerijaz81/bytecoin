@@ -34,6 +34,7 @@ public:
 	// Privacy: when true (default), the archive does NOT record which peer IP relayed each
 	// block/transaction. Restore the old behaviour with --archive-keep-source-addresses.
 	bool archive_omit_source_addresses = true;
+	bool log_peer_addresses = false;
 
 	std::string blocks_file_name;
 	std::string block_indexes_file_name;

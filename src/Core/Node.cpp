@@ -77,12 +77,14 @@ void Node::on_multicast(const std::string &addr, const unsigned char *data, size
 		return;
 	if (common::parse_ip_address(addr, &na.ip)) {
 		if (m_peer_db->add_incoming_peer(na, m_p2p.get_local_time()))
-			m_log(logging::INFO) << "Adding peer from multicast announce addr=" << na;
+			m_log(logging::DEBUGGING) << "Adding peer from multicast announce addr="
+			                          << (m_config.log_peer_addresses ? na.to_string() : "<peer-redacted>");
 	}
 	// We do not receive multicast from loopback, so we just guess peer could be from localhost
 	if (common::parse_ip_address("127.0.0.1", &na.ip)) {
 		if (m_peer_db->add_incoming_peer(na, m_p2p.get_local_time()))
-			m_log(logging::INFO) << "Adding local peer from multicast announce addr=" << na;
+			m_log(logging::DEBUGGING) << "Adding local peer from multicast announce addr="
+			                          << (m_config.log_peer_addresses ? na.to_string() : "<peer-redacted>");
 	}
 	m_p2p.peers_updated();
 }

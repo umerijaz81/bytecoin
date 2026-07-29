@@ -146,6 +146,7 @@ protected:
 
 	class P2PProtocolBytecoin : public P2PProtocolBasic {
 		Node *const m_node;
+		std::string get_log_address() const;
 		void after_handshake();
 
 		bool m_chain_request_sent = false;

@@ -47,7 +47,10 @@ PeerDB::PeerDB(logging::ILogger &log, const Config &config, const std::string &d
 	std::string version;
 	db.get("$version", version);
 	if (version != version_current) {
-		if (!version.empty())
+		if (version == "3")
+			m_log(logging::INFO)
+			    << "Peer database format upgraded v3->v4; the peer list will be cleared and rediscovered.";
+		else if (!version.empty())
 			m_log(logging::INFO) << "PeerDB format different, old version=" << version
 			                     << " current version=" << version_current << ", clearing Peer DB...";
 		for (DB::Cursor cur = db.rbegin(std::string{}); !cur.end(); cur.erase()) {
