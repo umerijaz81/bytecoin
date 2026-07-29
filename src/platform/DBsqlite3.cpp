@@ -335,6 +335,7 @@ void DBsqliteKV::backup_db(const std::string &path, const std::string &dst_path)
 
 void DBsqliteKV::run_tests() {
 	delete_db("temp_db");
+	delete_db("temp_db_backup");
 	{
 		DBsqliteKV db(platform::O_CREATE_NEW, "temp_db");
 		std::string str;
@@ -364,6 +365,22 @@ void DBsqliteKV::run_tests() {
 		db.put("unspent/ub", "ub", false);
 		db.put("unspent/uc", "uc", false);
 		db.commit_db_txn();
+		backup_db("temp_db", "temp_db_backup");
+		{
+			DBsqliteKV backup(platform::O_READ_EXISTING, "temp_db_backup");
+			std::string backup_value;
+			invariant(backup.get("history/ha", backup_value) && backup_value == "uaa",
+			    "sqlite online backup lost or changed a committed value");
+			invariant(backup.get("unspent/uc", backup_value) && backup_value == "uc",
+			    "sqlite online backup omitted a committed value");
+		}
+		bool rejected_existing_destination = false;
+		try {
+			backup_db("temp_db", "temp_db_backup");
+		} catch (const platform::sqlite::Error &) {
+			rejected_existing_destination = true;
+		}
+		invariant(rejected_existing_destination, "sqlite backup overwrote an existing destination");
 
 		std::cout << "-- all keys forward --" << std::endl;
 		for (auto cur = db.begin(std::string{}); !cur.end(); cur.next()) {
@@ -437,4 +454,5 @@ void DBsqliteKV::run_tests() {
 		}
 	}
 	delete_db("temp_db");
+	delete_db("temp_db_backup");
 }
