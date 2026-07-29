@@ -281,26 +281,56 @@ void DBsqliteKV::delete_db(const std::string &path) {
 	std::remove((ep + ".sqlite-journal").c_str());
 }
 void DBsqliteKV::backup_db(const std::string &path, const std::string &dst_path) {
-	throw platform::sqlite::Error("SQlite backed does not support hot backup - stop daemons, then copy database");
-	/*	bool src_created = false;
-	    sqlite::Dbi src;
-	    src.open_check_create(platform::O_READ_EXISTING, path + ".sqlite", &src_created);
+	const std::string src_path = platform::expand_path(path + ".sqlite");
+	const std::string dst_path_expanded = platform::expand_path(dst_path + ".sqlite");
+	if (FILE *existing = std::fopen(dst_path_expanded.c_str(), "rb")) {
+		std::fclose(existing);
+		throw platform::sqlite::Error("sqlite backup destination already exists: " + dst_path_expanded);
+	}
 
-	    bool dst_created = false;
-	    sqlite::Dbi dst;
-	    dst.open_check_create(platform::O_CREATE_NEW, dst_path + ".sqlite", &dst_created);
+	sqlite3 *src = nullptr;
+	sqlite3 *dst = nullptr;
+	if (sqlite3_open_v2(src_path.c_str(), &src, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+		const std::string detail = src ? sqlite3_errmsg(src) : "out of memory";
+		if (src)
+			sqlite3_close(src);
+		throw platform::sqlite::Error("sqlite backup source open failed: " + detail);
+	}
+	if (sqlite3_open_v2(
+	        dst_path_expanded.c_str(), &dst, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) {
+		const std::string detail = dst ? sqlite3_errmsg(dst) : "out of memory";
+		if (dst)
+			sqlite3_close(dst);
+		sqlite3_close(src);
+		throw platform::sqlite::Error("sqlite backup destination open failed: " + detail);
+	}
 
-	    auto ba = sqlite3_backup_init(dst.handle, "main", src.handle, "main");
-	    if(!ba)
-	        throw platform::sqlite::Error("SQlite failed to start hot backup - stop daemons, then copy database");
-	//	while(true){
-	    auto res = sqlite3_backup_step(ba, -1);
-	    sqlite3_backup_finish(ba); ba = nullptr;
-	    if(res != SQLITE_DONE)
-	        sqlite::check(res, "sqlite3_backup_step failed");
-	//		std::cout << "." << std::flush;
-	//	}
-	*/
+	sqlite3_backup *backup = sqlite3_backup_init(dst, "main", src, "main");
+	if (!backup) {
+		const std::string detail = sqlite3_errmsg(dst);
+		sqlite3_close(dst);
+		sqlite3_close(src);
+		std::remove(dst_path_expanded.c_str());
+		throw platform::sqlite::Error("sqlite backup initialization failed: " + detail);
+	}
+
+	int result;
+	unsigned busy_retries = 0;
+	do {
+		result = sqlite3_backup_step(backup, -1);
+		if ((result == SQLITE_BUSY || result == SQLITE_LOCKED) && busy_retries++ < 500)
+			sqlite3_sleep(10);
+		else
+			break;
+	} while (true);
+	const int finish_result = sqlite3_backup_finish(backup);
+	const std::string detail = sqlite3_errmsg(dst);
+	sqlite3_close(dst);
+	sqlite3_close(src);
+	if (result != SQLITE_DONE || finish_result != SQLITE_OK) {
+		std::remove(dst_path_expanded.c_str());
+		throw platform::sqlite::Error("sqlite backup failed: " + detail);
+	}
 }
 
 void DBsqliteKV::run_tests() {

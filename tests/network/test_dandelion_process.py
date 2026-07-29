@@ -14,6 +14,7 @@ import urllib.request
 
 
 WALLET_PASSWORD = "process-test-wallet-password"
+RECOVERY_PASSWORD = "process-test-recovery-password"
 WALLET_AUTH = "process-test:process-test-password"
 
 
@@ -184,7 +185,9 @@ def create_wallet(walletd, root):
     return wallet_file, wallet_data
 
 
-def launch_wallet(walletd, root, wallet_file, wallet_data, wallet_port, origin_rpc):
+def launch_wallet(
+    walletd, root, wallet_file, wallet_data, wallet_port, origin_rpc, password=WALLET_PASSWORD
+):
     auth_file = root / "walletd.auth"
     auth_file.write_text(WALLET_AUTH + "\n", encoding="utf-8")
     auth_file.chmod(0o600)
@@ -195,7 +198,7 @@ def launch_wallet(walletd, root, wallet_file, wallet_data, wallet_port, origin_r
             "--net=test",
             f"--data-folder={wallet_data}",
             f"--wallet-file={wallet_file}",
-            f"--wallet-password={WALLET_PASSWORD}",
+            f"--wallet-password={password}",
             f"--walletd-http-auth-file={auth_file}",
             f"--walletd-bind-address=127.0.0.1:{wallet_port}",
             f"--bytecoind-remote-address=127.0.0.1:{origin_rpc}",
@@ -209,6 +212,49 @@ def launch_wallet(walletd, root, wallet_file, wallet_data, wallet_port, origin_r
         timeout=30,
     )
     return process
+
+
+def recover_wallet(walletd, root, wallet_file, wallet_data):
+    backup_data = root / "recovered-wallet-data"
+    backup_data.mkdir()
+    result = subprocess.run(
+        [
+            str(walletd),
+            "--net=test",
+            f"--data-folder={wallet_data}",
+            f"--wallet-file={wallet_file}",
+            f"--wallet-password={WALLET_PASSWORD}",
+            f"--backup-wallet-data={backup_data}",
+            "--set-password",
+        ],
+        input=f"{RECOVERY_PASSWORD}\n{RECOVERY_PASSWORD}\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0 or "finished successfully" not in result.stdout:
+        raise RuntimeError(f"wallet recovery backup failed\n{result.stdout}\n{result.stderr}")
+
+    recovered_wallet = backup_data / wallet_file.name
+    if not recovered_wallet.is_file():
+        raise RuntimeError("wallet recovery backup omitted the encrypted wallet file")
+
+    old_password = subprocess.run(
+        [
+            str(walletd),
+            "--net=test",
+            f"--data-folder={backup_data}",
+            f"--wallet-file={recovered_wallet}",
+            f"--wallet-password={WALLET_PASSWORD}",
+            "--export-mnemonic",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if old_password.returncode == 0:
+        raise RuntimeError("recovered wallet still accepted its superseded password")
+    return recovered_wallet, backup_data
 
 
 def mine_blocks(minerd, root, rpc_port, wallet_address, count):
@@ -372,6 +418,68 @@ def run(args):
                 processes,
                 timeout=45,
             )
+
+            original_addresses = list(addresses)
+            original_balance = rpc_call(
+                ports["wallet_rpc"],
+                "get_balance",
+                {"address": "", "height_or_depth": -1},
+                authorization=WALLET_AUTH,
+            )
+            wallet.stop()
+            processes.remove(wallet)
+            recovered_wallet_file, recovered_wallet_data = recover_wallet(
+                args.walletd, root, wallet_file, wallet_data
+            )
+            wallet = launch_wallet(
+                args.walletd,
+                root,
+                recovered_wallet_file,
+                recovered_wallet_data,
+                ports["wallet_rpc"],
+                ports["b_rpc"],
+                RECOVERY_PASSWORD,
+            )
+            processes.append(wallet)
+            wait_until(
+                "recovered wallet synchronization through alternate node",
+                lambda: rpc_call(
+                    ports["wallet_rpc"], "get_status", authorization=WALLET_AUTH
+                )["top_block_height"] >= 15,
+                processes,
+                timeout=45,
+            )
+            addresses = rpc_call(
+                ports["wallet_rpc"], "get_addresses", authorization=WALLET_AUTH
+            )["addresses"]
+            if addresses != original_addresses:
+                raise RuntimeError("recovered wallet changed its deterministic address set")
+            recovered_balance = rpc_call(
+                ports["wallet_rpc"],
+                "get_balance",
+                {"address": "", "height_or_depth": -1},
+                authorization=WALLET_AUTH,
+            )
+            if recovered_balance != original_balance:
+                raise RuntimeError(
+                    f"recovered wallet balance changed: {original_balance} != {recovered_balance}"
+                )
+            print(
+                "encrypted backup, password rotation, alternate-node recovery, "
+                "and balance preservation passed"
+            )
+            wallet.stop()
+            processes.remove(wallet)
+            wallet = launch_wallet(
+                args.walletd,
+                root,
+                recovered_wallet_file,
+                recovered_wallet_data,
+                ports["wallet_rpc"],
+                ports["a_rpc"],
+                RECOVERY_PASSWORD,
+            )
+            processes.append(wallet)
 
             tx1_hash, tx1_binary = create_transaction(ports["wallet_rpc"], addresses[1], addresses[0])
             assert_pool_absent("node C", ports["c_rpc"], tx1_hash)
