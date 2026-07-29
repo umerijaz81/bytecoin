@@ -59,10 +59,13 @@ unreachable until the release gates below are independently satisfied.
    cover NFT owner continuity, vesting timelocks, pairwise-distinct 1–16 threshold custody and swap claim/refund
    semantics, including insufficient-approval and duplicate-participant rejections. Canonical deployments, wallet
    proving, RPC/SDK profiles, state queries, reorg-safe application and mempool state-conflict eviction are wired;
-   independent review remains. Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and
-   frozen schema hashes with strict uint64, identifier, threshold, boolean and Pasta-field validation; wallet/RPC
-   proving flows remain. Canonical IR/descriptor artifacts are digest-pinned, reproducibly regenerated, embedded
-   in Rust and used by a caller-artifact-free standard verifier and activation-bound registry-entry builder.
+   independent review remains. The production depth-32 Rust C ABI/C++ adapter is positively qualified with a
+   Rust-pinned deterministic wallet fixture that creates and verifies a funded NFT deployment and creates and
+   authenticates a serial-bound NFT state transition; rejected proving requests must clear all caller-visible outputs.
+   Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and frozen schema hashes
+   with strict uint64, identifier, threshold, boolean and Pasta-field validation. Canonical IR/descriptor artifacts
+   are digest-pinned, reproducibly regenerated, embedded in Rust and used by a caller-artifact-free standard verifier
+   and activation-bound registry-entry builder.
 
 ### O6 network, scaling and crypto agility
 

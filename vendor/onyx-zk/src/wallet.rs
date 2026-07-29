@@ -1648,6 +1648,49 @@ mod tests {
     }
 
     #[test]
+    fn cpp_standard_program_wallet_fixture_stays_stable() {
+        const DEPTH: usize = 32;
+        let network = [17; NETWORK_ID_BYTES];
+        let keys = MasterSeed::new([44; 32]).derive(network).unwrap();
+        let mut wallet = funded_wallet::<DEPTH>(
+            &keys,
+            network,
+            &[1, crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE + 1],
+        );
+        let entry = standard_program_entry(StandardProgramKind::Nft, 10, None).unwrap();
+        wallet.register_program(entry).unwrap();
+        let snapshot = wallet.encode_snapshot().unwrap();
+        let encoded = snapshot
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            encoded,
+            include_str!("../../../tests/zk/standard_program_wallet_fixture.inc")
+                .trim()
+                .trim_matches('"'),
+            "update the C++ fixture only after reviewing wallet snapshot format drift"
+        );
+        let poseidon = |left, right| {
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([left, right])
+        };
+        let identity = poseidon(
+            poseidon(Fp::from(21), Fp::zero()),
+            poseidon(Fp::from(22), Fp::zero()),
+        );
+        let instance = poseidon(identity, Fp::from(33));
+        assert_eq!(
+            poseidon(Fp::from(34), instance)
+                .to_repr()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            "dea354729d447a92315a7730a8ffa9c2621f025a2e73cf2c794b7923939f1a00",
+            "update the C++ NFT witness fixture only after reviewing primitive drift"
+        );
+    }
+
+    #[test]
     fn builder_combines_two_notes_for_exact_and_change_payments() {
         const DEPTH: usize = 2;
         const K: u32 = 16;

@@ -23,6 +23,23 @@ static std::string to_hex(const uint8_t *b, size_t n) {
 	return s;
 }
 
+static BinaryArray from_hex(const std::string &hex) {
+	invariant(hex.size() % 2 == 0, "invalid hex fixture length");
+	BinaryArray bytes;
+	bytes.reserve(hex.size() / 2);
+	const auto nibble = [](char ch) -> uint8_t {
+		if (ch >= '0' && ch <= '9')
+			return static_cast<uint8_t>(ch - '0');
+		if (ch >= 'a' && ch <= 'f')
+			return static_cast<uint8_t>(ch - 'a' + 10);
+		invariant(false, "invalid hex fixture character");
+		return 0;
+	};
+	for (size_t i = 0; i != hex.size(); i += 2)
+		bytes.push_back(static_cast<uint8_t>((nibble(hex[i]) << 4) | nibble(hex[i + 1])));
+	return bytes;
+}
+
 void test_zk() {
 	Halo2ProofSystem ps;
 	std::cout << "  backend: " << ps.backend_id() << std::endl;
@@ -118,6 +135,70 @@ void test_zk() {
 		              BinaryArray(viewing_key.begin(), viewing_key.end()), 0, 1, 20, malformed, &next_snapshot, &scan),
 		    "malformed viewing-wallet scan input must fail");
 		std::cout << "  [zk] authorized-transfer boundary rejects malformed input" << std::endl;
+	}
+
+	// 6. A deterministic funded wallet crosses the production C ABI/C++ adapter to prove both an
+	// approved-program deployment and a stateful NFT call. The Rust regression test pins the
+	// fixture digest and witness primitive so format or cryptographic drift cannot silently stale it.
+	{
+		const BinaryArray wallet_snapshot = from_hex(
+#include "standard_program_wallet_fixture.inc"
+		);
+		std::array<uint8_t, 32> seed{};
+		seed.fill(44);
+		BinaryArray deployment{0xff};
+		std::array<uint8_t, 32> program_id{};
+		program_id.fill(0xff);
+		invariant(Halo2ProofSystem::wallet_create_standard_program_deployment(wallet_snapshot, seed,
+		              1, 9, 10, 0, 20, 100000, 16, &deployment, &program_id),
+		    "standard NFT deployment proving failed through C++ adapter");
+		Halo2ProofSystem::VerifiedProgramDeployment verified_deployment;
+		invariant(Halo2ProofSystem::verify_program_deployment(deployment, 32, 16, &verified_deployment),
+		    "C++ adapter produced an invalid standard-program deployment");
+		invariant(verified_deployment.program_id == program_id,
+		    "deployment prover and verifier disagreed on program id");
+
+		BinaryArray application{1, 1};
+		application.resize(66, 0);
+		application[2]  = 21;
+		application[34] = 22;
+		application.push_back(33);
+		application.push_back(1);
+		std::array<uint8_t, 32> prior_state{};
+		const BinaryArray prior =
+		    from_hex("dea354729d447a92315a7730a8ffa9c2621f025a2e73cf2c794b7923939f1a00");
+		std::copy(prior.begin(), prior.end(), prior_state.begin());
+		std::array<uint8_t, 32> next_state{};
+		next_state[0] = 0x85;
+		next_state[1] = 0x03;
+		BinaryArray witness(32, 0);
+		witness[0] = 34;
+		BinaryArray transaction{0xff};
+		invariant(Halo2ProofSystem::wallet_create_standard_program_call(wallet_snapshot, seed, program_id,
+		              10, 10, 20, application, prior_state, next_state, witness, 16, &transaction),
+		    "standard NFT call proving failed through C++ adapter");
+		Halo2ProofSystem::VerifiedTransferDelta delta;
+		std::vector<std::array<uint8_t, 32>> state_keys;
+		invariant(Halo2ProofSystem::extract_authenticated_standard_program_delta(
+		              transaction, &delta, &state_keys),
+		    "C++ adapter produced an unauthenticated standard-program call");
+		invariant(state_keys.size() == 1, "standard NFT call did not authenticate exactly one state key");
+
+		BinaryArray stale_output{0xff};
+		std::array<uint8_t, 32> stale_id{};
+		stale_id.fill(0xff);
+		invariant(!Halo2ProofSystem::wallet_create_standard_program_deployment(wallet_snapshot, seed,
+		              0, 9, 10, 0, 20, 100000, 16, &stale_output, &stale_id),
+		    "invalid standard-program kind was accepted");
+		const bool deployment_outputs_cleared =
+		    stale_output.empty() && stale_id == std::array<uint8_t, 32>{};
+		invariant(deployment_outputs_cleared, "failed deployment proving left stale outputs");
+		stale_output.assign(1, 0xff);
+		invariant(!Halo2ProofSystem::wallet_create_standard_program_call(wallet_snapshot, seed, program_id,
+		              10, 10, 20, BinaryArray{}, prior_state, next_state, witness, 16, &stale_output),
+		    "empty standard-program application was accepted");
+		invariant(stale_output.empty(), "failed standard-program call proving left stale output");
+		std::cout << "  [zk] standard-program deployment and NFT call proving boundary ok" << std::endl;
 	}
 
 	std::cout << "  test_zk: OK" << std::endl;

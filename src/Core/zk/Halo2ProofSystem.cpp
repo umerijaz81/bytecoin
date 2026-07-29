@@ -608,7 +608,11 @@ bool Halo2ProofSystem::wallet_create_standard_program_deployment(const BinaryArr
     uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,
     uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
     std::array<uint8_t, 32> *program_id) {
-	if (wallet_snapshot.empty() || kind < 1 || kind > 4 || deployment == nullptr || program_id == nullptr)
+	if (deployment == nullptr || program_id == nullptr)
+		return false;
+	deployment->clear();
+	program_id->fill(0);
+	if (wallet_snapshot.empty() || kind < 1 || kind > 4)
 		return false;
 	uint8_t *ptr = nullptr;
 	size_t len = 0;
@@ -636,8 +640,10 @@ bool Halo2ProofSystem::wallet_create_standard_program_call(const BinaryArray &wa
     const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
     const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
     uint32_t circuit_k, BinaryArray *transaction) {
-	if (wallet_snapshot.empty() || application.empty() || witness.empty() || witness.size() % 32 != 0 ||
-	    transaction == nullptr)
+	if (transaction == nullptr)
+		return false;
+	transaction->clear();
+	if (wallet_snapshot.empty() || application.empty() || witness.empty() || witness.size() % 32 != 0)
 		return false;
 	uint8_t *ptr = nullptr;
 	size_t len = 0;
