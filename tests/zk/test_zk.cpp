@@ -76,6 +76,13 @@ void test_zk() {
 		std::vector<ProofVerifyArgs> items{ok_args, bad_args};
 		const std::vector<bool> res = ps.verify_batch(vks, items);
 		invariant(res.size() == 2 && res[0] && !res[1], "verify_batch returned wrong results");
+		const std::vector<bool> missing_keys = ps.verify_batch({}, items);
+		invariant(missing_keys.size() == 2 && !missing_keys[0] && !missing_keys[1],
+		    "verify_batch accepted a key/item shape mismatch");
+		const std::vector<const VerifyingKey *> null_keys{nullptr, &vk};
+		const std::vector<bool> null_result = ps.verify_batch(null_keys, items);
+		invariant(null_result.size() == 2 && !null_result[0] && !null_result[1],
+		    "verify_batch accepted a null verifying key");
 		std::cout << "  [zk] verify_batch ok" << std::endl;
 	}
 

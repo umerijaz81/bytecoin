@@ -3,7 +3,8 @@
 This directory contains the C++ boundary between Bytecoin consensus/wallet code and the vendored
 Rust Onyx backend:
 
-- `IProofSystem.hpp` defines the backend-neutral proof verification seam.
+- `IProofSystem.hpp` defines the active backend-neutral proof verification seam and rejects malformed
+  batch shapes/null key slots without dereferencing them.
 - `Halo2ProofSystem.hpp/.cpp` implements the current Halo2/IPA/Pasta backend over the bounded C ABI in
   `vendor/onyx-zk/include/onyx_zk.h`.
 

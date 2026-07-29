@@ -1,21 +1,19 @@
 // Copyright (c) 2012-2018, The CryptoNote developers, The Bytecoin developers.
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 //
-// DESIGN STUB (Onyx / V6) — see ONYX_ARCHITECTURE.md.
+// Active Onyx O0 proof-backend seam. This header and Halo2ProofSystem are part of the ONYX_ZK CMake
+// source set. The generic interface is exercised by backend ABI tests; consensus envelope validation
+// uses Halo2ProofSystem's typed, fail-closed transition methods so callers cannot confuse public
+// statement shapes. A future backend requires a versioned consensus change and matching typed
+// adapters; selecting one is never an automatic runtime downgrade.
 //
-// This header fixes the seam between the consensus state machine and the zero-knowledge proof
-// backend. It is intentionally NOT added to CMakeLists yet (header-only design anchor, cannot break
-// the build). Phase O0 vendors a peer-reviewed Halo2/PLONKish backend implementing IProofSystem;
-// a STARK/post-quantum backend can later be added behind the same interface without touching the
-// state machine (the concrete continuation of audit finding Q-1: quantum-agility).
-//
-// NOTHING here is consensus-critical crypto written by hand. Implementations are vendored and
-// audited before any mainnet activation height is set.
+// No consensus-critical cryptography is implemented here. Backends remain vendored, pinned, tested,
+// and independently audited before any activation height can be set.
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <vector>
 #include "common/BinaryArray.hpp"
 
@@ -31,48 +29,39 @@ struct ProgramId {
 
 // A verifying key for one program function, as published in the program registry.
 struct VerifyingKey {
-	BinaryArray data;  // backend-specific encoding (e.g. serialized Halo2 VK over Pasta)
+	BinaryArray data;  // Backend-specific encoding, such as a serialized Halo2/Pasta verifying key.
 };
 
-// One unit of work for the batch verifier: a proof, the public inputs it is checked against
-// (anchor root, value-balance commitments, nullifiers, output commitments, program id...), and the
-// verifying key to use. Mirrors how RingCheckArgs feed the existing Multicore batch path, so the
-// proof batch re-targets that infrastructure rather than introducing a new threading model.
+// One unit of generic backend work. Consensus callers use typed envelope methods instead.
 struct ProofVerifyArgs {
 	ProgramId program;
 	BinaryArray proof;
-	BinaryArray public_inputs;  // canonical serialization of the bundle's public statement
+	BinaryArray public_inputs;
 };
 
-// Abstract proof backend. A single instance is shared by block validation and the mempool; verify()
-// must be thread-safe for the batched/parallel path.
 class IProofSystem {
 public:
 	virtual ~IProofSystem() = default;
 
-	// Human-readable backend identity, e.g. "halo2-ipa-pasta" or "stark-poseidon". Recorded so the
-	// node can refuse proofs from an unexpected/unsupported backend version.
+	// Human-readable, version-bound backend identity.
 	virtual const char *backend_id() const = 0;
 
-	// Verify a single statement. Returns true iff the proof is valid for (verifying key, public
-	// inputs). Must not throw on a merely-invalid proof — return false — reserving exceptions for
-	// malformed encodings.
+	// Returns true only when the proof is valid for the supplied key and canonical public statement.
 	virtual bool verify(const VerifyingKey &vk, const ProofVerifyArgs &args) const = 0;
 
-	// Verify a batch; an implementation may amortize work across proofs. Returns one bool per item,
-	// in order. Default implementation defers to verify().
+	// Returns one result per item. Shape mismatch fails the complete batch closed, and null key slots
+	// fail their corresponding items without dereferencing them.
 	virtual std::vector<bool> verify_batch(
 	    const std::vector<const VerifyingKey *> &vks, const std::vector<ProofVerifyArgs> &items) const {
+		if (vks.size() != items.size())
+			return std::vector<bool>(items.size(), false);
 		std::vector<bool> out;
 		out.reserve(items.size());
 		for (size_t i = 0; i < items.size(); ++i)
-			out.push_back(verify(*vks.at(i), items.at(i)));
+			out.push_back(vks[i] != nullptr && verify(*vks[i], items[i]));
 		return out;
 	}
 };
-
-// Phase O0 provides a factory returning the vendored backend selected at build/config time.
-// std::unique_ptr<IProofSystem> make_proof_system(const std::string &backend_id);
 
 }  // namespace zk
 }  // namespace cn
