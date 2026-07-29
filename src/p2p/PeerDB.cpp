@@ -125,7 +125,10 @@ void PeerDB::trim(const std::string &prefix, Timestamp now, peers_indexed &list,
 	auto &by_ban_index = list.get<by_ban_until>();
 	while (by_ban_index.size() > count) {
 		auto lit = --by_ban_index.end();
-		del_db(prefix, lit->address);
+		const NetworkAddress address = lit->address;
+		del_db(prefix, address);
+		if (prefix == GRAY_LIST)
+			forget_anonymity_referral(address);
 		by_ban_index.erase(lit);
 	}
 }
@@ -234,6 +237,96 @@ void PeerDB::merge_peerlist_from_p2p(const NetworkAddress &addr,
 		delay_connection_attempt(addr, now);
 	}
 	trim(now);
+}
+
+size_t PeerDB::merge_anonymity_peerlist_from_p2p(
+    const NetworkAddress &source, const std::vector<NetworkAddress> &outer_bs, Timestamp now) {
+	unban(now);
+	auto &source_referrals = anonymity_referrals_by_source[source];
+	size_t accepted        = 0;
+	for (const auto &candidate : outer_bs) {
+		if (!p2p::Socks5::is_anonymity_target(candidate))
+			continue;
+		if (candidate.port == 0 || !config.p2p_proxy_enabled)
+			continue;
+		if (source_referrals.count(candidate) != 0)
+			continue;
+		if (whitelist.get<by_addr>().count(candidate) != 0 || graylist.get<by_addr>().count(candidate) != 0)
+			continue;  // An advertisement cannot claim provenance for a peer learned elsewhere.
+		if (!p2p::AnonymityReferralPolicy::can_accept(source_referrals.size()))
+			break;
+		source_referrals.insert(candidate);
+		anonymity_sources_by_referral[candidate].insert(source);
+		Entry new_entry{};
+		new_entry.address        = candidate;
+		new_entry.shuffle_random = crypto::rand<uint64_t>();
+		graylist.insert(new_entry);  // Transient until a validated outbound session promotes it.
+		++accepted;
+	}
+	trim(now);
+	return accepted;
+}
+
+void PeerDB::record_anonymity_connection_success(const NetworkAddress &addr) {
+	auto candidate_it = anonymity_sources_by_referral.find(addr);
+	if (candidate_it == anonymity_sources_by_referral.end())
+		return;
+	for (const auto &source : candidate_it->second) {
+		anonymity_referral_failures[source] = 0;
+	}
+	auto gray_it = graylist.get<by_addr>().find(addr);
+	if (gray_it != graylist.get<by_addr>().end())
+		update_db(GRAY_LIST, *gray_it);  // Persist only after the remote handshake validates.
+	forget_anonymity_referral(addr);
+}
+
+void PeerDB::forget_anonymity_referral(const NetworkAddress &addr) {
+	auto candidate_it = anonymity_sources_by_referral.find(addr);
+	if (candidate_it == anonymity_sources_by_referral.end())
+		return;
+	for (const auto &source : candidate_it->second) {
+		auto source_it = anonymity_referrals_by_source.find(source);
+		if (source_it == anonymity_referrals_by_source.end())
+			continue;
+		source_it->second.erase(addr);
+		if (source_it->second.empty())
+			anonymity_referrals_by_source.erase(source_it);
+	}
+	anonymity_sources_by_referral.erase(candidate_it);
+}
+
+void PeerDB::record_anonymity_connection_failure(const NetworkAddress &addr, Timestamp now) {
+	auto candidate_it = anonymity_sources_by_referral.find(addr);
+	if (candidate_it == anonymity_sources_by_referral.end())
+		return;
+	const std::set<NetworkAddress> sources = candidate_it->second;
+	for (const auto &source : sources) {
+		size_t &failures = anonymity_referral_failures[source];
+		++failures;
+		if (!p2p::AnonymityReferralPolicy::should_ban(failures))
+			continue;
+		set_peer_banned(source, "too many unreachable anonymity referrals", now);
+		auto source_it = anonymity_referrals_by_source.find(source);
+		if (source_it != anonymity_referrals_by_source.end()) {
+			for (const auto &referred : source_it->second) {
+				auto reverse_it = anonymity_sources_by_referral.find(referred);
+				if (reverse_it == anonymity_sources_by_referral.end())
+					continue;
+				reverse_it->second.erase(source);
+				if (reverse_it->second.empty()) {
+					anonymity_sources_by_referral.erase(reverse_it);
+					auto &gray_by_addr = graylist.get<by_addr>();
+					auto gray_it       = gray_by_addr.find(referred);
+					if (gray_it != gray_by_addr.end()) {
+						gray_by_addr.erase(gray_it);
+						del_db(GRAY_LIST, referred);
+					}
+				}
+			}
+			anonymity_referrals_by_source.erase(source_it);
+		}
+		failures = 0;
+	}
 }
 
 void PeerDB::merge_peerlist_from_p2p(const NetworkAddress &addr,
@@ -369,7 +462,9 @@ void PeerDB::delay_connection_attempt(const NetworkAddress &addr, Timestamp now)
 }
 
 void PeerDB::set_peer_banned(const NetworkAddress &addr, const std::string &ban_reason, Timestamp now) {
-	m_log(logging::INFO) << "PeerDB peer " << addr << " banned, reason= " << ban_reason;
+	m_log(logging::INFO) << "PeerDB peer "
+	                     << (config.log_peer_addresses ? addr.to_string() : "<peer-redacted>")
+	                     << " banned, reason= " << ban_reason;
 	update_lists(addr, [&](Entry &entry) {
 		entry.ban_reason = ban_reason;
 		entry.ban_until  = now + fix_time_delta(is_priority(entry.address) ? config.p2p_reconnect_period_priority
@@ -466,7 +561,8 @@ bool PeerDB::get_peer_to_connect(NetworkAddress &best_address,
 		    now + fix_time_delta(is_priority_or_seed(entry.address) ? config.p2p_reconnect_period_priority
 		                                                            : config.p2p_reconnect_period);
 		graylist.insert(entry);
-		update_db(GRAY_LIST, entry);
+		if (anonymity_sources_by_referral.count(entry.address) == 0)
+			update_db(GRAY_LIST, entry);
 		best_address = entry.address;
 		return true;
 	}

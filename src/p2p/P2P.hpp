@@ -59,6 +59,8 @@ public:
 	void send_shutdown();
 	void disconnect(const std::string &ban_reason);  // empty for no ban
 	bool is_connected() const;
+	bool target_connection_failed() const { return m_target_connection_failed; }
+	void mark_handshake_completed() { m_handshake_completed = true; }
 	virtual ~P2PClient() = default;
 	P2PProtocol *get_protocol() const { return m_protocol.get(); }
 	void update_my_port(uint16_t port) { address.port = port; }
@@ -97,6 +99,8 @@ private:
 
 	std::deque<common::VectorStream> responses;
 	bool waiting_shutdown = false;
+	bool m_handshake_completed = false;
+	bool m_target_connection_failed = false;
 };
 
 class P2P {

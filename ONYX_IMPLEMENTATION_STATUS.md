@@ -81,6 +81,10 @@ unreachable until the release gates below are independently satisfied.
    bounded negotiation and no local destination lookup. Canonical v3 onion and I2P b32 destination
    framing is fail-closed, and protocol v6 carries canonical proxy-only onion/I2P identities through
    configuration, advertisement and peer-DB persistence without changing v1-v5 numeric encoding.
+   Untrusted anonymity peer lists are graylisted and limited to 16 unresolved referrals per source.
+   Only a validated outbound handshake clears referral provenance; eight consecutive unreachable
+   referrals ban the source and remove its sole-source graylist entries. Proxy negotiation failures
+   before destination selection do not blame the advertised destination.
    The real Linux daemon is CI-qualified against an adversarial SOCKS5 process: successful relays are
    source-distinguished from direct connections, proxy rejection has no direct fallback, and an onion
    `getaddrinfo` tripwire proves there is no local destination lookup. Remaining: real Tor/I2P
@@ -130,7 +134,9 @@ amount sets, decoy sets, hashes and raw transaction bodies. This prevents accide
 logging but cannot make an untrusted remote operator cryptographically trustworthy.
 Peer addresses are redacted from connection-level logs unless an explicit diagnostic option is set,
 archive source-IP attribution has a clearly named opt-in and remains off by default, and PeerDB v3
-to v4 replacement now tells operators that peer discovery will restart.
+to v4 replacement now tells operators that peer discovery will restart. Anonymity referrals remain
+untrusted until an outbound handshake succeeds, with per-source admission and failure bounds limiting
+peer-list poisoning.
 
 ### Release readiness
 

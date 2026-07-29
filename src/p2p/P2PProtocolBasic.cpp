@@ -200,6 +200,7 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Request &&req) {
 	BinaryArray raw_msg = LevinProtocol::send(msg);
 	send(std::move(raw_msg));
 	peer_version = req.node_data.version;
+	get_client()->mark_handshake_completed();
 	set_peer_sync_data(req.payload_data);
 	peer_unique_number = req.node_data.peer_id;
 	update_my_port(req.node_data.my_port);  // We set port to unknown on accept
@@ -232,6 +233,7 @@ void P2PProtocolBasic::msg_handshake(p2p::Handshake::Response &&req) {
 		return disconnect("204 invalid anonymity_peerlist");
 	peer_unique_number = req.node_data.peer_id;
 	set_peer_sync_data(req.payload_data);
+	get_client()->mark_handshake_completed();
 	std::cout << "P2p p2p::Handshake response version=" << int(req.node_data.version)
 	          << " unique_number=" << req.node_data.peer_id << " current_height=" << req.payload_data.current_height
 	          << " local_peerlist.size=" << req.local_peerlist.size() << " peerlist.size=" << req.peerlist.size()

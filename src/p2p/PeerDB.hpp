@@ -10,6 +10,7 @@
 
 #include "Core/Currency.hpp"
 #include "logging/LoggerMessage.hpp"
+#include "p2p/AnonymityReferralPolicy.hpp"
 #include "p2p/P2pProtocolTypes.hpp"
 #include "platform/DB.hpp"
 #include "platform/Network.hpp"
@@ -25,7 +26,6 @@ class Config;
 class PeerDB {
 public:
 	typedef platform::DB DB;
-
 	struct Entry : public PeerlistEntry {
 		Timestamp next_connection_attempt = 0;
 		uint64_t shuffle_random = 0;  // We assign random number to each record, for deterministic order of equal items
@@ -61,6 +61,10 @@ public:
 	    const NetworkAddress &addr, const std::vector<NetworkAddress> &outer_bs, Timestamp now);
 	void merge_peerlist_from_p2p(
 	    const NetworkAddress &addr, const std::vector<PeerlistEntryLegacy> &outer_bs, Timestamp now);
+	size_t merge_anonymity_peerlist_from_p2p(
+	    const NetworkAddress &source, const std::vector<NetworkAddress> &outer_bs, Timestamp now);
+	void record_anonymity_connection_success(const NetworkAddress &addr);
+	void record_anonymity_connection_failure(const NetworkAddress &addr, Timestamp now);
 	bool add_incoming_peer(const NetworkAddress &addr, Timestamp now);
 	std::vector<NetworkAddress> get_peerlist_to_p2p(const NetworkAddress &for_addr, Timestamp now, size_t depth);
 	std::vector<AnonymityNetworkAddress> get_anonymity_peerlist_to_p2p(Timestamp now, size_t depth);
@@ -93,6 +97,9 @@ private:
 	const Config &config;
 	peers_indexed whitelist;
 	peers_indexed graylist;
+	std::map<NetworkAddress, std::set<NetworkAddress>> anonymity_referrals_by_source;
+	std::map<NetworkAddress, std::set<NetworkAddress>> anonymity_sources_by_referral;
+	std::map<NetworkAddress, size_t> anonymity_referral_failures;
 	DB db;
 	platform::Timer commit_timer;
 	void db_commit();
@@ -101,6 +108,7 @@ private:
 	void read_db(const std::string &prefix, peers_indexed &list);
 	void update_db(const std::string &prefix, const Entry &entry);
 	void del_db(const std::string &prefix, const NetworkAddress &addr);
+	void forget_anonymity_referral(const NetworkAddress &addr);
 	void trim(Timestamp now);
 	void trim(const std::string &prefix, Timestamp now, peers_indexed &list, size_t count);
 	void unban(Timestamp now);

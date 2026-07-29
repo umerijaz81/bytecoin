@@ -46,6 +46,8 @@ void P2PClient::set_protocol(std::unique_ptr<P2PProtocol> &&protocol) {
 
 bool P2PClient::connect(const NetworkAddress &target, const NetworkAddress *proxy) {
 	address              = target;
+	m_handshake_completed = false;
+	m_target_connection_failed = false;
 	socks5_output_offset = 0;
 	socks5_input.clear();
 	if (proxy == nullptr) {
@@ -54,7 +56,9 @@ bool P2PClient::connect(const NetworkAddress &target, const NetworkAddress *prox
 		socks5_output.clear();
 		if (!target.host.empty())
 			return false;  // Anonymity domains are proxy-only and must never reach a resolver.
-		return sock.connect(common::ip_address_to_string(target.ip), target.port);
+		const bool started = sock.connect(common::ip_address_to_string(target.ip), target.port);
+		m_target_connection_failed = !started;
+		return started;
 	}
 	if (!p2p::Socks5::is_numeric_target(target) && !p2p::Socks5::is_anonymity_target(target))
 		return false;
@@ -181,6 +185,9 @@ void P2PClient::send_shutdown() {
 }
 
 void P2PClient::disconnect(const std::string &ban_reason) {
+	if (!incoming && !m_handshake_completed &&
+	    (socks5_state == Socks5State::READY || socks5_state == Socks5State::CONNECT_READ))
+		m_target_connection_failed = true;
 	socks5_timer.cancel();
 	buffer.clear();
 	receiving_body        = false;
@@ -220,9 +227,16 @@ void P2PClient::advance_state(bool called_from_runloop) {
 	}
 }
 
-void P2PClient::on_socket_disconnect() { disconnect(std::string{}); }
+void P2PClient::on_socket_disconnect() {
+	if (!incoming && !m_handshake_completed &&
+	    (socks5_state == Socks5State::READY || socks5_state == Socks5State::CONNECT_READ))
+		m_target_connection_failed = true;
+	disconnect(std::string{});
+}
 
 void P2P::on_client_disconnected(P2PClient *who, std::string ban_reason) {
+	if (!who->is_incoming() && who->target_connection_failed())
+		peers.record_anonymity_connection_failure(who->get_address(), get_local_time());
 	if (!ban_reason.empty())
 		peers.set_peer_banned(who->get_address(), ban_reason, get_local_time());
 	const bool incoming = who->is_incoming();
@@ -289,6 +303,8 @@ bool P2P::connect_one(const NetworkAddress &address) {
 	}
 	const NetworkAddress *proxy = m_config.p2p_proxy_enabled ? &m_config.p2p_proxy : nullptr;
 	if (!next_client[incoming]->connect(address, proxy)) {
+		if (next_client[incoming]->target_connection_failed())
+			peers.record_anonymity_connection_failure(address, get_local_time());
 		return false;
 	}
 	P2PClient *who                 = next_client[incoming].get();

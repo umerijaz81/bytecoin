@@ -36,6 +36,7 @@ layers (`src/Core/Node*.cpp`, `WalletSync.cpp`, `Archive.cpp`, `Config.cpp`).
 | Tip-keyed supply-audit cache | `src/Core/Node.*` | The potentially large snapshot is audited once per exact block hash. Repeated calls return the cached response, while any forward tip change or same-height reorganization misses the cache. |
 | Hosted-node sensitive-body omission | `src/Core/WalletNode.cpp`, wallet/node RPC docs | Internal logs omit transaction construction bodies, requested legacy amounts, returned decoys, hashes and raw transactions. The remaining operator-observable decoy/broadcast correlation is documented and requires a local/trusted node or the Onyx path to avoid. |
 | Opt-in peer attribution | `src/Core/Config.*`, `Node*.cpp`, `Archive.cpp`, `PeerDB.cpp` | Archive source IPs and log-visible peer addresses are both off by default and require explicit privacy-sensitive options; the v3-to-v4 PeerDB reset is announced as rediscovery rather than an unexplained wipe. |
+| Bounded anonymity referrals | `src/p2p/PeerDB.*`, `P2P.*`, `P2PProtocolBasic.cpp` | Anonymity peer advertisements stay gray until a validated outbound handshake, are capped at 16 unresolved entries per source, and eight consecutive target failures ban the source and delete sole-source poison. Local proxy negotiation failures are not attributed to the destination. |
 | Multicast disabled on mainnet | `src/Core/Config.cpp:63` | Prevents LAN peer-enumeration deanonymization. |
 
 No coin-forging, signature-forging, or double-spend vector was found. **All findings below
@@ -114,8 +115,9 @@ only the existing diffusion message, and a node with no eligible v5 peer safely 
 
 This reduces first-spy correlation but does not provide transport anonymity. A Sybil observer,
 host/network telemetry, or a small adversarial topology can still identify origins. The implementation
-also still requires multi-node adversarial simulation, sustained fuzzing, testnet soak, peer-scoring
-work and independent review. Outbound connections can now use the fail-closed numeric-address SOCKS5
+also still requires sustained fuzzing, public testnet soak and independent review. A deterministic
+large-topology simulation, real multi-daemon qualification, bounded peer scoring and poisoning-resistant
+anonymity referral admission are CI-gated. Outbound connections can now use the fail-closed numeric-address SOCKS5
 transport (`--p2p-proxy`). Real-daemon CI now proves successful SOCKS relay, rejection without direct
 fallback and no local onion lookup using a DNS tripwire. Real Tor/I2P interoperability,
 cross-platform packet capture and independent review remain release requirements.

@@ -346,6 +346,7 @@ void Node::P2PProtocolBytecoin::on_msg_handshake(p2p::Handshake::Request &&req) 
 }
 
 void Node::P2PProtocolBytecoin::on_msg_handshake(p2p::Handshake::Response &&req) {
+	m_node->m_peer_db->record_anonymity_connection_success(get_address());
 	m_node->m_peer_db->merge_peerlist_from_p2p(get_address(), req.local_peerlist, m_node->m_p2p.get_local_time());
 	m_node->m_peer_db->merge_peerlist_from_p2p(get_address(), req.peerlist, m_node->m_p2p.get_local_time());
 	if (config.p2p_proxy_enabled && req.node_data.version >= P2PProtocolVersion::ANONYMITY_ADDRESSES) {
@@ -359,7 +360,7 @@ void Node::P2PProtocolBytecoin::on_msg_handshake(p2p::Handshake::Response &&req)
 			advertised.port = req.node_data.anonymity_port;
 			anonymity_peers.push_back(advertised);
 		}
-		m_node->m_peer_db->merge_peerlist_from_p2p(
+		m_node->m_peer_db->merge_anonymity_peerlist_from_p2p(
 		    get_address(), anonymity_peers, m_node->m_p2p.get_local_time());
 	}
 	after_handshake();

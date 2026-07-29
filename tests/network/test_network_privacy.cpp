@@ -8,6 +8,7 @@
 #include <vector>
 #include "common/StringTools.hpp"
 #include "p2p/Dandelion.hpp"
+#include "p2p/AnonymityReferralPolicy.hpp"
 #include "p2p/Socks5.hpp"
 
 namespace {
@@ -28,6 +29,18 @@ void require_rejected(Function function, const char *message) {
 }
 
 void test_dandelion_policy() {
+	require(cn::p2p::AnonymityReferralPolicy::can_accept(
+	            cn::p2p::AnonymityReferralPolicy::MAX_REFERRALS_PER_SOURCE - 1),
+	    "anonymity referral cap rejected below boundary");
+	require(!cn::p2p::AnonymityReferralPolicy::can_accept(
+	            cn::p2p::AnonymityReferralPolicy::MAX_REFERRALS_PER_SOURCE),
+	    "anonymity referral cap accepted at boundary");
+	require(!cn::p2p::AnonymityReferralPolicy::should_ban(
+	            cn::p2p::AnonymityReferralPolicy::MAX_CONSECUTIVE_FAILURES - 1),
+	    "anonymity referrer banned below failure boundary");
+	require(cn::p2p::AnonymityReferralPolicy::should_ban(
+	            cn::p2p::AnonymityReferralPolicy::MAX_CONSECUTIVE_FAILURES),
+	    "anonymity referrer survived failure boundary");
 	require(common::constant_time_equal("user:secret", "user:secret"), "constant-time equality rejected equal input");
 	require(!common::constant_time_equal("user:secret", "user:secreu"), "constant-time equality accepted mismatch");
 	require(!common::constant_time_equal("user:secret", "user:secret-long"), "constant-time equality accepted length mismatch");
