@@ -1,0 +1,68 @@
+name: Emscripten wallet boundary
+
+on:
+  push:
+    paths:
+      - ".github/workflows/emscripten-wallet.yml"
+      - "release/dependencies.lock.json"
+      - "src/Core/Wallet*"
+      - "src/common/**"
+      - "src/crypto/**"
+      - "src/http/**"
+      - "src/platform/DBmemory.*"
+      - "src/platform/IndexDB.*"
+      - "src/platform/Network.*"
+      - "src/seria/**"
+  pull_request:
+    paths:
+      - ".github/workflows/emscripten-wallet.yml"
+      - "release/dependencies.lock.json"
+      - "src/Core/Wallet*"
+      - "src/common/**"
+      - "src/crypto/**"
+      - "src/http/**"
+      - "src/platform/DBmemory.*"
+      - "src/platform/IndexDB.*"
+      - "src/platform/Network.*"
+      - "src/seria/**"
+
+permissions:
+  contents: read
+
+jobs:
+  browser-wallet:
+    name: Browser wallet compile boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: 3.1.74
+          actions-cache-folder: emsdk-cache
+      - name: Fetch locked Boost headers
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output boost.tar.gz \
+            https://archives.boost.io/release/1.91.0/source/boost_1_91_0.tar.gz
+          echo "5734305f40a76c30f951c9abd409a45a2a19fb546efe4162119250bbe4d3a463  boost.tar.gz" |
+            sha256sum --check --strict
+          mkdir boost
+          tar --extract --gzip --file boost.tar.gz --directory boost --strip-components=1
+      - name: Compile Emscripten-only wallet and IndexedDB paths
+        run: |
+          em++ -std=c++14 -Werror=return-type \
+            -DBOOST_BIND_NO_PLACEHOLDERS=1 \
+            -DBOOST_ERROR_CODE_HEADER_ONLY=1 \
+            -DBOOST_SYSTEM_NO_DEPRECATED=1 \
+            -DBOOST_DATE_TIME_NO_LIB=1 \
+            -DBOOST_SYSTEM_NO_LIB=1 \
+            -DBOOST_REGEX_NO_LIB=1 \
+            -Isrc -Ivendor -Ivendor/randomx/src -Iboost \
+            -fsyntax-only \
+            src/Core/WalletHD.cpp \
+            src/Core/WalletNodeExt.cpp \
+            src/platform/DBmemory.cpp \
+            src/platform/IndexDB.cpp

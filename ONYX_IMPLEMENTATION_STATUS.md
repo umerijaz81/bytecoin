@@ -136,7 +136,8 @@ The experimental Emscripten wallet no longer stores mnemonic-bearing JSON in pla
 record is a size-bounded, password-derived ChaCha20 envelope with a keyed authentication tag; empty
 passwords, wrong passwords, malformed fields and modified ciphertext fail closed. Existing plaintext
 records are rewritten before wallet-open succeeds, and password rotation is acknowledged only after
-the replacement record is durably accepted by the browser storage API.
+the replacement record is durably accepted by the browser storage API. A pinned Emscripten toolchain
+compiles the browser-only wallet and IndexedDB branches against the locked Boost headers in CI.
 Peer addresses are redacted from connection-level logs unless an explicit diagnostic option is set,
 archive source-IP attribution has a clearly named opt-in and remains off by default, and PeerDB v3
 to v4 replacement now tells operators that peer discovery will restart. Anonymity referrals remain
