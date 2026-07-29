@@ -5,6 +5,7 @@
 #include "Core/Config.hpp"
 #include "Core/Wallet.hpp"
 #include "Core/WalletHD.hpp"
+#include "Core/WalletHDsqlite.hpp"
 #include "Core/WalletLegacy.hpp"
 #include "common/BIPs.hpp"
 #include "common/CommandLine.hpp"
@@ -66,6 +67,63 @@ using namespace cn;
 // test06v.wallet - view-only version of test06.wallet
 
 const std::string tmp_name("../tests/scratchpad/test_wallet_file.tmp");
+const std::string hd_wallet_name("../tests/scratchpad/test_hd_recovery.wallet");
+const std::string hd_backup_name("../tests/scratchpad/test_hd_recovery.backup.wallet");
+const std::string hd_view_name("../tests/scratchpad/test_hd_recovery.view.wallet");
+
+static void test_hd_backup_recovery(const Currency &currency, logging::ILogger &logger) {
+	platform::remove_file(hd_wallet_name);
+	platform::remove_file(hd_backup_name);
+	platform::remove_file(hd_view_name);
+	const std::string mnemonic = cn::Bip32Key::create_random_bip39_mnemonic(128);
+	AccountAddress first_address;
+	std::string first_address_text;
+	{
+		WalletHDsqlite wallet(currency, logger, hd_wallet_name, "original-password", mnemonic, 1700000000,
+		    std::string{}, false);
+		invariant(wallet.create_look_ahead_records(4), "HD wallet address expansion failed");
+		first_address      = wallet.get_first_address();
+		first_address_text = currency.account_address_as_string(first_address);
+		wallet.set_label(first_address_text, "recovery-label");
+		Hash queued_hash{};
+		queued_hash.data[0] = 0x42;
+		wallet.payment_queue_add(queued_hash, BinaryArray{0x01, 0x02, 0x03});
+		wallet.backup(hd_backup_name, "backup-password");
+		wallet.export_wallet(hd_view_name, "view-password", true, true);
+		wallet.set_password("rotated-password");
+	}
+	try {
+		WalletHDsqlite old_password(currency, logger, hd_wallet_name, "original-password", true);
+		invariant(false, "HD wallet accepted password superseded by rotation");
+	} catch (const Wallet::Exception &) {
+	}
+	{
+		WalletHDsqlite rotated(currency, logger, hd_wallet_name, "rotated-password", true);
+		invariant(rotated.get_first_address() == first_address, "password rotation changed HD wallet keys");
+		invariant(rotated.get_actual_records_count() == 4, "password rotation lost HD address count");
+		invariant(rotated.get_label(first_address_text) == "recovery-label", "password rotation lost HD label");
+		invariant(rotated.payment_queue_get().size() == 1, "password rotation lost HD payment queue");
+		invariant(rotated.export_keys() == mnemonic, "password rotation lost HD mnemonic");
+	}
+	{
+		WalletHDsqlite backup(currency, logger, hd_backup_name, "backup-password", true);
+		invariant(backup.get_first_address() == first_address, "HD backup changed wallet keys");
+		invariant(backup.get_actual_records_count() == 4, "HD backup lost address count");
+		invariant(backup.get_label(first_address_text) == "recovery-label", "HD backup lost label");
+		invariant(backup.payment_queue_get().size() == 1, "HD backup lost payment queue");
+		invariant(backup.export_keys() == mnemonic, "HD backup lost mnemonic");
+	}
+	{
+		WalletHDsqlite view(currency, logger, hd_view_name, "view-password", true);
+		invariant(view.is_view_only(), "HD view-only export retained spend authority");
+		invariant(view.can_view_outgoing_addresses(), "HD view-only export lost outgoing visibility");
+		invariant(view.get_first_address() == first_address, "HD view-only export changed first address");
+		invariant(view.get_actual_records_count() == 4, "HD view-only export lost address count");
+	}
+	platform::remove_file(hd_wallet_name);
+	platform::remove_file(hd_backup_name);
+	platform::remove_file(hd_view_name);
+}
 
 static void test_body(const Currency &currency, const std::string &path, const std::string &password,
     const std::vector<std::string> &addresses, bool view_only, bool test_create_addresses) {
@@ -152,6 +210,7 @@ void test_wallet_file(const std::string &path_prefix) {
 	Currency currency(config);
 
 	logging::ConsoleLogger logger;
+	test_hd_backup_recovery(currency, logger);
 	const std::string mnemonic = cn::Bip32Key::create_random_bip39_mnemonic(128);
 	try {
 		WalletHDJson empty_password(currency, logger, mnemonic, 0, std::string{}, std::string{});
