@@ -284,7 +284,11 @@ bool Halo2ProofSystem::extract_authenticated_standard_program_delta(
 bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta) {
-	if (encoded.empty() || next_snapshot == nullptr || delta == nullptr)
+	if (next_snapshot == nullptr || delta == nullptr)
+		return false;
+	next_snapshot->clear();
+	*delta = VerifiedBridgeDelta{};
+	if (encoded.empty())
 		return false;
 	uint8_t *next_ptr = nullptr;
 	size_t next_len   = 0;
@@ -312,7 +316,10 @@ bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t
 
 bool Halo2ProofSystem::verify_bridge(
     const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta) {
-	if (encoded.empty() || delta == nullptr)
+	if (delta == nullptr)
+		return false;
+	*delta = VerifiedBridgeDelta{};
+	if (encoded.empty())
 		return false;
 	VerifiedBridgeDelta result;
 	const int rc = onyx_verify_bridge(encoded.data(), encoded.size(), circuit_k, &result.legacy_amount,
@@ -533,6 +540,8 @@ bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
     BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash) {
 	if (unsigned_bridge == nullptr || ownership_sighash == nullptr)
 		return false;
+	unsigned_bridge->clear();
+	ownership_sighash->fill(0);
 	uint8_t *ptr = nullptr;
 	size_t len = 0;
 	const int rc = onyx_wallet_create_bridge(seed.data(), recipient.data(), expiry_height, fee, legacy_amount,
@@ -555,7 +564,10 @@ bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
 
 bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
     const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge) {
-	if (unsigned_bridge.empty() || finalized_bridge == nullptr)
+	if (finalized_bridge == nullptr)
+		return false;
+	finalized_bridge->clear();
+	if (unsigned_bridge.empty())
 		return false;
 	uint8_t *ptr = nullptr;
 	size_t len = 0;

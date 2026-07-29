@@ -1567,7 +1567,7 @@ mod tests {
         funding.anchor = prestate.root();
         funding.spends[0].nullifier = Nullifier([9; 32]);
         funding.outputs[0].commitment = CanonicalField::from_field(commitment);
-        prestate.apply_bridge(&funding, 30, 0, 0).unwrap();
+        prestate.apply_bridge(&funding, [1; 32], 30, 0, 0).unwrap();
         assert_eq!(prestate.root(), anchor);
         let previous_snapshot = prestate.encode_snapshot();
 
@@ -1982,7 +1982,7 @@ mod tests {
             }],
             programs: vec![],
         };
-        state.apply_bridge(&funding, VALUE, 0, 1).unwrap();
+        state.apply_bridge(&funding, [1; 32], VALUE, 0, 1).unwrap();
         assert_eq!(state.root(), anchor);
         let previous_snapshot = state.encode_snapshot();
         let mut snapshot_ptr = std::ptr::null_mut();

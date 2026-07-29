@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 use ff::PrimeField;
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PoseidonHash, P128Pow5T3};
 use halo2_proofs::pasta::Fp;
+use sha2::{Digest, Sha256};
 
 use crate::program::{ProgramDelta, ProgramEntry, ProgramRegistry};
 use crate::program_context::ProgramContext;
@@ -20,7 +21,8 @@ use crate::transaction::TransactionPreimage;
 use crate::types::{write_varint, DecodeError, Reader};
 
 pub const ONYX_MERKLE_DEPTH: usize = 32;
-const SNAPSHOT_VERSION: u8 = 6;
+const SNAPSHOT_VERSION: u8 = 7;
+const PRE_BRIDGE_REPLAY_SNAPSHOT_VERSION: u8 = 6;
 const ISSUANCE_SNAPSHOT_VERSION: u8 = 5;
 const PROGRAM_COST_SNAPSHOT_VERSION: u8 = 4;
 const PROGRAM_REGISTRY_SNAPSHOT_VERSION: u8 = 3;
@@ -31,6 +33,7 @@ const MAX_BLOCK_PROGRAM_COST: u64 = 20_000_000;
 const MAX_SNAPSHOT_NULLIFIERS: usize = 1_000_000;
 const MAX_SNAPSHOT_ANCHORS: usize = 1_000_000;
 const MAX_SNAPSHOT_PROGRAM_STATES: usize = 1_000_000;
+const BRIDGE_REPLAY_DOMAIN: &[u8] = b"bytecoin.onyx.v6.bridge-replay";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CanonicalField([u8; 32]);
@@ -456,6 +459,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
     pub fn apply_bridge(
         &mut self,
         transaction: &TransactionPreimage,
+        legacy_key_image: [u8; 32],
         legacy_amount: u64,
         fee: u64,
         block_height: u64,
@@ -475,7 +479,19 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
             .circulating_supply
             .checked_add(minted)
             .ok_or(StateError::SupplyOverflow)?;
-        let delta = self.apply_transaction(transaction, block_height)?;
+        let mut hash = Sha256::new();
+        hash.update(BRIDGE_REPLAY_DOMAIN);
+        hash.update(legacy_key_image);
+        let replay_nullifier = Nullifier(hash.finalize().into());
+        let replay_delta = self.nullifiers.apply([&replay_nullifier])?;
+        let mut delta = match self.apply_transaction(transaction, block_height) {
+            Ok(delta) => delta,
+            Err(error) => {
+                self.nullifiers.rollback(replay_delta);
+                return Err(error);
+            }
+        };
+        delta.nullifiers.inserted.extend(replay_delta.inserted);
         self.total_bridged = next_bridged;
         self.total_fees = next_fees;
         self.circulating_supply = next_supply;
@@ -731,6 +747,7 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         let mut reader = Reader::new(input);
         let version = reader.byte()?;
         if version != SNAPSHOT_VERSION
+            && version != PRE_BRIDGE_REPLAY_SNAPSHOT_VERSION
             && version != ISSUANCE_SNAPSHOT_VERSION
             && version != ACCOUNTING_SNAPSHOT_VERSION
             && version != PROGRAM_REGISTRY_SNAPSHOT_VERSION
@@ -1177,7 +1194,11 @@ mod tests {
         let mut bridge = transaction(state.root(), 1, 30);
         bridge.fee = 0;
         bridge.spends.clear();
-        let bridge_delta = state.apply_bridge(&bridge, 30, 5, 1).unwrap();
+        let bridge_delta = state.apply_bridge(&bridge, [1; 32], 30, 5, 1).unwrap();
+        assert_eq!(
+            state.apply_bridge(&bridge, [1; 32], 30, 5, 1).err(),
+            Some(StateError::DuplicateNullifier)
+        );
         assert_eq!(
             (
                 state.total_bridged(),
@@ -1260,6 +1281,8 @@ mod tests {
             ),
             (0, 0, 0)
         );
+        let reapplied = state.apply_bridge(&bridge, [1; 32], 30, 5, 1).unwrap();
+        state.rollback(reapplied);
     }
 
     #[test]

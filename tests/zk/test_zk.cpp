@@ -201,5 +201,74 @@ void test_zk() {
 		std::cout << "  [zk] standard-program deployment and NFT call proving boundary ok" << std::endl;
 	}
 
+	// 7. Exercise the complete bridge adapter boundary: wallet proving, ownership-signature
+	// insertion, proof verification, state application, supply accounting, and replay rejection.
+	{
+		std::array<uint8_t, 32> seed{};
+		seed.fill(3);
+		std::array<uint8_t, 16> network{};
+		network.fill(4);
+		std::array<uint8_t, 91> recipient{};
+		invariant(Halo2ProofSystem::wallet_address(seed, network, 0, &recipient),
+		    "bridge recipient derivation failed");
+		std::array<uint8_t, 32> key_image{};
+		key_image.fill(7);
+		const BinaryArray memo{'b', 'r', 'i', 'd', 'g', 'e'};
+		BinaryArray unsigned_bridge;
+		std::array<uint8_t, 32> ownership_sighash{};
+		invariant(Halo2ProofSystem::wallet_create_bridge(seed, recipient, 100, 5, 30, 42,
+		              key_image, memo, 13, &unsigned_bridge, &ownership_sighash),
+		    "bridge proving failed through C++ adapter");
+		std::array<uint8_t, 64> ownership_signature{};
+		ownership_signature.fill(9);
+		BinaryArray bridge;
+		invariant(Halo2ProofSystem::wallet_finalize_bridge(
+		              unsigned_bridge, ownership_signature, &bridge),
+		    "bridge finalization failed through C++ adapter");
+
+		Halo2ProofSystem::VerifiedBridgeDelta verified;
+		invariant(Halo2ProofSystem::verify_bridge(bridge, 13, &verified),
+		    "wallet bridge proof did not verify through C++ adapter");
+		invariant(verified.legacy_amount == 30 && verified.fee == 5 &&
+		              verified.legacy_stack_index == 42 && verified.legacy_key_image == key_image &&
+		              verified.ownership_sighash == ownership_sighash &&
+		              verified.ownership_signature == ownership_signature,
+		    "verified bridge fields changed across the C ABI");
+
+		BinaryArray state;
+		invariant(Halo2ProofSystem::verify_apply_bridge(
+		              BinaryArray{}, 100, bridge, 13, network, 1, &state, &verified),
+		    "valid bridge state application failed");
+		Halo2ProofSystem::SupplyAudit audit;
+		invariant(Halo2ProofSystem::state_supply_audit(state, &audit),
+		    "bridge supply audit failed");
+		invariant(audit.total_bridged == 30 && audit.total_fees == 5 &&
+		              audit.circulating_supply == 25 && audit.commitment_count == 1,
+		    "bridge supply audit violated value conservation");
+
+		BinaryArray stale_state{0xff};
+		verified.legacy_amount = 99;
+		invariant(!Halo2ProofSystem::verify_apply_bridge(
+		              state, 100, bridge, 13, network, 2, &stale_state, &verified),
+		    "replayed bridge was accepted");
+		invariant(stale_state.empty() && verified.legacy_amount == 0,
+		    "rejected bridge application left stale outputs");
+		BinaryArray stale_bridge{0xff};
+		ownership_sighash.fill(0xff);
+		invariant(!Halo2ProofSystem::wallet_create_bridge(seed, recipient, 100, 30, 30, 42,
+		              key_image, memo, 13, &stale_bridge, &ownership_sighash),
+		    "non-conserving bridge was accepted");
+		const bool bridge_outputs_cleared =
+		    stale_bridge.empty() && ownership_sighash == std::array<uint8_t, 32>{};
+		invariant(bridge_outputs_cleared,
+		    "rejected bridge proving left stale outputs");
+		stale_bridge.assign(1, 0xff);
+		invariant(!Halo2ProofSystem::wallet_finalize_bridge(
+		              BinaryArray{}, ownership_signature, &stale_bridge),
+		    "empty bridge finalization was accepted");
+		invariant(stale_bridge.empty(), "rejected bridge finalization left stale output");
+		std::cout << "  [zk] bridge proving, replay defense, and supply accounting ok" << std::endl;
+	}
+
 	std::cout << "  test_zk: OK" << std::endl;
 }

@@ -1382,6 +1382,7 @@ pub extern "C" fn onyx_verify_apply_bridge(
         if state
             .apply_bridge(
                 &transition,
+                bridge.preimage.legacy_key_image,
                 bridge.preimage.legacy_amount,
                 bridge.preimage.fee,
                 block_height,

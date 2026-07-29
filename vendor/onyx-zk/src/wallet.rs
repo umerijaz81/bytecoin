@@ -1924,7 +1924,9 @@ mod tests {
             outputs: vec![public_output(&wallet.notes()[0])],
             programs: vec![],
         };
-        consensus.apply_bridge(&native_setup, 5, 0, 0).unwrap();
+        consensus
+            .apply_bridge(&native_setup, [1; 32], 5, 0, 0)
+            .unwrap();
         let token_setup = TransactionPreimage {
             network_id: network,
             anchor: consensus.root(),

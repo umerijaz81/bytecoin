@@ -671,7 +671,9 @@ mod tests {
             }],
             programs: vec![],
         };
-        state.apply_bridge(&seed, input_value, 0, 1).unwrap();
+        state
+            .apply_bridge(&seed, [1; 32], input_value, 0, 1)
+            .unwrap();
         assert_eq!(state.root(), anchor);
         let previous_snapshot = state.encode_snapshot();
         let mut snapshot_ptr = std::ptr::null_mut();
