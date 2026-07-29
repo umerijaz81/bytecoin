@@ -54,6 +54,7 @@ jobs:
       - name: Compile Emscripten-only wallet and IndexedDB paths
         run: |
           em++ -std=c++14 -Werror=return-type \
+            -DCRYPTONOTE_NAME='"bytecoin"' \
             -DBOOST_BIND_NO_PLACEHOLDERS=1 \
             -DBOOST_ERROR_CODE_HEADER_ONLY=1 \
             -DBOOST_SYSTEM_NO_DEPRECATED=1 \
