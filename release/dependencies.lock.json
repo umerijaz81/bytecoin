@@ -3,12 +3,12 @@
   "dependencies": [
     {
       "name": "boost",
-      "version": "1.69.0",
+      "version": "1.91.0",
       "kind": "archive",
-      "url": "https://archives.boost.io/release/1.69.0/source/boost_1_69_0.tar.gz",
-      "sha256": "9a2c2819310839ea373f42d69e733c339b4e9a19deab6bfec448281554aa4dbb",
+      "url": "https://archives.boost.io/release/1.91.0/source/boost_1_91_0.tar.gz",
+      "sha256": "5734305f40a76c30f951c9abd409a45a2a19fb546efe4162119250bbe4d3a463",
       "license": "BSL-1.0",
-      "purl": "pkg:generic/boost@1.69.0"
+      "purl": "pkg:generic/boost@1.91.0"
     },
     {
       "name": "openssl",
@@ -44,7 +44,7 @@
       "kind": "vendored",
       "path": "vendor/onyx-zk",
       "lockfile": "vendor/onyx-zk/Cargo.lock",
-      "tree_sha256": "4ced8fe6fc15adb7e6cb3406e8a6fd1cdb4af9254143fd90c652c6bfe92e2b22",
+      "tree_sha256": "60ecd1f13d300f9f01ac311bf060451feb2b444606cb1eda12ddb2b176948b0f",
       "license": "LGPL-3.0-or-later",
       "purl": "pkg:cargo/onyx-zk@0.0.1"
     },
