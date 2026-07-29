@@ -151,8 +151,8 @@ void DBmemory::commit_db_txn() {
 		stream.write(item.second);
 	}
 	async_op =
-	    std::make_unique<AsyncIndexDBOperation>(full_path, committed_state.data(), committed_state.size(), [=]() {
-		    std::cout << "DBmemory::commit_db_txn async op finished" << std::endl;
+	    std::make_unique<AsyncIndexDBOperation>(full_path, committed_state.data(), committed_state.size(), [=](bool success) {
+		    std::cout << "DBmemory::commit_db_txn async op finished success=" << success << std::endl;
 		    async_op.reset();
 	    });
 #endif

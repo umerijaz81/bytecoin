@@ -12,6 +12,7 @@
 #include "logging/ConsoleLogger.hpp"
 #include "platform/DBmemory.hpp"
 #include "platform/PathTools.hpp"
+#include "seria/JsonOutputStream.hpp"
 
 #include "test_wallet_file.hpp"
 
@@ -151,10 +152,45 @@ void test_wallet_file(const std::string &path_prefix) {
 	Currency currency(config);
 
 	logging::ConsoleLogger logger;
-	WalletHDJson wa(currency, logger, cn::Bip32Key::create_random_bip39_mnemonic(128), 0, std::string{});
+	const std::string mnemonic = cn::Bip32Key::create_random_bip39_mnemonic(128);
+	try {
+		WalletHDJson empty_password(currency, logger, mnemonic, 0, std::string{}, std::string{});
+		invariant(false, "browser JSON wallet accepted empty storage password");
+	} catch (const Wallet::Exception &) {
+	}
+	WalletHDJson wa(currency, logger, mnemonic, 0, std::string{}, "storage-password");
 	const auto da = wa.save_json_data();
-	WalletHDJson wa2(currency, logger, da);
+	invariant(da.find(mnemonic) == std::string::npos, "encrypted JSON wallet leaked mnemonic");
+	WalletHDJson wa2(currency, logger, da, "storage-password");
 	invariant(wa.get_first_address() == wa2.get_first_address(), "");
+	invariant(wa2.export_keys() == mnemonic, "encrypted JSON wallet mnemonic recovery failed");
+	const std::string legacy_plaintext = seria::to_json_value(wa).to_string();
+	WalletHDJson legacy_migration(currency, logger, legacy_plaintext, "migration-password");
+	invariant(legacy_migration.needs_encryption_migration(), "plaintext JSON wallet migration was not requested");
+	const std::string migrated = legacy_migration.save_json_data();
+	invariant(migrated.find(mnemonic) == std::string::npos, "migrated JSON wallet leaked mnemonic");
+	WalletHDJson migrated_wallet(currency, logger, migrated, "migration-password");
+	invariant(!migrated_wallet.needs_encryption_migration(), "encrypted JSON wallet requested another migration");
+	invariant(migrated_wallet.get_first_address() == wa.get_first_address(), "JSON wallet migration changed keys");
+	try {
+		WalletHDJson wrong_password(currency, logger, da, "wrong-password");
+		invariant(false, "encrypted JSON wallet accepted wrong password");
+	} catch (const Wallet::Exception &) {
+	}
+	std::string tampered = da;
+	const auto ciphertext_pos = tampered.find("\"ciphertext\":\"");
+	invariant(ciphertext_pos != std::string::npos, "encrypted JSON wallet ciphertext missing");
+	const size_t nibble = ciphertext_pos + std::string("\"ciphertext\":\"").size();
+	tampered[nibble] = tampered[nibble] == '0' ? '1' : '0';
+	try {
+		WalletHDJson modified(currency, logger, tampered, "storage-password");
+		invariant(false, "encrypted JSON wallet accepted modified ciphertext");
+	} catch (const Wallet::Exception &) {
+	}
+	wa.set_password("rotated-password");
+	const auto rotated = wa.save_json_data();
+	WalletHDJson wa3(currency, logger, rotated, "rotated-password");
+	invariant(wa.get_first_address() == wa3.get_first_address(), "encrypted JSON wallet password rotation failed");
 
 	test_single_file(currency, path_prefix + "/test01.simplewallet.wallet", "",
 	    {"24xTx43fFtNBUn5f6Fj1wC7y8JsbD4N1XS2s3Q8HzWxtfvERccTPX6e5ua"

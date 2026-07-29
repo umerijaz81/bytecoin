@@ -127,14 +127,29 @@ bool WalletNodeExt::on_ext_create_wallet(http::Client *who, http::RequestBody &&
 #ifdef __EMSCRIPTEN__
 	std::cout << "on_ext_create_wallet start" << std::endl;
 	auto wallet_hd = std::make_unique<WalletHDJson>(
-	    m_currency, m_log.get_logger(), request.mnemonic, request.creation_timestamp, request.mnemonic_password);
+	    m_currency, m_log.get_logger(), request.mnemonic, request.creation_timestamp, request.mnemonic_password,
+	    request.wallet_password);
 	wallet_hd->create_look_ahead_records(request.address_count);
 	auto json_data = wallet_hd->save_json_data();
 	wallet         = std::move(wallet_hd);
-	wallet_file_op = std::make_unique<platform::AsyncIndexDBOperation>(wallet->get_cache_name() + ".wallet.memory",
-	    json_data.data(), json_data.size(), [=]() { std::cout << "on_ext_create_wallet wallet saved" << std::endl; });
 	ext_who        = who;
-	open_wallet_cache(raw_request, raw_js_request);
+	wallet_file_op = std::make_unique<platform::AsyncIndexDBOperation>(wallet->get_cache_name() + ".wallet.memory",
+	    json_data.data(), json_data.size(),
+	    [=](bool success) {
+		    std::cout << "on_ext_create_wallet wallet saved success=" << success << std::endl;
+		    if (success) {
+			    open_wallet_cache(raw_request, raw_js_request);
+			    return;
+		    }
+		    if (!ext_who)
+			    return;
+		    http::ResponseBody http_response(raw_request.r);
+		    http_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
+		    http_response.r.status = 200;
+		    http_response.set_body(json_rpc::create_error_response_body(
+		        json_rpc::Error(api::WALLET_FILE_WRITE_ERROR, "Cannot persist encrypted wallet"), raw_js_request));
+		    http::Server::write(ext_who, std::move(http_response));
+	    });
 	return false;
 #else
 	response.wallet_file = request.wallet_file;
@@ -199,11 +214,59 @@ bool WalletNodeExt::on_ext_open_wallet(http::Client *who, http::RequestBody &&ra
 	wallet_file_op =
 	    std::make_unique<platform::AsyncIndexDBOperation>(request.wallet_file, [=](const char *data, size_t size) {
 		    std::cout << "on_ext_open_wallet wallet loaded size=" << size << std::endl;
-		    if (data) {
-			    std::string json_data(data, size);
-			    wallet = std::make_unique<WalletHDJson>(m_currency, m_log.get_logger(), json_data);
+		    try {
+			    if (data) {
+				    std::string json_data(data, size);
+				    auto json_wallet = std::make_unique<WalletHDJson>(
+				        m_currency, m_log.get_logger(), json_data, request.wallet_password);
+				    const bool migrate = json_wallet->needs_encryption_migration();
+				    wallet             = std::move(json_wallet);
+				    if (migrate) {
+					    const std::string encrypted = static_cast<WalletHDJson *>(wallet.get())->save_json_data();
+					    wallet_file_op = std::make_unique<platform::AsyncIndexDBOperation>(
+					        request.wallet_file, encrypted.data(), encrypted.size(), [=](bool success) {
+						        if (success) {
+							        open_wallet_cache(raw_request, raw_js_request);
+							        return;
+						        }
+						        if (!ext_who)
+							        return;
+						        http::ResponseBody http_response(raw_request.r);
+						        http_response.r.headers.push_back(
+						            {"Content-Type", "application/json; charset=utf-8"});
+						        http_response.r.status = 200;
+						        http_response.set_body(json_rpc::create_error_response_body(
+						            json_rpc::Error(api::WALLET_FILE_WRITE_ERROR,
+						                "Cannot migrate plaintext wallet to encrypted storage"),
+						            raw_js_request));
+						        http::Server::write(ext_who, std::move(http_response));
+					        });
+					    return;
+				    }
+			    }
+			    open_wallet_cache(raw_request, raw_js_request);
+		    } catch (const Wallet::Exception &ex) {
+			    wallet.reset();
+			    if (!ext_who)
+				    return;
+			    http::ResponseBody http_response(raw_request.r);
+			    http_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
+			    http_response.r.status = 200;
+			    http_response.set_body(json_rpc::create_error_response_body(
+			        json_rpc::Error(ex.return_code, "Wallet file invalid or wrong password"), raw_js_request));
+			    http::Server::write(ext_who, std::move(http_response));
+		    } catch (const std::exception &) {
+			    wallet.reset();
+			    if (!ext_who)
+				    return;
+			    http::ResponseBody http_response(raw_request.r);
+			    http_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
+			    http_response.r.status = 200;
+			    http_response.set_body(json_rpc::create_error_response_body(
+			        json_rpc::Error(api::WALLET_FILE_DECRYPT_ERROR, "Wallet file invalid or wrong password"),
+			        raw_js_request));
+			    http::Server::write(ext_who, std::move(http_response));
 		    }
-		    open_wallet_cache(raw_request, raw_js_request);
 	    });
 	return false;
 #else
@@ -248,12 +311,39 @@ bool WalletNodeExt::on_ext_open_wallet(http::Client *who, http::RequestBody &&ra
 #endif
 }
 
-bool WalletNodeExt::on_ext_set_password(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+bool WalletNodeExt::on_ext_set_password(http::Client *who, http::RequestBody &&raw_request,
+    json_rpc::Request &&raw_js_request,
     api::walletd::ExtSetPassword::Request &&request, api::walletd::ExtSetPassword::Response &) {
 	check_wallet_open();
 	wallet->set_password(request.wallet_password);
+#ifdef __EMSCRIPTEN__
+	auto *json_wallet = dynamic_cast<WalletHDJson *>(wallet.get());
+	invariant(json_wallet != nullptr, "Emscripten wallet must use encrypted JSON storage");
+	const std::string json_data = json_wallet->save_json_data();
+	ext_who                    = who;
+	wallet_file_op = std::make_unique<platform::AsyncIndexDBOperation>(
+	    wallet->get_cache_name() + ".wallet.memory", json_data.data(), json_data.size(),
+	    [=](bool success) {
+		    if (!ext_who)
+			    return;
+		    http::ResponseBody http_response(raw_request.r);
+		    http_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
+		    http_response.r.status = 200;
+		    if (success) {
+			    api::walletd::ExtSetPassword::Response response;
+			    http_response.set_body(json_rpc::create_response_body(response, raw_js_request));
+			    m_log(logging::INFO) << "Successfully persisted new browser wallet password";
+		    } else {
+			    http_response.set_body(json_rpc::create_error_response_body(
+			        json_rpc::Error(api::WALLET_FILE_WRITE_ERROR, "Cannot persist encrypted wallet"), raw_js_request));
+		    }
+		    http::Server::write(ext_who, std::move(http_response));
+	    });
+	return false;
+#else
 	m_log(logging::INFO) << "Successfully set new password";
 	return true;
+#endif
 }
 
 bool WalletNodeExt::on_ext_close_wallet(http::Client *, http::RequestBody &&, json_rpc::Request &&,

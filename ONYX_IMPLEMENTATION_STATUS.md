@@ -132,6 +132,11 @@ Wallet and node documentation now states the legacy remote-decoy correlation lim
 privacy sync flag is visible in walletd help, and walletd's internal logs omit construction requests,
 amount sets, decoy sets, hashes and raw transaction bodies. This prevents accidental hosted-service
 logging but cannot make an untrusted remote operator cryptographically trustworthy.
+The experimental Emscripten wallet no longer stores mnemonic-bearing JSON in plaintext. Its IndexedDB
+record is a size-bounded, password-derived ChaCha20 envelope with a keyed authentication tag; empty
+passwords, wrong passwords, malformed fields and modified ciphertext fail closed. Existing plaintext
+records are rewritten before wallet-open succeeds, and password rotation is acknowledged only after
+the replacement record is durably accepted by the browser storage API.
 Peer addresses are redacted from connection-level logs unless an explicit diagnostic option is set,
 archive source-IP attribution has a clearly named opt-in and remains off by default, and PeerDB v3
 to v4 replacement now tells operators that peer discovery will restart. Anonymity referrals remain

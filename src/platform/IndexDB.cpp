@@ -72,7 +72,7 @@ void AsyncIndexDBOperation::handle_result(emscripten_fetch_t *was_fetch, bool su
 		o_handler(success ? was_fetch->data : nullptr, success ? was_fetch->numBytes : 0);
 		// here this might be deleted
 	} else if (s_handler) {
-		s_handler();
+		s_handler(success);
 		// here this might be deleted
 	}
 	emscripten_fetch_close(was_fetch);

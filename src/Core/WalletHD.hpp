@@ -43,7 +43,7 @@ public:
 		Signature view_secrets_signature;
 		size_t address_count = 0;
 	};
-	void set_password(const std::string &password) override {}  // TODO, later
+	void set_password(const std::string &password) override;
 
 	bool is_view_only() const override { return m_spend_secret_key == SecretKey{}; }
 	bool is_amethyst() const override { return true; }
@@ -54,16 +54,16 @@ public:
 	    std::vector<AccountAddress> *addresses, bool *rescan_from_ct) override;
 	bool get_record(const AccountAddress &, size_t *index, WalletRecord *record) const override;
 	void export_wallet(const std::string &export_path, const std::string &new_password, bool view_only,
-	    bool view_outgoing_addresses) const override {}  // TODO
+	    bool view_outgoing_addresses) const override;
 	std::string export_viewonly_wallet_string(
 	    const std::string &new_password, bool view_outgoing_addresses) const override;
-	std::string export_keys() const override { return std::string{}; }  // TODO
+	std::string export_keys() const override;
 	// Date first amethyst addresses appeared in stagenet blockchain - 02/28/2019 @ 8:03am (UTC)
 	Timestamp get_oldest_timestamp() const override;
 	bool on_first_output_found(Timestamp ts) override;
 	bool create_look_ahead_records(size_t count) override;
 
-	void backup(const std::string &dst_name, const std::string &pass) const override {}  // TODO
+	void backup(const std::string &dst_name, const std::string &pass) const override;
 
 	std::vector<BinaryArray> payment_queue_get() const override;
 
@@ -82,13 +82,20 @@ public:
 
 class WalletHDJson : public WalletHDBase {
 	std::string m_mnemonic, m_mnemonic_password;
+	std::string m_storage_password;
+	bool m_needs_encryption_migration = false;
 
 public:
-	WalletHDJson(const Currency &currency, logging::ILogger &log, const std::string &json_data);
+	WalletHDJson(const Currency &currency, logging::ILogger &log, const std::string &json_data,
+	    const std::string &storage_password = std::string{});
 	WalletHDJson(const Currency &currency, logging::ILogger &log, const std::string &mnemonic,
-	    Timestamp creation_timestamp, const std::string &mnemonic_password);
+	    Timestamp creation_timestamp, const std::string &mnemonic_password,
+	    const std::string &storage_password = std::string{});
 	void ser_members(seria::ISeria &s);
+	void set_password(const std::string &password) override;
+	std::string export_keys() const override;
 	std::string save_json_data() const;
+	bool needs_encryption_migration() const { return m_needs_encryption_migration; }
 };
 
 }  // namespace cn

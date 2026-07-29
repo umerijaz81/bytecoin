@@ -25,6 +25,8 @@ using namespace common;
 using namespace crypto;
 
 static const std::string current_version = "CryptoNoteWallet1";
+static const std::string json_envelope_version = "BytecoinWalletHDJsonChaCha20V1";
+static constexpr size_t MAX_JSON_WALLET_BYTES  = 1024 * 1024;
 #ifdef __EMSCRIPTEN__
 static const size_t GENERATE_AHEAD = 2000;  // TODO - move to better place
 #else
@@ -351,10 +353,109 @@ std::string WalletHDBase::export_viewonly_wallet_string(
 	return base58::encode_addr(parameters::VIEWONLYWALLET_BASE58_PREFIX, seria::to_binary(ws));
 }
 
-WalletHDJson::WalletHDJson(const Currency &currency, logging::ILogger &log, const std::string &json_data)
-    : WalletHDBase(currency, log) {
+void WalletHDBase::set_password(const std::string &) {
+	throw std::runtime_error("Password rotation is unsupported for this wallet storage backend");
+}
+
+void WalletHDBase::export_wallet(
+    const std::string &, const std::string &, bool, bool) const {
+	throw std::runtime_error("Filesystem wallet export is unsupported for this wallet storage backend");
+}
+
+std::string WalletHDBase::export_keys() const {
+	throw std::runtime_error("Key export is unsupported for view-only wallet storage");
+}
+
+void WalletHDBase::backup(const std::string &, const std::string &) const {
+	throw std::runtime_error("Filesystem wallet backup is unsupported for this wallet storage backend");
+}
+
+namespace {
+
+BinaryArray json_wallet_tag(const chacha_key &key, const BinaryArray &salt, const chacha_iv &iv,
+    const BinaryArray &ciphertext) {
+	BinaryArray authenticated = as_binary_array(json_envelope_version);
+	authenticated |= key.as_binary_array();
+	authenticated |= salt;
+	authenticated.insert(authenticated.end(), std::begin(iv.data), std::end(iv.data));
+	authenticated |= ciphertext;
+	authenticated |= key.as_binary_array();
+	return cn_fast_hash(authenticated).as_binary_array();
+}
+
+std::string encrypt_json_wallet(const std::string &plaintext, const std::string &password) {
+	if (plaintext.empty() || plaintext.size() > MAX_JSON_WALLET_BYTES)
+		throw std::runtime_error("Wallet JSON plaintext has invalid size");
+	BinaryArray salt(sizeof(Hash));
+	generate_random_bytes(salt.data(), salt.size());
+	chacha_iv iv{};
+	generate_random_bytes(iv.data, sizeof(iv.data));
+	BinaryArray kdf_input = salt | as_binary_array(password);
+	CryptoNightContext cn_ctx;
+	const chacha_key key = generate_chacha8_key(cn_ctx, kdf_input.data(), kdf_input.size());
+	BinaryArray ciphertext(plaintext.size());
+	chacha(20, plaintext.data(), plaintext.size(), key, iv, ciphertext.data());
+	const BinaryArray tag = json_wallet_tag(key, salt, iv, ciphertext);
+
+	JsonValue envelope(JsonValue::OBJECT);
+	envelope.set("format", json_envelope_version);
+	envelope.set("salt", to_hex(salt));
+	envelope.set("iv", to_hex(iv.data, sizeof(iv.data)));
+	envelope.set("ciphertext", to_hex(ciphertext));
+	envelope.set("tag", to_hex(tag));
+	return envelope.to_string();
+}
+
+std::string decrypt_json_wallet(const std::string &encoded, const std::string &password) {
+	if (encoded.empty() || encoded.size() > MAX_JSON_WALLET_BYTES * 2 + 1024)
+		throw std::runtime_error("Encrypted wallet has invalid size");
+	JsonValue envelope = JsonValue::from_string(encoded);
+	if (!envelope.is_object() || envelope.get_object().size() != 5 || !envelope.contains("format") ||
+	    !envelope.contains("salt") || !envelope.contains("iv") || !envelope.contains("ciphertext") ||
+	    !envelope.contains("tag"))
+		throw std::runtime_error("Encrypted wallet envelope is malformed");
+	const auto &format = envelope("format");
+	const auto &salt_hex = envelope("salt");
+	const auto &iv_hex = envelope("iv");
+	const auto &ciphertext_hex = envelope("ciphertext");
+	const auto &tag_hex = envelope("tag");
+	if (!format.is_string() || format.get_string() != json_envelope_version || !salt_hex.is_string() ||
+	    !iv_hex.is_string() || !ciphertext_hex.is_string() || !tag_hex.is_string())
+		throw std::runtime_error("Encrypted wallet envelope fields are invalid");
+	BinaryArray salt = from_hex(salt_hex.get_string());
+	BinaryArray iv_bytes = from_hex(iv_hex.get_string());
+	BinaryArray ciphertext = from_hex(ciphertext_hex.get_string());
+	BinaryArray supplied_tag = from_hex(tag_hex.get_string());
+	if (salt.size() != sizeof(Hash) || iv_bytes.size() != sizeof(chacha_iv) || ciphertext.empty() ||
+	    ciphertext.size() > MAX_JSON_WALLET_BYTES || supplied_tag.size() != sizeof(Hash))
+		throw std::runtime_error("Encrypted wallet envelope lengths are invalid");
+	chacha_iv iv{};
+	std::copy(iv_bytes.begin(), iv_bytes.end(), iv.data);
+	BinaryArray kdf_input = salt | as_binary_array(password);
+	CryptoNightContext cn_ctx;
+	const chacha_key key = generate_chacha8_key(cn_ctx, kdf_input.data(), kdf_input.size());
+	const BinaryArray expected_tag = json_wallet_tag(key, salt, iv, ciphertext);
+	if (!constant_time_equal(as_string(expected_tag), as_string(supplied_tag)))
+		throw std::runtime_error("Encrypted wallet authentication failed");
+	std::string plaintext(ciphertext.size(), '\0');
+	chacha(20, ciphertext.data(), ciphertext.size(), key, iv, &plaintext[0]);
+	return plaintext;
+}
+
+}  // namespace
+
+WalletHDJson::WalletHDJson(const Currency &currency, logging::ILogger &log, const std::string &json_data,
+    const std::string &storage_password)
+    : WalletHDBase(currency, log), m_storage_password(storage_password) {
 	try {
-		seria::from_json_value(*this, common::JsonValue::from_string(json_data));
+		if (storage_password.empty())
+			throw std::runtime_error("Encrypted browser wallet password must not be empty");
+		const JsonValue root = JsonValue::from_string(json_data);
+		const bool encrypted = root.is_object() && root.contains("format");
+		const std::string plaintext =
+		    encrypted ? decrypt_json_wallet(json_data, storage_password) : json_data;
+		m_needs_encryption_migration = !encrypted;
+		seria::from_json_value(*this, common::JsonValue::from_string(plaintext));
 		derive_secrets(m_mnemonic, m_mnemonic_password);
 		generate_ahead();
 	} catch (const Bip32Key::Exception &) {
@@ -365,8 +466,12 @@ WalletHDJson::WalletHDJson(const Currency &currency, logging::ILogger &log, cons
 }
 
 WalletHDJson::WalletHDJson(const Currency &currency, logging::ILogger &log, const std::string &mnemonic,
-    Timestamp creation_timestamp, const std::string &mnemonic_password)
-    : WalletHDBase(currency, log), m_mnemonic_password(mnemonic_password) {
+    Timestamp creation_timestamp, const std::string &mnemonic_password, const std::string &storage_password)
+    : WalletHDBase(currency, log)
+    , m_mnemonic_password(mnemonic_password)
+    , m_storage_password(storage_password) {
+	if (storage_password.empty())
+		throw Exception(api::WALLET_FILE_DECRYPT_ERROR, "Encrypted browser wallet password must not be empty");
 	uint64_t utag = 0;
 	BinaryArray data_inside_base58;
 	if (common::base58::decode_addr(mnemonic, &utag, &data_inside_base58) &&
@@ -417,7 +522,21 @@ void WalletHDJson::ser_members(seria::ISeria &s) {
 	seria_kv("payment_queue", m_payment_queue, s);
 }
 
-std::string WalletHDJson::save_json_data() const { return seria::to_json_value(*this).to_string(); }
+std::string WalletHDJson::save_json_data() const {
+	return encrypt_json_wallet(seria::to_json_value(*this).to_string(), m_storage_password);
+}
+
+void WalletHDJson::set_password(const std::string &password) {
+	if (password.empty())
+		throw Exception(api::WALLET_FILE_DECRYPT_ERROR, "Encrypted browser wallet password must not be empty");
+	m_storage_password = password;
+}
+
+std::string WalletHDJson::export_keys() const {
+	if (m_mnemonic.empty())
+		return WalletHDBase::export_keys();
+	return m_mnemonic;
+}
 
 namespace seria {
 

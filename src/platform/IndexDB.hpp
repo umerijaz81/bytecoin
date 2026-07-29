@@ -14,7 +14,7 @@ namespace platform {
 class AsyncIndexDBOperation {
 public:
 	typedef std::function<void(const char *data, size_t size)> O_handler;
-	typedef std::function<void()> S_handler;
+	typedef std::function<void(bool success)> S_handler;
 	// Open
 	AsyncIndexDBOperation(const std::string &full_name, O_handler o_handler);
 	// Save
