@@ -463,6 +463,14 @@ pub extern "C" fn onyx_verify_and_extract_transfer(
         {
             return -1;
         }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            *fee_out = 0;
+            *nullifier_count_out = 0;
+            *commitment_count_out = 0;
+        }
         if !(10..=20).contains(&circuit_k) {
             return -3;
         }
@@ -548,6 +556,15 @@ pub extern "C" fn onyx_verify_program_deployment(
             || commitment_count_out.is_null()
         {
             return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            *fee_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+            *nullifier_count_out = 0;
+            *commitment_count_out = 0;
         }
         let deployment = match program_deployment::AuthorizedProgramDeployment::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
@@ -767,6 +784,15 @@ pub extern "C" fn onyx_verify_and_extract_token_issuance(
         {
             return -1;
         }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+            *sequence_out = 0;
+            *issued_amount_out = 0;
+            *commitment_count_out = 0;
+        }
         let issuance = match token_issuance::AuthorizedTokenIssuance::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
         }) {
@@ -976,13 +1002,13 @@ pub extern "C" fn onyx_verify_apply_transfer(
         {
             return -1;
         }
-        if !(10..=20).contains(&circuit_k) {
-            return -3;
-        }
         unsafe {
             *snapshot_out = std::ptr::null_mut();
             *snapshot_len_out = 0;
             *fee_out = 0;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
         }
         let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
@@ -1101,7 +1127,6 @@ pub extern "C" fn onyx_verify_apply_standard_program_transaction(
             || encoded_len == 0
             || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
             || expected_network.is_null()
-            || !(10..=20).contains(&circuit_k)
             || snapshot_out.is_null()
             || snapshot_len_out.is_null()
             || network_out.is_null()
@@ -1117,9 +1142,14 @@ pub extern "C" fn onyx_verify_apply_standard_program_transaction(
         unsafe {
             *snapshot_out = std::ptr::null_mut();
             *snapshot_len_out = 0;
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
             *expiry_height_out = 0;
             *nullifier_count_out = 0;
             *commitment_count_out = 0;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
         }
         let envelope = match program_context::ContextualAuthorizedTransaction::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
@@ -1233,6 +1263,14 @@ pub extern "C" fn onyx_extract_authenticated_standard_program_delta(
         {
             return -1;
         }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            *nullifier_count_out = 0;
+            *commitment_count_out = 0;
+            *state_key_count_out = 0;
+        }
         let envelope = match program_context::ContextualAuthorizedTransaction::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
         }) {
@@ -1328,15 +1366,18 @@ pub extern "C" fn onyx_verify_apply_bridge(
         {
             return -1;
         }
-        if !(10..=20).contains(&circuit_k) {
-            return -3;
-        }
         unsafe {
             *snapshot_out = std::ptr::null_mut();
             *snapshot_len_out = 0;
             *legacy_amount_out = 0;
             *legacy_stack_index_out = 0;
+            std::ptr::write_bytes(legacy_key_image_out, 0, 32);
+            std::ptr::write_bytes(ownership_sighash_out, 0, 32);
+            std::ptr::write_bytes(ownership_signature_out, 0, 64);
             *fee_out = 0;
+        }
+        if !(10..=20).contains(&circuit_k) {
+            return -3;
         }
         let bridge = match bridge::AuthorizedBridge::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
@@ -1560,6 +1601,14 @@ pub extern "C" fn onyx_verify_bridge(
             || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
         {
             return -1;
+        }
+        unsafe {
+            *legacy_amount_out = 0;
+            *legacy_stack_index_out = 0;
+            std::ptr::write_bytes(legacy_key_image_out, 0, 32);
+            std::ptr::write_bytes(ownership_sighash_out, 0, 32);
+            std::ptr::write_bytes(ownership_signature_out, 0, 64);
+            *fee_out = 0;
         }
         if !(10..=20).contains(&circuit_k) {
             return -3;
@@ -3638,6 +3687,301 @@ mod tests {
         );
         assert_eq!(state, [0u8; 32]);
         assert_eq!(found, 0);
+    }
+
+    #[test]
+    fn verification_extractors_clear_outputs_before_failure() {
+        let malformed = [0u8; 1];
+        let expected_network = [0u8; 16];
+        let mut network = [0xffu8; 16];
+        let mut anchor = [0xffu8; 32];
+        let mut program_id = [0xffu8; 32];
+        let mut rows = [0xffu8; 32];
+        let mut expiry = u64::MAX;
+        let mut fee = u64::MAX;
+        let mut first_count = usize::MAX;
+        let mut second_count = usize::MAX;
+
+        assert_eq!(
+            onyx_verify_and_extract_transfer(
+                malformed.as_ptr(),
+                malformed.len(),
+                32,
+                21,
+                network.as_mut_ptr(),
+                anchor.as_mut_ptr(),
+                &mut expiry,
+                &mut fee,
+                rows.as_mut_ptr(),
+                1,
+                &mut first_count,
+                rows.as_mut_ptr(),
+                1,
+                &mut second_count,
+            ),
+            -3
+        );
+        assert_eq!(
+            (network, anchor, expiry, fee, first_count, second_count),
+            ([0; 16], [0; 32], 0, 0, 0, 0)
+        );
+
+        network.fill(0xff);
+        anchor.fill(0xff);
+        program_id.fill(0xff);
+        expiry = u64::MAX;
+        fee = u64::MAX;
+        first_count = usize::MAX;
+        second_count = usize::MAX;
+        assert_eq!(
+            onyx_verify_program_deployment(
+                malformed.as_ptr(),
+                malformed.len(),
+                32,
+                20,
+                network.as_mut_ptr(),
+                anchor.as_mut_ptr(),
+                &mut expiry,
+                &mut fee,
+                program_id.as_mut_ptr(),
+                rows.as_mut_ptr(),
+                1,
+                &mut first_count,
+                rows.as_mut_ptr(),
+                1,
+                &mut second_count,
+            ),
+            -2
+        );
+        assert_eq!(
+            (
+                network,
+                anchor,
+                program_id,
+                expiry,
+                fee,
+                first_count,
+                second_count
+            ),
+            ([0; 16], [0; 32], [0; 32], 0, 0, 0, 0)
+        );
+
+        network.fill(0xff);
+        anchor.fill(0xff);
+        program_id.fill(0xff);
+        expiry = u64::MAX;
+        let mut sequence = u64::MAX;
+        let mut issued_amount = u64::MAX;
+        first_count = usize::MAX;
+        assert_eq!(
+            onyx_verify_and_extract_token_issuance(
+                malformed.as_ptr(),
+                malformed.len(),
+                32,
+                20,
+                network.as_mut_ptr(),
+                anchor.as_mut_ptr(),
+                &mut expiry,
+                program_id.as_mut_ptr(),
+                &mut sequence,
+                &mut issued_amount,
+                rows.as_mut_ptr(),
+                1,
+                &mut first_count,
+            ),
+            -2
+        );
+        assert_eq!(
+            (
+                network,
+                anchor,
+                program_id,
+                expiry,
+                sequence,
+                issued_amount,
+                first_count
+            ),
+            ([0; 16], [0; 32], [0; 32], 0, 0, 0, 0)
+        );
+
+        network.fill(0xff);
+        anchor.fill(0xff);
+        expiry = u64::MAX;
+        first_count = usize::MAX;
+        second_count = usize::MAX;
+        let mut third_count = usize::MAX;
+        assert_eq!(
+            onyx_extract_authenticated_standard_program_delta(
+                malformed.as_ptr(),
+                malformed.len(),
+                network.as_mut_ptr(),
+                anchor.as_mut_ptr(),
+                &mut expiry,
+                rows.as_mut_ptr(),
+                1,
+                &mut first_count,
+                rows.as_mut_ptr(),
+                1,
+                &mut second_count,
+                rows.as_mut_ptr(),
+                1,
+                &mut third_count,
+            ),
+            -2
+        );
+        assert_eq!(
+            (
+                network,
+                anchor,
+                expiry,
+                first_count,
+                second_count,
+                third_count
+            ),
+            ([0; 16], [0; 32], 0, 0, 0, 0)
+        );
+
+        let mut legacy_amount = u64::MAX;
+        let mut legacy_stack_index = u64::MAX;
+        let mut key_image = [0xffu8; 32];
+        let mut sighash = [0xffu8; 32];
+        let mut signature = [0xffu8; 64];
+        fee = u64::MAX;
+        assert_eq!(
+            onyx_verify_bridge(
+                malformed.as_ptr(),
+                malformed.len(),
+                20,
+                &mut legacy_amount,
+                &mut legacy_stack_index,
+                key_image.as_mut_ptr(),
+                sighash.as_mut_ptr(),
+                signature.as_mut_ptr(),
+                &mut fee,
+            ),
+            -2
+        );
+        assert_eq!(
+            (
+                legacy_amount,
+                legacy_stack_index,
+                key_image,
+                sighash,
+                signature,
+                fee
+            ),
+            (0, 0, [0; 32], [0; 32], [0; 64], 0)
+        );
+
+        let mut snapshot_out = 1usize as *mut u8;
+        let mut snapshot_len = usize::MAX;
+        fee = u64::MAX;
+        assert_eq!(
+            onyx_verify_apply_transfer(
+                std::ptr::null(),
+                0,
+                10,
+                malformed.as_ptr(),
+                malformed.len(),
+                32,
+                21,
+                expected_network.as_ptr(),
+                1,
+                &mut snapshot_out,
+                &mut snapshot_len,
+                &mut fee,
+            ),
+            -3
+        );
+        assert!(snapshot_out.is_null());
+        assert_eq!((snapshot_len, fee), (0, 0));
+
+        snapshot_out = 1usize as *mut u8;
+        snapshot_len = usize::MAX;
+        legacy_amount = u64::MAX;
+        legacy_stack_index = u64::MAX;
+        key_image.fill(0xff);
+        sighash.fill(0xff);
+        signature.fill(0xff);
+        fee = u64::MAX;
+        assert_eq!(
+            onyx_verify_apply_bridge(
+                std::ptr::null(),
+                0,
+                10,
+                malformed.as_ptr(),
+                malformed.len(),
+                21,
+                expected_network.as_ptr(),
+                1,
+                &mut snapshot_out,
+                &mut snapshot_len,
+                &mut legacy_amount,
+                &mut legacy_stack_index,
+                key_image.as_mut_ptr(),
+                sighash.as_mut_ptr(),
+                signature.as_mut_ptr(),
+                &mut fee,
+            ),
+            -3
+        );
+        assert!(snapshot_out.is_null());
+        assert_eq!(
+            (
+                snapshot_len,
+                legacy_amount,
+                legacy_stack_index,
+                key_image,
+                sighash,
+                signature,
+                fee,
+            ),
+            (0, 0, 0, [0; 32], [0; 32], [0; 64], 0)
+        );
+
+        snapshot_out = 1usize as *mut u8;
+        snapshot_len = usize::MAX;
+        network.fill(0xff);
+        anchor.fill(0xff);
+        expiry = u64::MAX;
+        first_count = usize::MAX;
+        second_count = usize::MAX;
+        assert_eq!(
+            onyx_verify_apply_standard_program_transaction(
+                malformed.as_ptr(),
+                malformed.len(),
+                malformed.as_ptr(),
+                malformed.len(),
+                32,
+                21,
+                expected_network.as_ptr(),
+                1,
+                &mut snapshot_out,
+                &mut snapshot_len,
+                network.as_mut_ptr(),
+                anchor.as_mut_ptr(),
+                &mut expiry,
+                rows.as_mut_ptr(),
+                1,
+                &mut first_count,
+                rows.as_mut_ptr(),
+                1,
+                &mut second_count,
+            ),
+            -3
+        );
+        assert!(snapshot_out.is_null());
+        assert_eq!(
+            (
+                snapshot_len,
+                network,
+                anchor,
+                expiry,
+                first_count,
+                second_count
+            ),
+            (0, [0; 16], [0; 32], 0, 0, 0)
+        );
     }
 
     #[test]

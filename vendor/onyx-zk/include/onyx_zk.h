@@ -6,6 +6,9 @@
  *
  * Return convention for predicate calls: 1 = valid, 0 = invalid, < 0 = malformed input / error.
  * Buffers returned via out-params are owned by the callee and MUST be released with onyx_free.
+ * Structured consensus verification/extraction calls clear fixed outputs and element counts after
+ * pointer/length validation and before any later failure. Counted arrays have no valid elements
+ * when their returned count is zero.
  */
 #ifndef ONYX_ZK_H
 #define ONYX_ZK_H
