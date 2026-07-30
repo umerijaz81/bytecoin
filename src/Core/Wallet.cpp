@@ -5,6 +5,7 @@
 #include "TransactionBuilder.hpp"
 #include "WalletSerializationV1.hpp"
 #include "WalletState.hpp"
+#include "CryptoNoteConfig.hpp"
 #ifdef onyx_USE_ZK
 #include "zk/Halo2ProofSystem.hpp"
 #endif
@@ -31,10 +32,25 @@ std::string Wallet::net_append(const std::string &net) { return net == "main" ? 
 
 Wallet::Wallet(const Currency &currency, logging::ILogger &log) : m_currency(currency), m_log(log, "Wallet") {}
 
+std::array<uint8_t, 16> Wallet::onyx_network_id_for_net(const std::string &net) {
+	UUID id = parameters::BYTECOIN_NETWORK;
+	if (net == "test")
+		id.data[0] += 1;
+	else if (net == "stage")
+		id.data[0] += 2;
+	std::array<uint8_t, 16> network{};
+	static_assert(sizeof(id.data) == network.size(), "Onyx network identifier size changed");
+	std::copy(std::begin(id.data), std::end(id.data), network.begin());
+	return network;
+}
+
 bool Wallet::get_onyx_address(
     const std::array<uint8_t, 16> &network, uint32_t index, std::array<uint8_t, 91> *address) const {
+	if (address == nullptr)
+		return false;
+	address->fill(0);
 #ifdef onyx_USE_ZK
-	if (m_seed == Hash{} || address == nullptr)
+	if (m_seed == Hash{} || network != onyx_network_id_for_net(m_currency.net))
 		return false;
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_seed.data, m_seed.data + seed.size(), seed.begin());
@@ -46,9 +62,18 @@ bool Wallet::get_onyx_address(
 
 bool Wallet::get_onyx_full_viewing_key(
     const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key) const {
-#ifdef onyx_USE_ZK
-	if (m_seed == Hash{} || viewing_key == nullptr)
+	if (viewing_key == nullptr)
 		return false;
+	viewing_key->fill(0);
+#ifdef onyx_USE_ZK
+	if (network != onyx_network_id_for_net(m_currency.net))
+		return false;
+	if (m_seed == Hash{}) {
+		if (m_onyx_full_viewing_key.size() != viewing_key->size())
+			return false;
+		std::copy(m_onyx_full_viewing_key.begin(), m_onyx_full_viewing_key.end(), viewing_key->begin());
+		return true;
+	}
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_seed.data, m_seed.data + seed.size(), seed.begin());
 	return zk::Halo2ProofSystem::full_viewing_key(seed, network, viewing_key);

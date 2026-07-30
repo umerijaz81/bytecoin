@@ -78,9 +78,17 @@ static void test_hd_backup_recovery(const Currency &currency, logging::ILogger &
 	const std::string mnemonic = cn::Bip32Key::create_random_bip39_mnemonic(128);
 	AccountAddress first_address;
 	std::string first_address_text;
+#ifdef onyx_USE_ZK
+	std::array<uint8_t, 177> onyx_viewing_key{};
+#endif
 	{
 		WalletHDsqlite wallet(currency, logger, hd_wallet_name, "original-password", mnemonic, 1700000000,
 		    std::string{}, false);
+#ifdef onyx_USE_ZK
+		invariant(wallet.get_onyx_full_viewing_key(
+		              Wallet::onyx_network_id_for_net(currency.net), &onyx_viewing_key),
+		    "HD wallet Onyx full viewing-key derivation failed");
+#endif
 		invariant(wallet.create_look_ahead_records(4), "HD wallet address expansion failed");
 		first_address      = wallet.get_first_address();
 		first_address_text = currency.account_address_as_string(first_address);
@@ -119,6 +127,23 @@ static void test_hd_backup_recovery(const Currency &currency, logging::ILogger &
 		invariant(view.can_view_outgoing_addresses(), "HD view-only export lost outgoing visibility");
 		invariant(view.get_first_address() == first_address, "HD view-only export changed first address");
 		invariant(view.get_actual_records_count() == 4, "HD view-only export lost address count");
+#ifdef onyx_USE_ZK
+		std::array<uint8_t, 177> recovered_onyx_viewing_key{};
+		invariant(view.get_onyx_seed() == Hash{}, "HD view-only export retained Onyx spend authority");
+		invariant(view.get_onyx_full_viewing_key(
+		              Wallet::onyx_network_id_for_net(currency.net), &recovered_onyx_viewing_key),
+		    "HD view-only export lost Onyx scanning authority");
+		invariant(recovered_onyx_viewing_key == onyx_viewing_key,
+		    "HD view-only export changed the Onyx full viewing key");
+		auto wrong_network = Wallet::onyx_network_id_for_net(currency.net);
+		wrong_network[0] ^= 1;
+		recovered_onyx_viewing_key.fill(0xff);
+		invariant(!view.get_onyx_full_viewing_key(wrong_network, &recovered_onyx_viewing_key),
+		    "HD view-only export crossed an Onyx network boundary");
+		const std::array<uint8_t, 177> cleared_viewing_key{};
+		invariant(recovered_onyx_viewing_key == cleared_viewing_key,
+		    "failed Onyx viewing-key lookup left stale key material");
+#endif
 	}
 	platform::remove_file(hd_wallet_name);
 	platform::remove_file(hd_backup_name);

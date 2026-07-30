@@ -31,6 +31,7 @@ static const std::string current_version = "CryptoNoteWallet1";
 
 static const std::string ADDRESS_COUNT_PREFIX      = "total_address_count";
 static const std::string CREATION_TIMESTAMP_PREFIX = "creation_timestamp";
+static const std::string ONYX_FULL_VIEWING_KEY_PREFIX = "onyx_full_viewing_key";
 
 using namespace platform;
 
@@ -197,6 +198,14 @@ void WalletHDsqlite::load() {
 			seria::from_binary(m_view_secrets_signature, ba);
 		}
 		derive_secrets(mnemonic, mnemonic_password);
+	}
+	{
+		BinaryArray viewing_key;
+		if (get(ONYX_FULL_VIEWING_KEY_PREFIX + net_append(m_currency.net), viewing_key)) {
+			if (viewing_key.size() != 177)
+				throw Exception(api::WALLET_FILE_DECRYPT_ERROR, "Wallet Onyx full viewing key is malformed");
+			m_onyx_full_viewing_key = std::move(viewing_key);
+		}
 	}
 	{
 		BinaryArray ba;
@@ -375,6 +384,15 @@ void WalletHDsqlite::export_wallet(const std::string &export_path, const std::st
 
 	WalletHDsqlite other(
 	    m_currency, m_log.get_logger(), export_path, new_password, std::string{}, 0, std::string{}, false);
+	const auto export_onyx_viewing_key = [&]() {
+#ifdef onyx_USE_ZK
+		std::array<uint8_t, 177> viewing_key{};
+		const auto network = onyx_network_id_for_net(m_currency.net);
+		if (get_onyx_full_viewing_key(network, &viewing_key))
+			other.put(ONYX_FULL_VIEWING_KEY_PREFIX + net_append(m_currency.net),
+			    BinaryArray(viewing_key.begin(), viewing_key.end()), true);
+#endif
+	};
 
 	if (!is_view_only() && view_only) {
 		if (m_hw) {
@@ -410,6 +428,7 @@ void WalletHDsqlite::export_wallet(const std::string &export_path, const std::st
 		other.put("version", current_version, true);
 		other.put("coinname", CRYPTONOTE_NAME, true);
 		other.put(ADDRESS_COUNT_PREFIX, seria::to_binary(m_used_address_count), true);
+		export_onyx_viewing_key();
 	} else if (is_view_only() && view_only) {
 		if (view_outgoing_addresses && m_view_seed != Hash{}) {
 			other.put("view_seed", m_view_seed.as_binary_array(), true);
@@ -422,6 +441,7 @@ void WalletHDsqlite::export_wallet(const std::string &export_path, const std::st
 		other.put("version", current_version, true);
 		other.put("coinname", CRYPTONOTE_NAME, true);
 		other.put(ADDRESS_COUNT_PREFIX, seria::to_binary(m_used_address_count), true);
+		export_onyx_viewing_key();
 	} else {
 		for (const auto &p : parameters_get())
 			other.put(p.first, p.second, true);

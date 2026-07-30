@@ -44,6 +44,9 @@ protected:
 
 	Hash m_seed;       // Main seed, never used directly
 	Hash m_view_seed;  // Hashed from seed
+	// Network-bound Onyx full viewing key retained only by view-only exports. Full wallets derive it
+	// from m_seed on demand; this value grants scanning but no spend or proving authority.
+	BinaryArray m_onyx_full_viewing_key;
 
 	virtual AccountAddress record_to_address(size_t index) const = 0;
 
@@ -94,6 +97,7 @@ public:
 
 	const Hash &get_view_seed() const { return m_view_seed; }
 	const Hash &get_onyx_seed() const { return m_seed; }
+	static std::array<uint8_t, 16> onyx_network_id_for_net(const std::string &net);
 	bool get_onyx_address(
 	    const std::array<uint8_t, 16> &network, uint32_t index, std::array<uint8_t, 91> *address) const;
 	bool get_onyx_full_viewing_key(

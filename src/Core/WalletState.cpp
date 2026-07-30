@@ -818,6 +818,10 @@ bool WalletState::redo_block(
 	std::array<uint8_t, 16> onyx_network{};
 	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + onyx_seed.size(), onyx_seed.begin());
 	std::copy(m_config.network_id.data, m_config.network_id.data + onyx_network.size(), onyx_network.begin());
+	std::array<uint8_t, 177> onyx_viewing_key{};
+	const bool can_scan_onyx =
+	    m_wallet.get_onyx_full_viewing_key(onyx_network, &onyx_viewing_key);
+	const BinaryArray onyx_viewing_key_bytes(onyx_viewing_key.begin(), onyx_viewing_key.end());
 #endif
 	size_t start_global_key_output_index = pb.raw_block.header.already_generated_key_outputs - key_outputs_count;
 	for (size_t tx_index = 0; tx_index != pb.transactions.size(); ++tx_index) {
@@ -827,12 +831,19 @@ bool WalletState::redo_block(
 		m_memory_state.undo_transaction(tid);
 #ifdef onyx_USE_ZK
 		if (pb.transactions.at(tx_index).tx.version == m_currency.onyx_transaction_version &&
-		    m_wallet.get_onyx_seed() != Hash{}) {
+		    can_scan_onyx) {
 			BinaryArray scanned;
-			if (!zk::Halo2ProofSystem::wallet_scan(next_onyx_snapshot, onyx_seed, onyx_network,
-			        pb.transactions.at(tx_index).tx.onyx_type, height, parameters::ONYX_CIRCUIT_K,
-			        pb.transactions.at(tx_index).tx.onyx_envelope,
-			        &scanned, &next_onyx_summary))
+			const bool scan_ok = m_wallet.get_onyx_seed() != Hash{}
+			                         ? zk::Halo2ProofSystem::wallet_scan(next_onyx_snapshot, onyx_seed,
+			                               onyx_network, pb.transactions.at(tx_index).tx.onyx_type, height,
+			                               parameters::ONYX_CIRCUIT_K, pb.transactions.at(tx_index).tx.onyx_envelope,
+			                               &scanned, &next_onyx_summary)
+			                         : zk::Halo2ProofSystem::wallet_scan_viewing(next_onyx_snapshot,
+			                               onyx_viewing_key_bytes, pb.transactions.at(tx_index).tx.onyx_type,
+			                               height, parameters::ONYX_CIRCUIT_K,
+			                               pb.transactions.at(tx_index).tx.onyx_envelope,
+			                               &scanned, &next_onyx_summary);
+			if (!scan_ok)
 				return false;
 			next_onyx_snapshot = std::move(scanned);
 			onyx_changed = true;

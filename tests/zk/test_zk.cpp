@@ -5,6 +5,7 @@
 #include <array>
 #include <iostream>
 #include <string>
+#include "CryptoNoteConfig.hpp"
 #include "Core/zk/Halo2ProofSystem.hpp"
 #include "common/Invariant.hpp"
 #include "onyx_zk.h"
@@ -220,6 +221,33 @@ void test_zk() {
 		              10, 10, 20, BinaryArray{}, prior_state, next_state, witness, 16, &stale_output),
 		    "empty standard-program application was accepted");
 		invariant(stale_output.empty(), "failed standard-program call proving left stale output");
+
+		// The fixture also contains an exact-value native note. Pay it to a separate viewing-only
+		// wallet and prove that the public C++ adapter can initialize and advance a wallet snapshot
+		// using only the recipient's full viewing key.
+		std::array<uint8_t, 16> network{};
+		network.fill(17);
+		std::array<uint8_t, 32> recipient_seed{};
+		recipient_seed.fill(45);
+		std::array<uint8_t, 91> recipient{};
+		invariant(Halo2ProofSystem::wallet_address(recipient_seed, network, 0, &recipient),
+		    "view-only scan recipient derivation failed");
+		BinaryArray payment;
+		invariant(Halo2ProofSystem::wallet_create_transfer(
+		              wallet_snapshot, seed, recipient, 1, 0, 20, BinaryArray{}, 16, &payment),
+		    "view-only scan payment proving failed");
+		std::array<uint8_t, 177> recipient_viewing_key{};
+		invariant(Halo2ProofSystem::full_viewing_key(recipient_seed, network, &recipient_viewing_key),
+		    "view-only scan key derivation failed");
+		BinaryArray viewing_snapshot;
+		Halo2ProofSystem::WalletScanResult viewing_result;
+		invariant(Halo2ProofSystem::wallet_scan_viewing(BinaryArray{},
+		              BinaryArray(recipient_viewing_key.begin(), recipient_viewing_key.end()),
+		              parameters::ONYX_TYPE_TRANSFER, 10, 16, payment, &viewing_snapshot, &viewing_result),
+		    "positive viewing-only scan failed");
+		invariant(!viewing_snapshot.empty() && viewing_result.balance == 1 &&
+		              viewing_result.note_count == 1,
+		    "viewing-only scan did not recover the recipient note");
 		std::cout << "  [zk] standard-program deployment and NFT call proving boundary ok" << std::endl;
 	}
 
