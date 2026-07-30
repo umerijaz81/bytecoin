@@ -60,28 +60,26 @@ jobs:
       - name: Build consensus tests
         run: cmake --build build-consensus --parallel 2 --target tests minerd bytecoind bytecoind-v4-test-fixture walletd
       - name: Smoke-test miner command line
-        working-directory: build-consensus
-        run: ../bin/minerd --help
+        run: build-consensus/artifacts/bin/minerd --help
       - name: Reject corrupt mining templates without hashing or submission
         run: >-
           python3 tests/miner/test_corrupt_template_process.py
-          --minerd bin/minerd
-          --bytecoind bin/bytecoind
+          --minerd build-consensus/artifacts/bin/minerd
+          --bytecoind build-consensus/artifacts/bin/bytecoind
       - name: Enforce HTTP request and connection resource limits
-        run: python3 tests/http/test_http_limits_process.py --bytecoind bin/bytecoind
+        run: python3 tests/http/test_http_limits_process.py --bytecoind build-consensus/artifacts/bin/bytecoind
       - name: Enforce wallet authentication secret handling
-        run: python3 tests/security/test_wallet_auth_process.py --walletd bin/walletd
+        run: python3 tests/security/test_wallet_auth_process.py --walletd build-consensus/artifacts/bin/walletd
       - name: Exclude hardware emulator from release-capable walletd
-        run: python3 tests/security/test_release_emulator_absence.py --walletd bin/walletd
+        run: python3 tests/security/test_release_emulator_absence.py --walletd build-consensus/artifacts/bin/walletd
       - name: Exclude privacy-sensitive RPC body logging
-        run: python3 tests/security/test_sensitive_log_absence.py --walletd bin/walletd
+        run: python3 tests/security/test_sensitive_log_absence.py --walletd build-consensus/artifacts/bin/walletd
       - name: Qualify Dandelion relay across real daemon sockets
         run: >-
           python3 tests/network/test_dandelion_process.py
-          --bytecoind bin/bytecoind
-          --v4-bytecoind bin/bytecoind-v4-test-fixture
-          --walletd bin/walletd
-          --minerd bin/minerd
+          --bytecoind build-consensus/artifacts/bin/bytecoind
+          --v4-bytecoind build-consensus/artifacts/bin/bytecoind-v4-test-fixture
+          --walletd build-consensus/artifacts/bin/walletd
+          --minerd build-consensus/artifacts/bin/minerd
       - name: Run blockchain and RandomX reorganization tests
-        working-directory: build-consensus
-        run: ../bin/tests --blockchain
+        run: build-consensus/artifacts/bin/tests --blockchain

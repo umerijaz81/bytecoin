@@ -19,14 +19,14 @@ future so current Amethyst/V4 consensus is unchanged until a fork is scheduled a
 
 | Item | Where | Test |
 |------|-------|------|
-| V5/"jade" version scaffolding (`BLOCK_VERSION_JADE=5`, `TRANSACTION_VERSION_JADE=5`, `UPGRADE_HEIGHT_V5`, `RANDOMX_SWITCH_HEIGHT`, `MINIMUM_ANONYMITY_JADE=15`) | `src/CryptoNoteConfig.hpp`, `src/Core/Currency.{hpp,cpp}` (`upgrade_heights`, `jade_*_version`, `minimum_anonymity`) | `./bin/tests --blockchain` (unchanged) |
-| **Consensus-enforced minimum ring size** (closes C-3): rejects rings `< minimum_anonymity+1` for V5+; raises floor to a ring of 16 | `validate_tx_semantic`, `src/Core/BlockChainState.cpp` (InputKey branch) | `./bin/tests --jade` |
+| V5/"jade" version scaffolding (`BLOCK_VERSION_JADE=5`, `TRANSACTION_VERSION_JADE=5`, `UPGRADE_HEIGHT_V5`, `RANDOMX_SWITCH_HEIGHT`, `MINIMUM_ANONYMITY_JADE=15`) | `src/CryptoNoteConfig.hpp`, `src/Core/Currency.{hpp,cpp}` (`upgrade_heights`, `jade_*_version`, `minimum_anonymity`) | `build/artifacts/bin/tests --blockchain` (unchanged) |
+| **Consensus-enforced minimum ring size** (closes C-3): rejects rings `< minimum_anonymity+1` for V5+; raises floor to a ring of 16 | `validate_tx_semantic`, `src/Core/BlockChainState.cpp` (InputKey branch) | `build/artifacts/bin/tests --jade` |
 | CSPRNG periodic reseed + deterministic-test guard (L-1) | `src/crypto/random.{c,h}` | covered by `--crypto` vectors staying stable |
 | Archive omits peer source IPs by default (M-1) | `src/Core/Archive.{hpp,cpp}`, `BlockChain.cpp`, `Config.{hpp,cpp}` (`--archive-keep-source-addresses`) | build/link |
 | Wallet-sync privacy mode hides wallet age + sparse_chain (M-2) | `src/Core/WalletSync.cpp`, `Config.{hpp,cpp}` (`--wallet-sync-privacy`) | build/link |
-| Jade authorization-scheme registry: stable one-byte ID in the signed V5 prefix, fail-closed inactive/unknown dispatch, unchanged V1-V4 and Onyx bytes | `TransactionSignatureScheme`, `ser_members(TransactionPrefix/Transaction)`, `validate_tx_semantic`, wallet V5 construction | `./bin/tests --jade` compatibility/negative vectors |
+| Jade authorization-scheme registry: stable one-byte ID in the signed V5 prefix, fail-closed inactive/unknown dispatch, unchanged V1-V4 and Onyx bytes | `TransactionSignatureScheme`, `ser_members(TransactionPrefix/Transaction)`, `validate_tx_semantic`, wallet V5 construction | `build/artifacts/bin/tests --jade` compatibility/negative vectors |
 
-The headline result, from `./bin/tests --jade`:
+The headline result, from `build/artifacts/bin/tests --jade`:
 
 ```
   [jade] ring size 1 rejected: Ring size too small 1 minimum 16
@@ -114,8 +114,9 @@ re-architecting.
 ## Build / test (this environment)
 
 ```
-cd build && cmake -DUSE_SQLITE=1 .. && make -j tests
-./bin/tests --jade        # run from the build/ folder
+cmake -S . -B build -DUSE_SQLITE=1
+cmake --build build --parallel --target tests
+build/artifacts/bin/tests --jade
 ```
 (`USE_SQLITE=1` avoids the external LMDB clone. Toolchain note: a handful of missing
 `<stdexcept>/<limits>/<memory>/<algorithm>` includes were added so the code builds under GCC 13.)

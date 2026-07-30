@@ -68,5 +68,5 @@ jobs:
       - name: Run process-level SOCKS5 and leak qualification
         run: |
           python3 tests/network/test_proxy_process.py \
-            --bytecoind bin/bytecoind \
+            --bytecoind build-network-process/artifacts/bin/bytecoind \
             --dns-guard build-network-process/dns_guard.so

@@ -43,7 +43,12 @@ cmake -S . -B build -DONYX_ZK=ON
 cmake --build build --config Release --parallel
 ```
 
-The primary artifacts are written under `bin/`: `bytecoind`, `walletd`, and `minerd`.
+The primary artifacts are written under the configured build tree:
+`build/artifacts/bin/bytecoind`, `build/artifacts/bin/walletd`, and
+`build/artifacts/bin/minerd` (with the configuration directory such as `Release/` added by
+multi-config generators). Each build tree therefore owns its libraries and executables. Set
+`-DBYTECOIN_OUTPUT_ROOT=/an/explicit/path` only when a release or packaging job needs a different,
+already-isolated output root.
 
 `BYTECOIN_HARDWARE_EMULATOR` is `OFF` by default and must remain off for every distributable build.
 Enabling it creates a secret-bearing test artifact that is explicitly ineligible for release.
@@ -67,14 +72,16 @@ The networked release ceremony must additionally re-fetch and hash immutable ups
 python tools/release/verify_dependencies.py --verify-upstream
 ```
 
-Build the `tests` target and run the relevant suites from the build directory:
+Build the `tests` target and run the relevant suites:
 
 ```sh
-../bin/tests --jade
-../bin/tests --zk
-../bin/tests --wallet
-../bin/tests --wallet-state
+build/artifacts/bin/tests --jade
+build/artifacts/bin/tests --zk
+build/artifacts/bin/tests --wallet
+build/artifacts/bin/tests --wallet-state
 ```
+
+For Visual Studio builds, use `build/artifacts/bin/Release/tests.exe`.
 
 Additional real-process, compiler, SDK, fuzz, RandomX, release, and reproducibility gates are defined
 under `tests/` and `.github/workflows/`. A green local build is not an audit, public testnet soak,

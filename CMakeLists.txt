@@ -16,6 +16,8 @@ option(CRYPTO128 "Uses faster crypto" OFF)
 option(REPRODUCIBLE_BUILD "Normalize build paths and nondeterministic linker metadata" OFF)
 option(BYTECOIN_HARDWARE_EMULATOR "Build the secret-bearing hardware-wallet test emulator (never enable for release artifacts)" OFF)
 set(BYTECOIN_OPENSSL_ROOT "" CACHE PATH "OpenSSL prefix containing include/ and platform libraries")
+set(BYTECOIN_OUTPUT_ROOT "${CMAKE_BINARY_DIR}/artifacts" CACHE PATH
+    "Root for Bytecoin runtime and archive artifacts; use a unique path for every build tree")
 # Onyx (V6) zero-knowledge backend (vendor/onyx-zk, Rust/Halo2). OFF by default so the C++-only
 # build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
 option(ONYX_ZK "Build the Onyx ZK backend (requires Rust/cargo)" OFF)
@@ -272,8 +274,9 @@ set(SOURCE_FILES
     ${ONYX_ZK_CORE_SRC}
 )
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/libs")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${BYTECOIN_OUTPUT_ROOT}/bin")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${BYTECOIN_OUTPUT_ROOT}/libs")
+message(STATUS "Bytecoin artifact root: ${BYTECOIN_OUTPUT_ROOT}")
 add_library(bytecoin-crypto ${SRC_CRYPTO})
 if(APPLE)
     link_libraries(-dead_strip  "-framework Foundation")

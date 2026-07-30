@@ -57,7 +57,7 @@ jobs:
       - name: Run bounded sanitizer campaign
         run: |
           mkdir -p build-fuzz-artifacts
-          ./bin/fuzzer build-fuzz-corpus -artifact_prefix=build-fuzz-artifacts/ -max_total_time="$FUZZ_SECONDS" -timeout=15 -rss_limit_mb=4096 -print_final_stats=1
+          ./build-fuzz/artifacts/bin/fuzzer build-fuzz-corpus -artifact_prefix=build-fuzz-artifacts/ -max_total_time="$FUZZ_SECONDS" -timeout=15 -rss_limit_mb=4096 -print_final_stats=1
       - name: Preserve sanitizer findings
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

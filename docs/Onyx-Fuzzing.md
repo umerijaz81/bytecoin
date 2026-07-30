@@ -5,10 +5,11 @@ Configure with Clang/libFuzzer and sanitizers:
 ```text
 cmake -S . -B build-fuzz -DSANITIZE=fuzzer,address,undefined -DONYX_ZK=ON
 cmake --build build-fuzz --target fuzzer
-bin/fuzzer corpus/ -artifact_prefix=artifacts/
+build-fuzz/artifacts/bin/fuzzer corpus/ -artifact_prefix=artifacts/
 ```
 
-The project harness is emitted as `bin/fuzzer` by the default CMake layout.
+The project harness is emitted under the owning build tree as
+`build-fuzz/artifacts/bin/fuzzer` by the default CMake layout.
 `tools/fuzz/generate_seed_corpus.py corpus` creates the same
 deterministic starter corpus used by CI.
 

@@ -52,7 +52,8 @@ jobs:
           for tree in a b; do
             root="/tmp/bytecoin-repro/$tree"
             export RUSTFLAGS="--remap-path-prefix=$root=. -Ccodegen-units=1"
-            cmake -S "$root" -B "$root/build-release" -DUSE_SQLITE=ON -DONYX_ZK=ON -DREPRODUCIBLE_BUILD=ON
+            cmake -S "$root" -B "$root/build-release" -DUSE_SQLITE=ON -DONYX_ZK=ON -DREPRODUCIBLE_BUILD=ON \
+              -DBYTECOIN_OUTPUT_ROOT="$root"
             cmake --build "$root/build-release" --parallel 2 --target bytecoind walletd minerd
             strip --strip-all "$root/bin/bytecoind" "$root/bin/walletd" "$root/bin/minerd"
           done
@@ -101,6 +102,7 @@ jobs:
             export RUSTFLAGS="--remap-path-prefix=$root=. -Ccodegen-units=1"
             cmake -S "$root" -B "$root/build-release" \
               -DUSE_SQLITE=ON -DONYX_ZK=ON -DREPRODUCIBLE_BUILD=ON \
+              -DBYTECOIN_OUTPUT_ROOT="$root" \
               -DBYTECOIN_OPENSSL_ROOT="$OPENSSL_PREFIX"
             cmake --build "$root/build-release" --parallel 2 --target bytecoind walletd minerd
             strip -x "$root/bin/bytecoind" "$root/bin/walletd" "$root/bin/minerd"
@@ -162,6 +164,7 @@ jobs:
             $env:RUSTFLAGS = "--remap-path-prefix=$root=. -Ccodegen-units=1 -Ctarget-feature=+crt-static"
             cmake -S $root -B "$root\build-release" -G "Visual Studio 17 2022" -A x64 `
               -DUSE_SQLITE=ON -DONYX_ZK=ON -DREPRODUCIBLE_BUILD=ON `
+              -DBYTECOIN_OUTPUT_ROOT="$root" `
               -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
               -DVCPKG_TARGET_TRIPLET=x64-windows-static `
               -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `

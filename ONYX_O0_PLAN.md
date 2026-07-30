@@ -88,7 +88,8 @@ Registered as `--zk` in `src/main_tests.cpp` (same pattern as `--jade`/`--blockc
   builds are the known pain points — see Risks).
 
 ## Acceptance criteria
-- With `-DONYX_ZK=ON`, the project builds on Linux x86-64 and `./bin/tests --zk` passes (KATs +
+- With `-DONYX_ZK=ON`, the project builds on Linux x86-64 and
+  `build/artifacts/bin/tests --zk` passes (KATs +
   round-trip + batch).
 - With `-DONYX_ZK=OFF` (default), the build is byte-for-byte unaffected; `IProofSystem.hpp` remains the
   only zk code compiled into the C++-only build (it is header-only and unreferenced).
