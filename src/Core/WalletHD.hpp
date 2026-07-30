@@ -45,6 +45,7 @@ public:
 	};
 	struct WalletStringFormatV2 {
 		WalletStringFormat legacy;
+		BinaryArray onyx_network_id;
 		BinaryArray onyx_full_viewing_key;
 	};
 	void set_password(const std::string &password) override;

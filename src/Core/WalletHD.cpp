@@ -354,6 +354,8 @@ std::string WalletHDBase::export_viewonly_wallet_string(
 	if (get_onyx_full_viewing_key(onyx_network_id_for_net(m_currency.net), &onyx_viewing_key)) {
 		WalletStringFormatV2 ws2;
 		ws2.legacy = ws;
+		const auto network = onyx_network_id_for_net(m_currency.net);
+		ws2.onyx_network_id.assign(network.begin(), network.end());
 		ws2.onyx_full_viewing_key.assign(onyx_viewing_key.begin(), onyx_viewing_key.end());
 		return base58::encode_addr(parameters::VIEWONLYWALLET_V2_BASE58_PREFIX, seria::to_binary(ws2));
 	}
@@ -488,9 +490,13 @@ WalletHDJson::WalletHDJson(const Currency &currency, logging::ILogger &log, cons
 		if (utag == parameters::VIEWONLYWALLET_V2_BASE58_PREFIX) {
 			WalletStringFormatV2 ws2;
 			seria::from_binary(ws2, data_inside_base58);
-			if (ws2.onyx_full_viewing_key.size() != 177)
+			const auto expected_network = onyx_network_id_for_net(m_currency.net);
+			if (ws2.onyx_network_id.size() != expected_network.size() ||
+			    !std::equal(ws2.onyx_network_id.begin(), ws2.onyx_network_id.end(),
+			        expected_network.begin()) ||
+			    ws2.onyx_full_viewing_key.size() != 177)
 				throw Wallet::Exception(
-				    api::WALLET_FILE_DECRYPT_ERROR, "Onyx view wallet key has invalid size");
+				    api::WALLET_FILE_DECRYPT_ERROR, "Onyx view wallet network or key is invalid");
 			ws = std::move(ws2.legacy);
 			m_onyx_full_viewing_key = std::move(ws2.onyx_full_viewing_key);
 		} else {
@@ -534,13 +540,25 @@ void WalletHDJson::ser_members(seria::ISeria &s) {
 		seria_kv("sH", m_sH, s);
 		seria_kv("view_secrets_signature", m_view_secrets_signature, s);
 		boost::optional<BinaryArray> onyx_viewing_key;
+		boost::optional<BinaryArray> onyx_network;
 		if (!s.is_input() && !m_onyx_full_viewing_key.empty())
 			onyx_viewing_key = m_onyx_full_viewing_key;
+		if (!s.is_input() && onyx_viewing_key) {
+			const auto network = onyx_network_id_for_net(m_currency.net);
+			onyx_network = BinaryArray(network.begin(), network.end());
+		}
+		seria_kv("onyx_network_id", onyx_network, s);
 		seria_kv("onyx_full_viewing_key", onyx_viewing_key, s);
+		if (s.is_input() && (static_cast<bool>(onyx_network) != static_cast<bool>(onyx_viewing_key)))
+			throw Exception(api::WALLET_FILE_DECRYPT_ERROR,
+			    "Wallet Onyx network and full viewing key must be present together");
 		if (s.is_input() && onyx_viewing_key) {
-			if (onyx_viewing_key->size() != 177)
+			const auto expected_network = onyx_network_id_for_net(m_currency.net);
+			if (onyx_network->size() != expected_network.size() ||
+			    !std::equal(onyx_network->begin(), onyx_network->end(), expected_network.begin()) ||
+			    onyx_viewing_key->size() != 177)
 				throw Exception(
-				    api::WALLET_FILE_DECRYPT_ERROR, "Wallet Onyx full viewing key is malformed");
+				    api::WALLET_FILE_DECRYPT_ERROR, "Wallet Onyx network or full viewing key is malformed");
 			m_onyx_full_viewing_key = std::move(*onyx_viewing_key);
 		}
 	}
@@ -584,6 +602,7 @@ void ser_members(cn::WalletHDBase::WalletStringFormat &v, ISeria &s) {
 
 void ser_members(cn::WalletHDBase::WalletStringFormatV2 &v, ISeria &s) {
 	ser_members(v.legacy, s);
+	seria_kv("onyx_network_id", v.onyx_network_id, s);
 	seria_kv("onyx_full_viewing_key", v.onyx_full_viewing_key, s);
 }
 

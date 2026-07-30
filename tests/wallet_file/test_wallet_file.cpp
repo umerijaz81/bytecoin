@@ -256,8 +256,9 @@ void test_wallet_file(const std::string &path_prefix) {
 	    "portable Onyx view-only export did not use the v2 wallet type");
 	WalletHDBase::WalletStringFormatV2 portable_v2;
 	seria::from_binary(portable_v2, portable_payload);
-	invariant(portable_v2.onyx_full_viewing_key.size() == 177,
-	    "portable Onyx view-only export emitted a malformed viewing key");
+	invariant(portable_v2.onyx_network_id.size() == 16 &&
+	              portable_v2.onyx_full_viewing_key.size() == 177,
+	    "portable Onyx view-only export emitted malformed network-bound viewing data");
 	WalletHDJson portable_view_wallet(
 	    currency, logger, portable_view, 0, std::string{}, "portable-password");
 	std::array<uint8_t, 177> original_portable_viewing_key{};
@@ -286,6 +287,14 @@ void test_wallet_file(const std::string &path_prefix) {
 		invariant(false, "browser wallet accepted a malformed Onyx viewing-key length");
 	} catch (const Wallet::Exception &) {
 	}
+	common::JsonValue incomplete_portable_json = seria::to_json_value(portable_view_wallet);
+	incomplete_portable_json.erase("onyx_network_id");
+	try {
+		WalletHDJson incomplete_json_view(
+		    currency, logger, incomplete_portable_json.to_string(), "incomplete-json-password");
+		invariant(false, "browser wallet accepted an Onyx viewing key without its network");
+	} catch (const Wallet::Exception &) {
+	}
 	const std::string legacy_portable = common::base58::encode_addr(
 	    parameters::VIEWONLYWALLET_BASE58_PREFIX, seria::to_binary(portable_v2.legacy));
 	WalletHDJson legacy_portable_view(
@@ -297,6 +306,16 @@ void test_wallet_file(const std::string &path_prefix) {
 	const std::array<uint8_t, 177> empty_portable_viewing_key{};
 	invariant(imported_portable_viewing_key == empty_portable_viewing_key,
 	    "legacy portable wallet left stale Onyx viewing-key material");
+	WalletHDBase::WalletStringFormatV2 wrong_network_v2 = portable_v2;
+	wrong_network_v2.onyx_network_id[0] ^= 1;
+	const std::string wrong_network_portable = common::base58::encode_addr(
+	    parameters::VIEWONLYWALLET_V2_BASE58_PREFIX, seria::to_binary(wrong_network_v2));
+	try {
+		WalletHDJson wrong_network_portable_view(
+		    currency, logger, wrong_network_portable, 0, std::string{}, "wrong-network-password");
+		invariant(false, "portable Onyx wallet accepted a viewing key for another network");
+	} catch (const Wallet::Exception &) {
+	}
 	portable_v2.onyx_full_viewing_key.pop_back();
 	const std::string malformed_portable = common::base58::encode_addr(
 	    parameters::VIEWONLYWALLET_V2_BASE58_PREFIX, seria::to_binary(portable_v2));
