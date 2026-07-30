@@ -3,6 +3,7 @@
 
 import argparse
 import pathlib
+import re
 
 
 FORBIDDEN_LOG_MARKERS = (
@@ -34,16 +35,30 @@ def main():
     source_present = [pattern for pattern in FORBIDDEN_SOURCE_PATTERNS if pattern in source]
     if source_present:
         raise RuntimeError(f"WalletNode contains privacy-sensitive body logging: {source_present}")
-    p2p_source = (
-        pathlib.Path(__file__).resolve().parents[2] / "src/Core/Node_P2PProtocolBytecoin.cpp"
-    ).read_text(encoding="utf-8")
+    repository = pathlib.Path(__file__).resolve().parents[2]
+    p2p_source = (repository / "src/Core/Node_P2PProtocolBytecoin.cpp").read_text(encoding="utf-8")
     if "<< get_address()" in p2p_source:
         raise RuntimeError("P2P logs contain an unredacted peer-address stream")
-    basic_source = (
-        pathlib.Path(__file__).resolve().parents[2] / "src/p2p/P2PProtocolBasic.cpp"
-    ).read_text(encoding="utf-8")
+    basic_source = (repository / "src/p2p/P2PProtocolBasic.cpp").read_text(encoding="utf-8")
     if '<< " from " << get_address()' in basic_source:
         raise RuntimeError("P2P handshake logs contain an unredacted peer address")
+    direct_peer_stream = re.compile(
+        r"<<\s*(?:address\.to_string\(\)|addr(?:\.to_string\(\))?|na\.to_string\(\)|get_address\(\))"
+    )
+    for relative in (
+        "src/p2p/P2P.cpp",
+        "src/p2p/PeerDB.cpp",
+        "src/p2p/P2PProtocolBasic.cpp",
+        "src/Core/Node.cpp",
+        "src/Core/Node_P2PProtocolBytecoin.cpp",
+    ):
+        for number, line in enumerate((repository / relative).read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("//"):
+                continue
+            if direct_peer_stream.search(line):
+                raise RuntimeError(
+                    f"{relative}:{number} directly streams an unredacted peer address"
+                )
     print("walletd artifact contains no known privacy-sensitive RPC body log formats")
 
 

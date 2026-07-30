@@ -6,12 +6,14 @@
 #include <array>
 #include <iostream>
 #include <stdexcept>
+#include "Core/Archive.hpp"
 #include "Core/BlockChainState.hpp"
 #include "Core/Config.hpp"
 #include "Core/Currency.hpp"
 #include "CryptoNote.hpp"
 #include "CryptoNoteConfig.hpp"
 #include "common/Invariant.hpp"
+#include "common/CommandLine.hpp"
 #include "crypto/crypto.hpp"
 #include "p2p/P2pProtocolDefinitions.hpp"
 #include "p2p/Dandelion.hpp"
@@ -65,6 +67,30 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	Currency currency(config);
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;
+
+	// Privacy-sensitive attribution is opt-in at both the top-level config and the lower-level
+	// archive constructor. The deprecated ambiguous flag must not silently restore collection.
+	invariant(config.archive_omit_source_addresses && !config.log_peer_addresses &&
+	              Archive::DEFAULT_OMIT_SOURCE_ADDRESSES,
+	    "peer attribution or address logging was enabled by default");
+	{
+		const char *explicit_args[] = {
+		    "tests", "--archive-store-source-ips", "--log-peer-addresses"};
+		common::CommandLine explicit_cmd(3, explicit_args);
+		Config explicit_config(explicit_cmd);
+		invariant(!explicit_config.archive_omit_source_addresses && explicit_config.log_peer_addresses,
+		    "explicit peer-attribution diagnostics were not honored");
+		const char *legacy_args[] = {"tests", "--archive-keep-source-addresses"};
+		common::CommandLine legacy_cmd(2, legacy_args);
+		bool legacy_rejected = false;
+		try {
+			Config legacy_config(legacy_cmd);
+			(void)legacy_config;
+		} catch (const Config::ConfigError &) {
+			legacy_rejected = true;
+		}
+		invariant(legacy_rejected, "deprecated archive attribution flag bypassed explicit opt-in");
+	}
 
 	// Pool policy is intentionally non-consensus, but its exact boundary must remain deterministic
 	// across nodes and reject before expensive standard-program proof verification.

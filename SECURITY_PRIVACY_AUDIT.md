@@ -131,9 +131,11 @@ cross-platform packet capture and independent review remain release requirements
 
 ### MEDIUM / LOW
 
-#### M-1. Archive stores source IP per transaction
-- `src/Core/Archive.cpp:49-69`, `src/Core/BlockChainState.cpp:699-702` — a persistent
-  transaction→source-IP map, retrievable via the `GetArchive` RPC.
+#### M-1. Archive source-IP attribution — remediated default
+Archive records omit source addresses by default at both the daemon configuration and lower-level
+`Archive` constructor. Restoring attribution requires the explicitly privacy-sensitive
+`--archive-store-source-ips` option, and the ambiguous deprecated flag is rejected. Archive RPC
+access also requires private node authorization.
 
 #### M-2. Wallet creation timestamp and sparse-chain sync metadata — remediated mode
 Legacy synchronization still sends a month-rounded creation timestamp and the wallet's sparse chain.
@@ -151,9 +153,10 @@ Production callers use the mutex-serialized C++ entry point. Deterministic test 
 deliberately disables reseeding only inside the test process so frozen cryptographic vectors remain
 stable.
 
-#### L-2. Verbose peer-IP logging
-- `src/Core/Node_P2PProtocolBytecoin.cpp:147-172`, `src/Core/Node.cpp:76,81` — peer addresses are
-  logged at INFO/TRACE, building a local connection history.
+#### L-2. Verbose peer-IP logging — remediated default
+Incoming, outgoing, seed-delay, ban, multicast and protocol-event log paths emit
+`<peer-redacted>` by default. Operators must deliberately enable `--log-peer-addresses` for
+temporary diagnostics.
 
 ---
 
@@ -166,10 +169,10 @@ stable.
 | C-3 | Critical | Min ring size 3, not consensus-enforced (zero-mixin accepted) |
 | C-4 | Critical | Remote-node mode collapses the ring |
 | C-5 | Critical, partially remediated | Dandelion++ implemented; transport anonymity and adversarial validation remain |
-| M-1 | Medium | Archive stores source IP per transaction |
+| M-1 | Remediated | Archive source attribution is explicit opt-in |
 | M-2 | Remediated mode | Privacy sync hides creation timestamp and sparse-chain fingerprint |
 | L-1 | Remediated | CSPRNG periodically reseeded at exact byte boundaries |
-| L-2 | Low | Verbose peer-IP logging |
+| L-2 | Remediated | Peer addresses are redacted unless diagnostics are enabled |
 | Q-1 | Critical (industry-wide) | Not quantum-resistant — CRQC breaks supply integrity and privacy |
 
 Supply integrity (counterfeiting) is **sound under classical assumptions** — no inflation vector

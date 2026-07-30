@@ -309,7 +309,8 @@ bool P2P::connect_one(const NetworkAddress &address) {
 	}
 	P2PClient *who                 = next_client[incoming].get();
 	clients[incoming][who]         = std::move(next_client[incoming]);
-	m_log(logging::DEBUGGING) << "Connecting to=" << address.to_string();
+	m_log(logging::DEBUGGING) << "Connecting to="
+	                          << (m_config.log_peer_addresses ? address.to_string() : "<peer-redacted>");
 	who->set_protocol(c_factory(who));
 	return true;
 }

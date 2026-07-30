@@ -232,7 +232,8 @@ void PeerDB::merge_peerlist_from_p2p(const NetworkAddress &addr,
 		add_incoming_peer_impl(pp, now);
 	}
 	if (is_seed(addr)) {
-		m_log(logging::INFO) << "Delaying connect to seed " << addr
+		m_log(logging::INFO) << "Delaying connect to seed "
+		                     << (config.log_peer_addresses ? addr.to_string() : "<peer-redacted>")
 		                     << " because got peer list size=" << outer_bs.size();
 		delay_connection_attempt(addr, now);
 	}
@@ -340,7 +341,8 @@ void PeerDB::merge_peerlist_from_p2p(const NetworkAddress &addr,
 		add_incoming_peer_impl(na, now);
 	}
 	if (is_seed(addr)) {
-		m_log(logging::INFO) << "Delaying connect to seed " << addr
+		m_log(logging::INFO) << "Delaying connect to seed "
+		                     << (config.log_peer_addresses ? addr.to_string() : "<peer-redacted>")
 		                     << " because got peer list size=" << outer_bs.size();
 		delay_connection_attempt(addr, now);
 	}

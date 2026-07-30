@@ -32,7 +32,7 @@ public:
 	std::string net;
 	bool is_archive;
 	// Privacy: when true (default), the archive does NOT record which peer IP relayed each
-	// block/transaction. Restore the old behaviour with --archive-keep-source-addresses.
+	// block/transaction. The explicit --archive-store-source-ips option restores attribution.
 	bool archive_omit_source_addresses = true;
 	bool log_peer_addresses = false;
 

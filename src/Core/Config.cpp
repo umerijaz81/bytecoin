@@ -121,11 +121,11 @@ Config::Config(common::CommandLine &cmd)
     , paranoid_checks(cmd.get_bool("--paranoid-checks"))
     , trusted_public_key(P2P_STAT_TRUSTED_PUBLIC_KEY)
     , payment_queue_confirmations(720) {
-	// Privacy hardening flags (Phase 1). Archive omits peer IPs by default; opt back in if needed.
-	const bool legacy_store_source_addresses =
-	    cmd.get_bool("--archive-keep-source-addresses", "use --archive-store-source-ips instead");
-	archive_omit_source_addresses =
-	    !(cmd.get_bool("--archive-store-source-ips") || legacy_store_source_addresses);
+	// Privacy hardening flags (Phase 1). Archive omits peer IPs by default; opt back in explicitly.
+	if (cmd.get_bool("--archive-keep-source-addresses", "removed; use --archive-store-source-ips instead"))
+		throw ConfigError("Command line option --archive-keep-source-addresses was removed; "
+		                  "use the explicit privacy-sensitive --archive-store-source-ips option");
+	archive_omit_source_addresses = !cmd.get_bool("--archive-store-source-ips");
 	log_peer_addresses = cmd.get_bool("--log-peer-addresses");
 	wallet_sync_privacy           = cmd.get_bool("--wallet-sync-privacy");
 	dandelion_enabled             = !cmd.get_bool("--disable-dandelion");
