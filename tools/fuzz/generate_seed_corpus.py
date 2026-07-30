@@ -8,7 +8,7 @@ import hashlib
 from pathlib import Path
 
 
-SELECTORS = tuple(range(17)) + tuple(range(128, 138)) + tuple(range(200, 206))
+SELECTORS = tuple(range(17)) + tuple(range(128, 138)) + tuple(range(200, 207))
 
 
 def seeds() -> list[bytes]:
@@ -27,6 +27,8 @@ def seeds() -> list[bytes]:
             b"\xcb\x01",
             b"\xcc\x01",
             b"\xcd\x01",
+            b"\xce\x07\x20",  # truncated Onyx v7/depth-32 state snapshot
+            b"\xce\x07\x20\x00\x00",  # malformed empty-tree frontier/snapshot body
         ]
     )
     return corpus

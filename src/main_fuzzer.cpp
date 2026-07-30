@@ -93,6 +93,15 @@ void onyx_issuance_parse(const cn::BinaryArray &msg) {
 	               anchor, &expiry, program_id, &sequence, &issued_amount, commitments, 2,
 	               &commitment_count) == 1);
 }
+
+void onyx_state_audit_parse(const cn::BinaryArray &msg) {
+	uint64_t total_bridged = 0, total_fees = 0, circulating_supply = 0;
+	uint64_t commitment_count = 0, program_count = 0, current_block_program_cost = 0;
+	uint8_t commitment_root[32] = {};
+	sideeffect(onyx_state_supply_audit(msg.data(), msg.size(), &total_bridged, &total_fees,
+	               &circulating_supply, &commitment_count, &program_count,
+	               &current_block_program_cost, commitment_root) == 1);
+}
 #endif
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -203,6 +212,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 	case 205:
 #ifdef onyx_USE_ZK
 		onyx_issuance_parse(msg);
+#endif
+		break;
+	case 206:
+#ifdef onyx_USE_ZK
+		onyx_state_audit_parse(msg);
 #endif
 		break;
 	case 200:
