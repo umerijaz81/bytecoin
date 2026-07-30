@@ -1092,6 +1092,7 @@ void Node::check_sendproof(const BinaryArray &data_inside_base58, api::cnd::Chec
 	const InputKey &in = boost::get<InputKey>(tx.inputs.at(0));
 	TransactionPrefix fake_prefix;
 	fake_prefix.version = tx.version;
+	fake_prefix.signature_scheme = tx.signature_scheme;
 	fake_prefix.inputs.push_back(in);
 	RingSignatureAmethyst rsa;
 	try {

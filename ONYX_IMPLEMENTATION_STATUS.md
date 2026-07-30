@@ -114,7 +114,9 @@ unreachable until the release gates below are independently satisfied.
    rejects unknown or inactive schemes; wallet construction follows the Jade transaction version at
    activation. Its wallet fee and maximum-size selection use the V5 estimator, whose one-byte delta is
    checked against the serialized prefix rather than inheriting the V4 estimate. Amount-plus-fee,
-   ceiling-rounding and insufficient-capacity reporting are overflow-safe at the full uint64 boundary. V1-V4 and the Onyx
+   ceiling-rounding and insufficient-capacity reporting are overflow-safe at the full uint64 boundary.
+   Jade sendproofs preserve V5 on the wire and reconstruct the active scheme on both wallet and node
+   signature paths instead of being normalized to V4. V1-V4 and the Onyx
    envelope encoding remain unchanged. The reserved hybrid-PQ registry
    value is not an implementation: its algorithm/dependency selection, key migration, address/public-key
    commitments, proof/signature sizes, hybrid downgrade rules, vectors and audit remain required.

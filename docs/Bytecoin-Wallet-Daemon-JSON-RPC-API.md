@@ -1556,6 +1556,9 @@ You can set `save_history` to false if you save transfers you make in your own d
 
 You get `binary_transaction` field to later pass to `send_transaction`, and `transaction` field for inspecting fee and size before sending. `save_history_error` is reported, usually as a result of storing wallet on read-only media.
 
+Sendproofs created for Jade transactions retain transaction version V5 and the active signed
+authorization-scheme identity; bytecoind rejects a proof whose version does not match its transaction.
+
 #### Input (params)
 
 | Field                       | Type          | Mandatory | Default value | Description                                |

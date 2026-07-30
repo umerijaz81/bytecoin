@@ -163,6 +163,36 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(has_requested_anonymity(16, 16) && has_requested_anonymity(17, 16) &&
 		              !has_requested_anonymity(15, 16),
 		    "wallet anonymity policy does not fail closed below the requested ring privacy");
+		SendproofAmethyst jade_sendproof;
+		jade_sendproof.version = currency.jade_transaction_version;
+		jade_sendproof.transaction_hash.data[0] = 1;
+		jade_sendproof.elements.push_back(SendproofAmethyst::Element{7, Hash{}});
+		jade_sendproof.message = "jade-sendproof";
+		SendproofAmethyst decoded_sendproof;
+		seria::from_binary(decoded_sendproof, seria::to_binary(jade_sendproof));
+		invariant(decoded_sendproof.version == currency.jade_transaction_version &&
+		              decoded_sendproof.transaction_hash == jade_sendproof.transaction_hash &&
+		              decoded_sendproof.elements.size() == 1 &&
+		              decoded_sendproof.elements.front().out_index == 7 &&
+		              decoded_sendproof.message == jade_sendproof.message,
+		    "Jade sendproof did not preserve its V5 wire identity");
+		TransactionPrefix proof_signature_prefix;
+		proof_signature_prefix.version = currency.jade_transaction_version;
+		proof_signature_prefix.signature_scheme =
+		    static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING);
+		RingSignatureAmethyst empty_proof_signature;
+		invariant(!seria::to_binary(empty_proof_signature, proof_signature_prefix).empty(),
+		    "Jade sendproof could not serialize under its active signature scheme");
+		proof_signature_prefix.signature_scheme =
+		    static_cast<uint8_t>(TransactionSignatureScheme::LEGACY_RING_IMPLICIT);
+		bool inactive_sendproof_scheme_rejected = false;
+		try {
+			(void)seria::to_binary(empty_proof_signature, proof_signature_prefix);
+		} catch (const std::exception &) {
+			inactive_sendproof_scheme_rejected = true;
+		}
+		invariant(inactive_sendproof_scheme_rejected,
+		    "Jade sendproof signature accepted an inactive reconstructed scheme");
 	}
 	{
 		OnyxConstructionWindow window;

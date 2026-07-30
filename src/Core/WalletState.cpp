@@ -1186,7 +1186,7 @@ std::string WalletState::api_create_proof(const TransactionPrefix &tx,
 		return common::base58::encode_addr(m_currency.sendproof_base58_prefix, body);
 	}
 	SendproofAmethyst sp;
-	sp.version          = m_currency.amethyst_transaction_version;
+	sp.version          = tx.version;
 	sp.message          = message;
 	sp.transaction_hash = tid;
 	Amount total_amount = 0;
@@ -1293,6 +1293,7 @@ std::string WalletState::api_create_proof(const TransactionPrefix &tx,
 	invariant(crypto::check_ring_signature_amethyst(proof_prefix_hash, all_keyimages, all_output_keys, rsa), "");
 	TransactionPrefix fake_prefix;
 	fake_prefix.version = tx.version;
+	fake_prefix.signature_scheme = tx.signature_scheme;
 	fake_prefix.inputs.push_back(in);
 	BinaryArray sig_body = seria::to_binary(rsa, fake_prefix);
 	//	std::cout << "Sig body: " << common::to_hex(sig_body) << std::endl;

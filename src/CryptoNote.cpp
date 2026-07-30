@@ -56,7 +56,8 @@ void ser_members(cn::SendproofAmethyst &v, ISeria &s) {
 		seria_kv("address", v.address_simple, s);
 		seria_kv("derivation", v.derivation, s);
 		seria_kv("signature", v.signature, s);
-	} else if (v.version == parameters::TRANSACTION_VERSION_AMETHYST) {
+	} else if (v.version == parameters::TRANSACTION_VERSION_AMETHYST ||
+	           v.version == parameters::TRANSACTION_VERSION_JADE) {
 		seria_kv("elements", v.elements, s);
 	} else
 		throw std::runtime_error("Unknown version of sendproof, version = " + common::to_string(int(v.version)));
@@ -176,6 +177,10 @@ void ser_members(cn::RingSignatureAmethyst &v, ISeria &s) {
 
 // Serializing in the context of transaction - sizes and types are known from transaction prefix
 void ser_members(cn::RingSignatureAmethyst &v, ISeria &s, const cn::TransactionPrefix &prefix) {
+	if (prefix.version == parameters::TRANSACTION_VERSION_JADE &&
+	    prefix.signature_scheme !=
+	        static_cast<uint8_t>(cn::TransactionSignatureScheme::AMETHYST_LINKABLE_RING))
+		throw std::runtime_error("Transaction signature scheme is not active for Jade");
 	size_t sig_size = prefix.inputs.size();
 	if (s.is_input()) {
 		v.pp.resize(sig_size);
