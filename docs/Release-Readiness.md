@@ -100,10 +100,11 @@ Before any external gate passes, `release/activation-gates.json` must freeze one
 
 The enforced minimums are release policy, not claims about the current branch:
 
-- independent audits require two attestations from distinct organizations, each binding its report
-  and declaring zero unresolved critical or high findings;
+- independent audits require two attestations from distinct normalized organization identities, each
+  binding its report and declaring zero unresolved critical or high findings;
 - public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,
-  and recorded reorg, malformed-bundle, and denial-of-service scenarios at a public HTTPS endpoint;
+  and recorded reorg, malformed-bundle, and denial-of-service scenarios at a credential-free public
+  HTTPS endpoint with a valid host and optional valid port;
 - binary reproducibility requires Linux x86-64, macOS ARM64, and Windows x86-64, with two independent
   builders and byte-identical normalized hashes for each platform;
 - an incident drill requires at least two participants and consensus-stall, reorg, and proof-DoS

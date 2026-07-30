@@ -8,6 +8,7 @@ import hashlib
 import json
 import pathlib
 import re
+import urllib.parse
 
 
 EXTERNAL_GATES = {
@@ -108,7 +109,8 @@ def _audit(
     if not isinstance(findings, dict) or findings.get("critical") != 0 or findings.get("high") != 0:
         errors.append(f"{label}: unresolved critical and high findings must both be zero")
     _artifact(document, root, errors, label, tracked_paths)
-    return errors, organization.casefold() if organization else None
+    normalized = " ".join(organization.split()).casefold() if organization else None
+    return errors, normalized
 
 
 def _testnet(
@@ -120,7 +122,22 @@ def _testnet(
     if start and end and (end - start).total_seconds() < 14 * 24 * 60 * 60:
         errors.append(f"{label}: public testnet soak must cover at least 14 days")
     endpoint = document.get("public_endpoint")
-    if not isinstance(endpoint, str) or not endpoint.startswith("https://"):
+    endpoint_valid = False
+    if isinstance(endpoint, str) and endpoint and not any(character.isspace() for character in endpoint):
+        try:
+            parsed = urllib.parse.urlsplit(endpoint)
+            port_valid = parsed.port is None or 1 <= parsed.port <= 65535
+            endpoint_valid = (
+                parsed.scheme == "https"
+                and bool(parsed.hostname)
+                and parsed.username is None
+                and parsed.password is None
+                and parsed.fragment == ""
+                and port_valid
+            )
+        except ValueError:
+            endpoint_valid = False
+    if not endpoint_valid:
         errors.append(f"{label}: public_endpoint must be HTTPS")
     for key, minimum in {
         "independent_nodes": 3,
