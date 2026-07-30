@@ -131,8 +131,11 @@ The enforced minimums are release policy, not claims about the current branch:
 - binary reproducibility requires Linux x86-64, macOS ARM64, and Windows x86-64, with two independent
   builders and byte-identical normalized hashes for each platform; each platform must appear exactly
   once, and every named builder must bind its own SHA-256 to that platform's normalized SHA-256;
-- an incident drill requires at least two participants and consensus-stall, reorg, and proof-DoS
-  scenarios;
+- an incident drill requires at least two participants, an independent observer, named decision
+  authority, recorded communications, migration/supply reconciliation and an unresolved-action list.
+  It must exercise consensus-stall, reorg and proof-DoS exactly once each; every scenario records
+  ordered detection, triage and recovery timestamps within the drill plus preserved artifacts,
+  clean-room reproduction and verified recovery;
 - governance must approve the exact revision plus compiler and target-profile SHA-256 digests, record
   quorum, contain at least two approvals, and bind the exact positive integer values of all four
   canonical activation heights. The verifier compares that map with the activation commit's

@@ -426,13 +426,82 @@ def _incident(
     document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
 ) -> list[str]:
     errors = _common(document, "incident-response-drill", label)
-    _distinct_identities(
+    participants = _distinct_identities(
         document, "participants", "participant_ids", 2, errors, label
     )
+    observers = _distinct_identities(
+        document, "independent_observers", "observer_ids", 1, errors, label
+    )
+    if participants is not None and observers is not None and set(participants) & set(observers):
+        errors.append(f"{label}: independent observers must not be drill participants")
+    started = _utc(document.get("started_at"), "started_at", errors, label)
+    completed = _utc(document.get("completed_at"), "completed_at", errors, label)
+    if started is not None and completed is not None and started > completed:
+        errors.append(f"{label}: started_at must not follow completed_at")
+    authority = document.get("decision_authority")
+    if not isinstance(authority, str) or not authority.strip():
+        errors.append(f"{label}: decision_authority is required")
+    if document.get("communications_recorded") is not True:
+        errors.append(f"{label}: communications_recorded must be true")
+    if document.get("migration_supply_reconciled") is not True:
+        errors.append(f"{label}: migration_supply_reconciled must be true")
+    unresolved = document.get("unresolved_actions")
+    if not isinstance(unresolved, list) or any(
+        not isinstance(action, str) or not action.strip() for action in unresolved
+    ):
+        errors.append(f"{label}: unresolved_actions must be an array of non-empty descriptions")
+
     scenarios = document.get("scenarios")
     required = {"consensus-stall", "reorg", "proof-dos"}
-    if not isinstance(scenarios, list) or not required.issubset(set(scenarios)):
-        errors.append(f"{label}: scenarios must cover {sorted(required)}")
+    if not isinstance(scenarios, list):
+        errors.append(f"{label}: scenarios must contain structured drill results")
+    else:
+        identifiers = [
+            scenario.get("id")
+            for scenario in scenarios
+            if isinstance(scenario, dict) and isinstance(scenario.get("id"), str)
+        ]
+        if set(identifiers) != required or len(identifiers) != len(required):
+            errors.append(f"{label}: scenarios must cover each of {sorted(required)} exactly once")
+        for scenario in scenarios:
+            if not isinstance(scenario, dict):
+                errors.append(f"{label}: invalid scenario result")
+                continue
+            scenario_id = scenario.get("id", "unknown")
+            scenario_label = f"{label}:{scenario_id}"
+            detected = _utc(
+                scenario.get("detected_at"), "detected_at", errors, scenario_label
+            )
+            triaged = _utc(
+                scenario.get("triaged_at"), "triaged_at", errors, scenario_label
+            )
+            recovered = _utc(
+                scenario.get("recovered_at"), "recovered_at", errors, scenario_label
+            )
+            if (
+                detected is not None
+                and triaged is not None
+                and recovered is not None
+                and not (detected <= triaged <= recovered)
+            ):
+                errors.append(
+                    f"{scenario_label}: detection, triage and recovery timestamps must be ordered"
+                )
+            if (
+                started is not None
+                and completed is not None
+                and detected is not None
+                and recovered is not None
+                and not (started <= detected <= recovered <= completed)
+            ):
+                errors.append(f"{scenario_label}: scenario timestamps must fall within the drill")
+            for key in (
+                "artifacts_preserved",
+                "clean_room_reproduced",
+                "recovery_verified",
+            ):
+                if scenario.get(key) is not True:
+                    errors.append(f"{scenario_label}: {key} must be true")
     _artifact(document, root, errors, label, tracked_paths)
     return errors
 
@@ -529,12 +598,15 @@ def verify_gate(
             completed = _valid_utc(document.get("completed_at"))
             if completed is not None and completed < revision_committed_at:
                 errors.append(f"{label}: completed_at predates the frozen release revision")
-            if gate_id == "public-testnet-soak":
+            if gate_id in {"public-testnet-soak", "incident-response-drill"}:
                 started = _valid_utc(document.get("started_at"))
                 if started is not None and started < revision_committed_at:
-                    errors.append(
-                        f"{label}: public testnet soak started before the frozen release revision"
+                    activity = (
+                        "public testnet soak"
+                        if gate_id == "public-testnet-soak"
+                        else "incident-response drill"
                     )
+                    errors.append(f"{label}: {activity} started before the frozen release revision")
         if gate_id == "source-provenance":
             errors.extend(
                 _source_provenance(

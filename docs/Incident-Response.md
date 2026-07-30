@@ -61,3 +61,12 @@ The `incident-response-drill` activation gate can pass only when evidence record
 decision authority, preserved artifacts, a clean-room reproduction, migration/supply reconciliation,
 communications, recovery time, unresolved actions and independent observer sign-off. Merely linking
 this runbook is implementation evidence, not a passed drill.
+
+The typed attestation records an ordered `started_at`/`completed_at` window, at least two distinct
+`participant_ids`, at least one distinct entry in `observer_ids` that is not a participant,
+`decision_authority`, `communications_recorded`,
+`migration_supply_reconciled`, and an `unresolved_actions` array. Its `scenarios` array contains
+exactly one structured result for `consensus-stall`, `reorg`, and `proof-dos`. Each result binds
+ordered `detected_at`, `triaged_at`, and `recovered_at` timestamps and sets `artifacts_preserved`,
+`clean_room_reproduced`, and `recovery_verified` only after those actions have been demonstrated.
+The drill cannot begin before the frozen release revision exists.

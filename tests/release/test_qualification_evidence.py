@@ -338,6 +338,97 @@ class QualificationEvidenceTest(unittest.TestCase):
             errors = qualification_evidence.verify_gate("public-testnet-soak", [evidence], root)
             self.assertTrue(any("public_endpoint must be HTTPS" in error for error in errors), errors)
 
+    def test_incident_drill_requires_operational_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            scenarios = []
+            for index, scenario_id in enumerate(("consensus-stall", "reorg", "proof-dos")):
+                hour = 10 + index
+                scenarios.append(
+                    {
+                        "id": scenario_id,
+                        "detected_at": f"2026-07-17T{hour:02d}:00:00Z",
+                        "triaged_at": f"2026-07-17T{hour:02d}:05:00Z",
+                        "recovered_at": f"2026-07-17T{hour:02d}:30:00Z",
+                        "artifacts_preserved": True,
+                        "clean_room_reproduced": True,
+                        "recovery_verified": True,
+                    }
+                )
+            document = {
+                "schema_version": 1,
+                "gate_id": "incident-response-drill",
+                "revision": REVISION,
+                "started_at": "2026-07-17T09:00:00Z",
+                "completed_at": "2026-07-17T14:00:00Z",
+                "participants": 2,
+                "participant_ids": ["operator-a", "operator-b"],
+                "independent_observers": 1,
+                "observer_ids": ["observer-a"],
+                "decision_authority": "release incident commander",
+                "communications_recorded": True,
+                "migration_supply_reconciled": True,
+                "unresolved_actions": [],
+                "scenarios": scenarios,
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "incident.json", document)
+            self.assertEqual(
+                [],
+                qualification_evidence.verify_gate(
+                    "incident-response-drill",
+                    [evidence],
+                    root,
+                ),
+            )
+
+            document["communications_recorded"] = False
+            document["observer_ids"] = ["operator-a"]
+            document["scenarios"][1]["clean_room_reproduced"] = False
+            document["scenarios"][2]["triaged_at"] = "2026-07-17T13:00:00Z"
+            evidence = self.write_document(root, "incident.json", document)
+            errors = qualification_evidence.verify_gate(
+                "incident-response-drill",
+                [evidence],
+                root,
+            )
+            self.assertTrue(any("communications_recorded must be true" in error for error in errors))
+            self.assertTrue(any("must not be drill participants" in error for error in errors))
+            self.assertTrue(any("clean_room_reproduced must be true" in error for error in errors))
+            self.assertTrue(any("timestamps must be ordered" in error for error in errors))
+
+    def test_incident_drill_cannot_start_before_frozen_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = {
+                "schema_version": 1,
+                "gate_id": "incident-response-drill",
+                "revision": REVISION,
+                "started_at": "2026-07-17T09:00:00Z",
+                "completed_at": "2026-07-17T14:00:00Z",
+                "participants": 2,
+                "participant_ids": ["operator-a", "operator-b"],
+                "independent_observers": 1,
+                "observer_ids": ["observer-a"],
+                "decision_authority": "release incident commander",
+                "communications_recorded": True,
+                "migration_supply_reconciled": True,
+                "unresolved_actions": [],
+                "scenarios": [],
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "incident.json", document)
+            errors = qualification_evidence.verify_gate(
+                "incident-response-drill",
+                [evidence],
+                root,
+                revision_committed_at=datetime(2026, 7, 17, 10, tzinfo=timezone.utc),
+            )
+            self.assertTrue(
+                any("drill started before the frozen release revision" in error for error in errors),
+                errors,
+            )
+
     def test_governance_requires_exact_revision_quorum_and_digests(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
