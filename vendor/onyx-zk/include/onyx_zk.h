@@ -8,7 +8,8 @@
  * Buffers returned via out-params are owned by the callee and MUST be released with onyx_free.
  * Structured consensus verification/extraction calls clear fixed outputs and element counts after
  * pointer/length validation and before any later failure. Counted arrays have no valid elements
- * when their returned count is zero.
+ * when their returned count is zero. Deterministic key, hash, and toy-prover helpers likewise clear
+ * fixed or allocated outputs once all output pointers are valid.
  */
 #ifndef ONYX_ZK_H
 #define ONYX_ZK_H
@@ -29,17 +30,20 @@ uint32_t onyx_abi_version(void);
 
 /* Orchard Poseidon (P128Pow5T3, arity 2) over the Pallas base field.
  * in: two 32-byte canonical little-endian field elements (64 bytes total).
- * out: 32-byte digest. Returns 0 on success, <0 if an input is not a canonical field element. */
+ * out: 32-byte digest, cleared on failure after pointer validation. Returns 0 on success, <0 if an
+ * input is not a canonical field element. Input/output aliasing is supported. */
 int onyx_poseidon_hash2(const uint8_t in[64], uint8_t out[32]);
 
 /* Sinsemilla hash over a fixed test domain. Input is limited to 4096 bytes and expanded LSB-first.
  * out: 32-byte digest (Pallas base field element). Returns 0 on success, <0 on the (negligible)
- * exceptional case or bad input. */
+ * exceptional case or bad input. The output is cleared on failure after output-pointer validation;
+ * input/output aliasing is supported. */
 int onyx_sinsemilla_hash(const uint8_t *in, size_t in_len, uint8_t out[32]);
 
 /* Toy circuit (knowledge of a, b with a*b = public), used only to validate the prove->verify
  * pipeline end-to-end. Writes a freshly-allocated proof, verifying key, and the 32-byte public
- * input. Returns 0 on success, <0 on error. Release *proof_out and *vk_out with onyx_free. */
+ * input. Returns 0 on success, <0 on error. After output-pointer validation, allocated outputs are
+ * NULL/0 and public_out is zero until success. Release *proof_out and *vk_out with onyx_free. */
 int onyx_toy_prove(uint64_t a, uint64_t b,
                    uint8_t **proof_out, size_t *proof_len,
                    uint8_t **vk_out, size_t *vk_len,

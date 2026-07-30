@@ -1663,6 +1663,9 @@ pub extern "C" fn onyx_wallet_address(
         let network: [u8; 16] = unsafe { slice::from_raw_parts(network, 16) }
             .try_into()
             .expect("fixed network length");
+        unsafe {
+            std::ptr::write_bytes(address_out, 0, 91);
+        }
         let address = match keys::MasterSeed::new(seed)
             .derive(network)
             .and_then(|keys| keys.address(address_index))
@@ -1704,6 +1707,9 @@ pub extern "C" fn onyx_full_viewing_key(
         let network: [u8; 16] = unsafe { slice::from_raw_parts(network, 16) }
             .try_into()
             .expect("fixed network length");
+        unsafe {
+            std::ptr::write_bytes(viewing_key_out, 0, keys::FULL_VIEWING_KEY_BYTES);
+        }
         let viewing = match keys::MasterSeed::new(seed)
             .derive(network)
             .and_then(|keys| keys.full_viewing_key())
@@ -3155,7 +3161,13 @@ fn poseidon_hash2_impl(input: *const u8, out: *mut u8) -> i32 {
     if input.is_null() || out.is_null() {
         return -1;
     }
-    let in_slice = unsafe { slice::from_raw_parts(input, 64) };
+    let input: [u8; 64] = unsafe { slice::from_raw_parts(input, 64) }
+        .try_into()
+        .expect("fixed Poseidon input length");
+    unsafe {
+        std::ptr::write_bytes(out, 0, 32);
+    }
+    let in_slice = input.as_slice();
     let a_bytes: [u8; 32] = in_slice[0..32].try_into().unwrap();
     let b_bytes: [u8; 32] = in_slice[32..64].try_into().unwrap();
     let (a, b) = match (fp_from_le(&a_bytes), fp_from_le(&b_bytes)) {
@@ -3175,14 +3187,23 @@ pub extern "C" fn onyx_sinsemilla_hash(input: *const u8, in_len: usize, out: *mu
 }
 
 fn sinsemilla_hash_impl(input: *const u8, in_len: usize, out: *mut u8) -> i32 {
-    if out.is_null() || (input.is_null() && in_len != 0) || in_len > MAX_HASH_INPUT {
+    if out.is_null() {
+        return -1;
+    }
+    if (input.is_null() && in_len != 0) || in_len > MAX_HASH_INPUT {
+        unsafe {
+            std::ptr::write_bytes(out, 0, 32);
+        }
         return -1;
     }
     let bytes = if in_len == 0 {
-        &[][..]
+        Vec::new()
     } else {
-        unsafe { slice::from_raw_parts(input, in_len) }
+        unsafe { slice::from_raw_parts(input, in_len) }.to_vec()
     };
+    unsafe {
+        std::ptr::write_bytes(out, 0, 32);
+    }
     let bits = bytes
         .iter()
         .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1));
@@ -3374,6 +3395,13 @@ fn toy_prove_ffi_impl(
     {
         return -1;
     }
+    unsafe {
+        *proof_out = std::ptr::null_mut();
+        *proof_len = 0;
+        *vk_out = std::ptr::null_mut();
+        *vk_len = 0;
+        std::ptr::write_bytes(public_out, 0, 32);
+    }
     let r = match toy_prove(a, b) {
         Ok(r) => r,
         Err(_) => return -2,
@@ -3498,6 +3526,10 @@ mod tests {
         assert_eq!(onyx_poseidon_hash2(input.as_ptr(), out2.as_mut_ptr()), 0);
         assert_eq!(out1, out2);
         assert_ne!(out1, [0u8; 32]);
+        let mut in_place = input;
+        let in_place_ptr = in_place.as_mut_ptr();
+        assert_eq!(onyx_poseidon_hash2(in_place_ptr, in_place_ptr), 0);
+        assert_eq!(&in_place[..32], &out1);
         // Print the KAT so it can be frozen into the C++ test vectors.
         println!("poseidon2([7;32],[7;32]) = {}", hex(&out1));
     }
@@ -3511,17 +3543,54 @@ mod tests {
             0
         );
         assert_ne!(out, [0u8; 32]);
+        let mut alias = [7u8; 32];
+        let mut expected = [0u8; 32];
+        assert_eq!(
+            onyx_sinsemilla_hash(alias.as_ptr(), alias.len(), expected.as_mut_ptr()),
+            0
+        );
+        let alias_ptr = alias.as_mut_ptr();
+        assert_eq!(onyx_sinsemilla_hash(alias_ptr, alias.len(), alias_ptr), 0);
+        assert_eq!(alias, expected);
         println!("sinsemilla(\"onyx\") = {}", hex(&out));
+    }
+
+    #[test]
+    fn wallet_key_helpers_overwrite_caller_outputs() {
+        let seed = [7u8; 32];
+        let network = [9u8; 16];
+        let mut address = [0xffu8; 91];
+        assert_eq!(
+            onyx_wallet_address(seed.as_ptr(), network.as_ptr(), 3, address.as_mut_ptr(),),
+            0
+        );
+        assert_eq!(&address[..16], &network);
+        assert_ne!(address, [0u8; 91]);
+
+        let mut viewing_key = [0xffu8; keys::FULL_VIEWING_KEY_BYTES];
+        assert_eq!(
+            onyx_full_viewing_key(seed.as_ptr(), network.as_ptr(), viewing_key.as_mut_ptr()),
+            0
+        );
+        assert_ne!(viewing_key, [0u8; keys::FULL_VIEWING_KEY_BYTES]);
     }
 
     #[test]
     fn ffi_rejects_oversized_inputs() {
         let input = [0u8; 1];
-        let mut out = [0u8; 32];
+        let mut out = [0xffu8; 32];
         assert_eq!(
             onyx_sinsemilla_hash(input.as_ptr(), MAX_HASH_INPUT + 1, out.as_mut_ptr()),
             -1
         );
+        assert_eq!(out, [0u8; 32]);
+        out.fill(0xff);
+        let invalid_field = [0xffu8; 64];
+        assert_eq!(
+            onyx_poseidon_hash2(invalid_field.as_ptr(), out.as_mut_ptr()),
+            -2
+        );
+        assert_eq!(out, [0u8; 32]);
 
         let proof = [0u8; 1];
         let public = [0u8; 32];

@@ -44,7 +44,7 @@
       "kind": "vendored",
       "path": "vendor/onyx-zk",
       "lockfile": "vendor/onyx-zk/Cargo.lock",
-      "tree_sha256": "daa83903e5a8f8b1445a524c04df2077f3361fcc31724e020f6f8bbd2c8c9312",
+      "tree_sha256": "910780003ac1b3a2cd2f6f4a26ece731f7b3dc70263ae92b3487e48a677b96f9",
       "license": "LGPL-3.0-or-later",
       "purl": "pkg:cargo/onyx-zk@0.0.1"
     },
