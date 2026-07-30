@@ -45,6 +45,89 @@ def frozen_revision_is_ancestor(revision: str) -> bool:
     return ancestor.returncode == 0
 
 
+def changed_paths_since(revision: str) -> set[str]:
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=ACDMRTUXB", revision, "HEAD", "--"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
+    return {line for line in result.stdout.splitlines() if line}
+
+
+def qualification_paths(gates: list[dict], tracked: set[str]) -> set[str]:
+    allowed = {
+        "release/activation-gates.json",
+        "src/CryptoNoteConfig.hpp",
+    }
+    for gate in gates:
+        if not isinstance(gate, dict):
+            continue
+        evidence = gate.get("evidence")
+        if not isinstance(evidence, list):
+            continue
+        gate_id = gate.get("id")
+        for relative in evidence:
+            if (
+                not isinstance(relative, str)
+                or not relative.startswith("release/evidence/")
+                or not relative.endswith(".json")
+            ):
+                continue
+            path = _repository_file(ROOT, relative)
+            if path is None or relative not in tracked:
+                continue
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(document, dict) or document.get("gate_id") != gate_id:
+                continue
+            allowed.add(relative)
+            bindings = []
+            if isinstance(document.get("artifact"), dict):
+                bindings.append(document["artifact"])
+            artifacts = document.get("artifacts")
+            if isinstance(artifacts, dict):
+                bindings.extend(binding for binding in artifacts.values() if isinstance(binding, dict))
+            for binding in bindings:
+                artifact_path = binding.get("path")
+                if (
+                    isinstance(artifact_path, str)
+                    and artifact_path.startswith("release/evidence/")
+                    and artifact_path in tracked
+                    and _repository_file(ROOT, artifact_path) is not None
+                ):
+                    allowed.add(artifact_path)
+    return allowed
+
+
+def config_changed_only_at_activation_heights(
+    revision: str, current_config: str, height_names: set[str]
+) -> bool:
+    frozen = revision_file(revision, "src/CryptoNoteConfig.hpp").decode("utf-8")
+
+    def normalize(config: str) -> str:
+        config = config.replace("\r\n", "\n")
+        for name in sorted(height_names):
+            config, count = re.subn(
+                rf"(\b{re.escape(name)}\s*=\s*)\d+(\s*;)",
+                rf"\g<1><ACTIVATION_HEIGHT:{name}>\g<2>",
+                config,
+            )
+            if count != 1:
+                raise ValueError(f"activation constant must occur exactly once: {name}")
+        return config
+
+    return normalize(frozen) == normalize(current_config)
+
+
 def governance_digests_at_revision(revision: str) -> tuple[str, str]:
     compiler = revision_file(revision, "tools/onyx/compiler_v1.py").replace(b"\r\n", b"\n")
     compiler_digest = hashlib.sha256(compiler).hexdigest()
@@ -122,6 +205,25 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
             )
         except (OSError, subprocess.CalledProcessError) as error:
             errors.append(f"cannot derive frozen dependency-lock digest: {error}")
+        try:
+            allowed = qualification_paths(gates, tracked)
+            unexpected = changed_paths_since(release_revision) - allowed
+            if unexpected:
+                errors.append(
+                    "post-freeze changes outside qualification evidence and activation configuration: "
+                    f"{sorted(unexpected)}"
+                )
+        except subprocess.CalledProcessError as error:
+            errors.append(f"cannot inspect post-freeze changes: {error}")
+        try:
+            if not config_changed_only_at_activation_heights(
+                release_revision, config, set(gates_document.get("placeholder_heights", {}))
+            ):
+                errors.append(
+                    "post-freeze CryptoNoteConfig changes must be limited to declared activation heights"
+                )
+        except (OSError, UnicodeError, ValueError, subprocess.CalledProcessError) as error:
+            errors.append(f"cannot validate post-freeze activation configuration: {error}")
     if (
         by_id.get("governance-approval", {}).get("status") == "passed"
         and isinstance(release_revision, str)

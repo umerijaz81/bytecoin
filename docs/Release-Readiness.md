@@ -100,6 +100,15 @@ Before any external gate passes, `release/activation-gates.json` must freeze one
 40-character `release_revision`; every typed attestation must bind that exact revision. It remains
 `null` while qualification is still in progress. Once frozen, it must resolve to an existing commit
 that is an ancestor of the evidence/activation commit.
+The verifier compares that frozen tree with the activation commit and rejects every post-freeze path
+except `release/activation-gates.json`, `src/CryptoNoteConfig.hpp`, and the tracked evidence and
+artifact paths explicitly declared below `release/evidence/` by typed, gate-matching attestations.
+Implementation references already listed on pending gates do not enter this allowlist. Qualification
+therefore cannot silently carry over to modified consensus, wallet, network, compiler, dependency,
+build, or release-tool code, nor disguise one of those files as a qualification artifact.
+Within `src/CryptoNoteConfig.hpp`, the frozen and activation trees must be byte-identical after only
+the numeric values of the four declared activation-height constants are normalized; changing another
+consensus constant in the activation commit fails the gate.
 The activation schema permits exactly the six declared gates, and each gate's
 `required_for_activation` flag must remain `true`; a manifest edit cannot opt a pending gate out of
 the activation decision.

@@ -120,6 +120,147 @@ class ReleaseToolsTest(unittest.TestCase):
             errors,
         )
 
+    def test_post_freeze_code_changes_cannot_inherit_qualification(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        gates["release_revision"] = "1" * 40
+        governance = next(gate for gate in gates["gates"] if gate["id"] == "governance-approval")
+        governance["status"] = "passed"
+        with (
+            mock.patch.object(verify_release_gates, "frozen_revision_is_ancestor", return_value=True),
+            mock.patch.object(
+                verify_release_gates,
+                "changed_paths_since",
+                return_value={
+                    "release/activation-gates.json",
+                    "src/CryptoNoteConfig.hpp",
+                    "src/Core/BlockChain.cpp",
+                },
+            ),
+            mock.patch.object(
+                verify_release_gates,
+                "revision_file_sha256",
+                return_value="2" * 64,
+            ),
+            mock.patch.object(
+                verify_release_gates,
+                "governance_digests_at_revision",
+                return_value=("3" * 64, "4" * 64),
+            ),
+            mock.patch.object(
+                verify_release_gates,
+                "config_changed_only_at_activation_heights",
+                return_value=True,
+            ),
+        ):
+            errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(
+            any(
+                "post-freeze changes" in error and "src/Core/BlockChain.cpp" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_post_freeze_declared_evidence_artifacts_are_allowed(self) -> None:
+        gates = [
+            {
+                "id": "independent-audits",
+                "evidence": ["release/evidence/audit.json"],
+            }
+        ]
+        document = {
+            "gate_id": "independent-audits",
+            "artifact": {
+                "path": "release/evidence/audit-report.pdf",
+                "sha256": "2" * 64,
+            }
+        }
+        with (
+            mock.patch.object(
+                verify_release_gates,
+                "_repository_file",
+                side_effect=lambda _root, relative: pathlib.Path(ROOT, relative),
+            ),
+            mock.patch.object(pathlib.Path, "read_text", return_value=json.dumps(document)),
+        ):
+            allowed = verify_release_gates.qualification_paths(
+                gates,
+                {
+                    "release/evidence/audit.json",
+                    "release/evidence/audit-report.pdf",
+                },
+            )
+        self.assertIn("release/evidence/audit.json", allowed)
+        self.assertIn("release/evidence/audit-report.pdf", allowed)
+
+    def test_post_freeze_implementation_files_and_source_artifacts_are_not_allowed(self) -> None:
+        gates = [
+            {
+                "id": "independent-audits",
+                "evidence": [
+                    "tools/release/verify_release_gates.py",
+                    "release/evidence/audit.json",
+                ],
+            }
+        ]
+        document = {
+            "gate_id": "independent-audits",
+            "artifact": {
+                "path": "src/Core/BlockChain.cpp",
+                "sha256": "2" * 64,
+            },
+        }
+        tracked = {
+            "tools/release/verify_release_gates.py",
+            "release/evidence/audit.json",
+            "src/Core/BlockChain.cpp",
+        }
+        with (
+            mock.patch.object(
+                verify_release_gates,
+                "_repository_file",
+                side_effect=lambda _root, relative: pathlib.Path(ROOT, relative),
+            ),
+            mock.patch.object(pathlib.Path, "read_text", return_value=json.dumps(document)),
+        ):
+            allowed = verify_release_gates.qualification_paths(gates, tracked)
+        self.assertIn("release/evidence/audit.json", allowed)
+        self.assertNotIn("tools/release/verify_release_gates.py", allowed)
+        self.assertNotIn("src/Core/BlockChain.cpp", allowed)
+
+    def test_post_freeze_config_allows_only_activation_height_values(self) -> None:
+        frozen = (
+            "const Height UPGRADE_HEIGHT_V5 = 9000000;\n"
+            "const size_t MAX_BLOCK_SIZE = 100;\n"
+        )
+        activated = (
+            "const Height UPGRADE_HEIGHT_V5 = 123456;\n"
+            "const size_t MAX_BLOCK_SIZE = 100;\n"
+        )
+        modified_consensus = (
+            "const Height UPGRADE_HEIGHT_V5 = 123456;\n"
+            "const size_t MAX_BLOCK_SIZE = 1000000;\n"
+        )
+        with mock.patch.object(
+            verify_release_gates,
+            "revision_file",
+            return_value=frozen.encode("utf-8"),
+        ):
+            self.assertTrue(
+                verify_release_gates.config_changed_only_at_activation_heights(
+                    "1" * 40,
+                    activated,
+                    {"UPGRADE_HEIGHT_V5"},
+                )
+            )
+            self.assertFalse(
+                verify_release_gates.config_changed_only_at_activation_heights(
+                    "1" * 40,
+                    modified_consensus,
+                    {"UPGRADE_HEIGHT_V5"},
+                )
+            )
+
     def test_governance_digests_are_derived_from_frozen_revision(self) -> None:
         revision = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
