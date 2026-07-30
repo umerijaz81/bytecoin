@@ -44,6 +44,17 @@ inline bool add_amount(Amount &sum, Amount amount) {
 	return true;
 }
 
+inline bool round_amount_up(Amount amount, Amount quantum, Amount *rounded) {
+	if (quantum == 0 || rounded == nullptr)
+		return false;
+	const Amount remainder = amount % quantum;
+	const Amount increment = remainder == 0 ? 0 : quantum - remainder;
+	if (std::numeric_limits<Amount>::max() - increment < amount)
+		return false;
+	*rounded = amount + increment;
+	return true;
+}
+
 bool get_tx_fee(const TransactionPrefix &tx, Amount *fee);
 Amount get_tx_fee(const TransactionPrefix &tx);
 

@@ -144,6 +144,15 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invariant(get_maximum_tx_input_count_jade(jade_size, outputs, anonymity) ==
 		              get_maximum_tx_input_count_amethyst(amethyst_size, outputs, anonymity),
 		    "Jade maximum-input estimator is not the inverse of its wire-size delta");
+		Amount rounded = 0;
+		invariant(round_amount_up(1001, 1000, &rounded) && rounded == 2000,
+		    "wallet fee rounding changed its ceiling behavior");
+		invariant(round_amount_up(std::numeric_limits<Amount>::max() - 999, 1000, &rounded),
+		    "wallet rejected the largest representable rounded fee");
+		invariant(!round_amount_up(std::numeric_limits<Amount>::max(), 1000, &rounded),
+		    "wallet fee rounding wrapped at the amount limit");
+		Amount required = std::numeric_limits<Amount>::max();
+		invariant(!add_amount(required, 1), "wallet amount-plus-fee arithmetic wrapped");
 	}
 	{
 		OnyxConstructionWindow window;

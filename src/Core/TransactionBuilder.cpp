@@ -399,13 +399,16 @@ void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t
 	const size_t optimization_median = max_transaction_size * optimization_median_percent / 100;
 	const Amount dust_threshold      = m_currency.self_dust_threshold;
 	while (true) {
+		Amount required_amount = total_amount;
+		if (!receiver_fee && !add_amount(required_amount, fee))
+			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Transaction amount and fee overflow");
 		if (!select_optimal_outputs(&pretty_coins, &non_pretty_coins, &dust_coins, max_digits,
-		        total_amount + (receiver_fee ? 0 : fee), anonymity, optimizations, small_optimizations))
+		        required_amount, anonymity, optimizations, small_optimizations))
 			throw json_rpc::Error(api::walletd::CreateTransaction::NOT_ENOUGH_FUNDS,
 			    "Not enough spendable funds, together with fee at least " +
-			        m_currency.format_amount(total_amount + (receiver_fee ? 0 : fee)) +
+			        m_currency.format_amount(required_amount) +
 			        " is required to send transaction");
-		Amount change_dust_fee = (m_used_total - total_amount - (receiver_fee ? 0 : fee)) % dust_threshold;
+		Amount change_dust_fee = (m_used_total - required_amount) % dust_threshold;
 		const size_t expected_outputs = total_outputs + m_currency.get_max_amount_outputs();
 		const size_t tx_size = is_jade
 		    ? get_maximum_tx_size_jade(m_inputs_count, expected_outputs, anonymity)
@@ -425,7 +428,8 @@ void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t
 			    "'fee_per_byte' is too large for transaction of size " + common::to_string(tx_size));
 		Amount size_fee = fee_per_byte * tx_size;
 		if (tx_size > max_transaction_size) {
-			fee = ((size_fee + dust_threshold - 1) / dust_threshold) * dust_threshold;
+			if (!round_amount_up(size_fee, dust_threshold, &fee))
+				throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Rounded transaction fee overflow");
 			return_coins_to_index(&pretty_coins, &non_pretty_coins, &dust_coins);
 			const size_t maximum_outputs = total_outputs + 2 * m_currency.get_max_amount_outputs();
 			auto max_inputs_count = is_jade
@@ -433,21 +437,21 @@ void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t
 			    : get_maximum_tx_input_count_amethyst(max_transaction_size, maximum_outputs, anonymity);
 			select_max_outputs(&pretty_coins, &non_pretty_coins, &dust_coins, std::numeric_limits<Amount>::max(),
 			    anonymity, max_inputs_count);
-			auto total_anon = m_used_total - fee;
+			auto total_anon = m_used_total >= fee ? m_used_total - fee : 0;
 			return_coins_to_index(&pretty_coins, &non_pretty_coins, &dust_coins);
 			max_inputs_count = is_jade
 			    ? get_maximum_tx_input_count_jade(max_transaction_size, maximum_outputs, min_anonymity)
 			    : get_maximum_tx_input_count_amethyst(max_transaction_size, maximum_outputs, min_anonymity);
 			select_max_outputs(
 			    &pretty_coins, &non_pretty_coins, &dust_coins, std::numeric_limits<Amount>::max(), 0, max_inputs_count);
-			auto total_zero_anon = m_used_total - fee;
+			auto total_zero_anon = m_used_total >= fee ? m_used_total - fee : 0;
 			std::string msg =
 			    "Transaction with desired amount is too big (cannot fit in block). Max amount you can send with requested anonymity is " +
 			    m_currency.format_amount(total_anon) + " (" + m_currency.format_amount(total_zero_anon) +
 			    " with anonymity " + common::to_string(min_anonymity) + ")";
 			throw api::walletd::CreateTransaction::ErrorTransactionTooBig(msg, total_anon, total_zero_anon);
 		}
-		if (fee + change_dust_fee >= size_fee) {
+		if (fee >= size_fee || change_dust_fee >= size_fee - fee) {
 			if (receiver_fee) {
 				*receiver_fee = fee;
 				*change       = m_used_total - total_amount - change_dust_fee;
@@ -461,7 +465,8 @@ void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t
 			                     << ", final coins" << final_coins;
 			return;
 		}
-		fee = ((size_fee - change_dust_fee + dust_threshold - 1) / dust_threshold) * dust_threshold;
+		if (!round_amount_up(size_fee - change_dust_fee, dust_threshold, &fee))
+			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Rounded transaction fee overflow");
 		return_coins_to_index(&pretty_coins, &non_pretty_coins, &dust_coins);
 	}
 }
