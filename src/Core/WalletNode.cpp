@@ -448,6 +448,7 @@ bool WalletNode::on_create_onyx_transaction(http::Client *, http::RequestBody &&
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	std::array<uint8_t, 91> recipient{};
 	if (!common::from_hex(request.address, recipient.data(), recipient.size()))
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
@@ -479,6 +480,7 @@ bool WalletNode::on_create_onyx_token_transaction(http::Client *, http::RequestB
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	std::array<uint8_t, 91> recipient{};
 	std::array<uint8_t, 32> program_id{};
 	if (!common::from_hex(request.address, recipient.data(), recipient.size()))
@@ -513,6 +515,7 @@ bool WalletNode::on_create_onyx_program_deployment(http::Client *, http::Request
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	if (request.max_supply == 0 || request.metadata.empty() || request.metadata.size() > 128 ||
 	    !std::all_of(request.metadata.begin(), request.metadata.end(),
 	        [](unsigned char ch) { return ch >= 0x20 && ch <= 0x7e; }))
@@ -565,6 +568,7 @@ bool WalletNode::on_create_onyx_standard_program_deployment(http::Client *, http
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	uint8_t kind = 0;
 	if (request.kind == "nft")
 		kind = 1;
@@ -624,6 +628,7 @@ bool WalletNode::on_create_onyx_standard_program_call(http::Client *, http::Requ
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	std::array<uint8_t, 32> program_id{};
 	std::array<uint8_t, 32> prior_state{};
 	std::array<uint8_t, 32> next_state{};
@@ -670,6 +675,7 @@ bool WalletNode::on_create_onyx_token_issuance(http::Client *, http::RequestBody
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	std::array<uint8_t, 91> recipient{};
 	std::array<uint8_t, 32> program_id{};
 	if (!common::from_hex(request.address, recipient.data(), recipient.size()))
@@ -707,6 +713,7 @@ bool WalletNode::on_create_onyx_bridge(http::Client *, http::RequestBody &&, jso
 	check_wallet_open();
 	if (get_wallet_state().db_empty())
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	std::array<uint8_t, 91> recipient{};
 	std::array<uint8_t, 32> key_image{};
 	if (!common::from_hex(request.address, recipient.data(), recipient.size()))
@@ -734,6 +741,9 @@ bool WalletNode::on_create_onyx_bridge(http::Client *, http::RequestBody &&, jso
 bool WalletNode::on_finalize_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
     api::walletd::FinalizeOnyxBridge::Request &&request, api::walletd::FinalizeOnyxBridge::Response &response) {
 	check_wallet_open();
+	if (get_wallet_state().db_empty())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
 	std::array<uint8_t, 64> signature{};
 	if (!common::from_hex(request.ownership_signature, signature.data(), signature.size()))
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid bridge ownership signature encoding");
@@ -1339,4 +1349,12 @@ bool WalletNode::on_ext_close_wallet(http::Client *, http::RequestBody &&, json_
 void WalletNode::check_wallet_open() {
 	if (!m_wallet_sync)
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet must be open");
+}
+
+void WalletNode::check_onyx_construction_available() const {
+	const uint8_t construction_block_version =
+	    m_currency.get_next_block_major_version(get_wallet_state().get_tip_height());
+	if (construction_block_version < m_currency.onyx_block_version)
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST,
+		    "Onyx transaction construction is unavailable before the activation boundary");
 }

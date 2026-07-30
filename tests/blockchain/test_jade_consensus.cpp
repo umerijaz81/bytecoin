@@ -110,9 +110,12 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_V5 - 1) ==
 	              currency.jade_block_version,
 	    "wallet/mempool next-block version did not switch at the Jade boundary");
+	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 2) ==
+	              currency.jade_block_version,
+	    "wallet next-block construction enabled Onyx too early");
 	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
 	              currency.onyx_block_version,
-	    "wallet/mempool next-block version did not switch at the Onyx boundary");
+	    "wallet/mempool next-block construction did not switch at the Onyx boundary");
 	bool maximum_height_rejected = false;
 	try {
 		(void)currency.get_next_block_major_version(std::numeric_limits<Height>::max());

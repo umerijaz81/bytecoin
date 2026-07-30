@@ -39,6 +39,8 @@ Onyx shielded transfers do not use the legacy amount-specific ring-decoy flow.
 `create_transaction` is a legacy V1/V4/V5 constructor. At the block immediately preceding Onyx
 activation it fails closed instead of creating a Jade transaction that the next block cannot accept;
 use `create_onyx_transfer` for shielded funds or `create_onyx_bridge` for the one-way legacy migration.
+All transaction-producing Onyx methods reject requests before that boundary and become available at
+the block immediately preceding activation, when their output can enter the next Onyx block.
 Privacy sync also omits wallet-local `known_hashes` from `sync_mempool`; it requests the node's full
 current pool and reconciles removals locally. This costs additional bandwidth but prevents the
 request from fingerprinting the wallet's exact transaction-awareness set.

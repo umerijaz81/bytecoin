@@ -143,6 +143,7 @@ protected:
 	const WalletState &get_wallet_state() const { return m_wallet_sync->get_wallet_state(); }
 
 	void check_wallet_open();
+	void check_onyx_construction_available() const;
 };
 
 }  // namespace cn
