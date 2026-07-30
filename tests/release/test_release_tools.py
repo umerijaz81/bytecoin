@@ -158,6 +158,18 @@ class ReleaseToolsTest(unittest.TestCase):
             errors,
         )
 
+    def test_activation_co_schedule_compile_time_assertion_is_mandatory(self) -> None:
+        changed = self.config.replace(
+            "static_assert(ACTIVATION_HEIGHTS_CO_SCHEDULED,",
+            "static_assert(true,",
+        )
+        self.assertNotEqual(changed, self.config)
+        errors, _ = verify_release_gates.verify(self.gates, changed)
+        self.assertTrue(
+            any("compile-time assert activation co-scheduling" in error for error in errors),
+            errors,
+        )
+
     def test_placeholder_manifest_requires_exact_activation_height_set(self) -> None:
         gates = copy.deepcopy(self.gates)
         del gates["placeholder_heights"]["UPGRADE_HEIGHT_ONYX"]

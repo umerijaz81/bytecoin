@@ -9,7 +9,8 @@ unreachable until the release gates below are independently satisfied.
 The incomplete Jade V5 clear-amount format, RandomX transition and reserved V6 are co-scheduled with
 Onyx V7, so the reachable upgrade path jumps directly from Amethyst V4 to shielded Onyx while changing
 PoW at that same height. Jade's isolated tests remain,
-but release policy rejects any activation configuration that would create a standalone V5/V6 interval.
+but a C++ compile-time assertion and independent release-policy check reject any activation
+configuration that would create a standalone V5/V6 interval or a mismatched RandomX switch.
 
 | Gate | Implemented evidence | Remaining exit condition |
 |---|---|---|

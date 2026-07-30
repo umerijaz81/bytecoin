@@ -315,6 +315,16 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         errors.append(
             "Jade V5, RandomX, reserved V6 and shielded Onyx V7 must co-activate"
         )
+    coactivation_assertion = re.compile(
+        r"constexpr\s+bool\s+ACTIVATION_HEIGHTS_CO_SCHEDULED\s*=\s*"
+        r"UPGRADE_HEIGHT_V5\s*==\s*RANDOMX_SWITCH_HEIGHT\s*&&\s*"
+        r"RANDOMX_SWITCH_HEIGHT\s*==\s*UPGRADE_HEIGHT_RESERVED_V6\s*&&\s*"
+        r"UPGRADE_HEIGHT_RESERVED_V6\s*==\s*UPGRADE_HEIGHT_ONYX\s*;\s*"
+        r"static_assert\s*\(\s*ACTIVATION_HEIGHTS_CO_SCHEDULED\s*,",
+        re.MULTILINE,
+    )
+    if coactivation_assertion.search(config) is None:
+        errors.append("consensus configuration must compile-time assert activation co-scheduling")
     passed_external = [
         gate_id
         for gate_id, gate in by_id.items()

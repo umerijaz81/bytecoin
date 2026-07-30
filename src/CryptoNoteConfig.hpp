@@ -47,6 +47,12 @@ const Height UPGRADE_HEIGHT_ONYX         = 10000000;
 // Block height at which the laptop-friendly, ASIC-resistant PoW (RandomX, Phase 5) takes over
 // from CryptoNight. Kept far in the future until the RandomX integration is reviewed.
 const Height RANDOMX_SWITCH_HEIGHT = 10000000;
+constexpr bool ACTIVATION_HEIGHTS_CO_SCHEDULED =
+    UPGRADE_HEIGHT_V5 == RANDOMX_SWITCH_HEIGHT &&
+    RANDOMX_SWITCH_HEIGHT == UPGRADE_HEIGHT_RESERVED_V6 &&
+    UPGRADE_HEIGHT_RESERVED_V6 == UPGRADE_HEIGHT_ONYX;
+static_assert(ACTIVATION_HEIGHTS_CO_SCHEDULED,
+    "Incomplete Jade/Reserved versions and RandomX must co-activate with Onyx");
 const Height RANDOMX_SEED_EPOCH    = 2048;
 const Height RANDOMX_SEED_LAG      = 64;
 
