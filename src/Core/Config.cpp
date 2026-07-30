@@ -54,10 +54,11 @@ static std::string get_net(common::CommandLine &cmd) {
 	std::string net;
 	if (const char *pa = cmd.get("--net")) {
 		net = pa;
-		if (net == "main" || net == "stage" || net == "test")
+		if (net == "main" || net == "stage" || net == "test" || net == "onyx")
 			return net;
 		throw Config::ConfigError(
-		    "Command line option --net has wrong value '" + net + "', should be 'test', 'stage', or 'main'");
+		    "Command line option --net has wrong value '" + net +
+		    "', should be 'test', 'stage', 'onyx', or 'main'");
 	}
 	if (cmd.get_bool("--testnet", "use --net=test instead"))
 		return "test";
@@ -175,6 +176,18 @@ Config::Config(common::CommandLine &cmd)
 		walletd_bind_port += 2000;
 		multicast_port += 2000;
 	}
+	if (net == "onyx") {
+#ifndef onyx_USE_ZK
+		throw ConfigError("The Onyx qualification network requires an ONYX_ZK build");
+#endif
+		network_id.data[0] += 3;
+		p2p_bind_port += 3000;
+		p2p_external_port += 3000;
+		bytecoind_bind_port += 3000;
+		walletd_bind_port += 3000;
+		multicast_port += 3000;
+		payment_queue_confirmations = 30;
+	}
 	if (const char *pa = cmd.get("--p2p-bind-address")) {
 		ewrap(common::parse_ip_address_and_port(pa, &p2p_bind_ip, &p2p_bind_port),
 		    ConfigError("Command line option --p2p-bind-address has wrong format"));
@@ -241,7 +254,7 @@ Config::Config(common::CommandLine &cmd)
 		exclusive_nodes = true;
 		priority_nodes  = exclusive_nodes_list;
 	}
-	if (seed_nodes.empty() && net != "test")
+	if (seed_nodes.empty() && net != "test" && net != "onyx")
 		for (auto &&sn : net == "stage" ? SEED_NODES_STAGENET : SEED_NODES) {
 			NetworkAddress addr;
 			common::parse_ip_address_and_port(sn, &addr.ip, &addr.port);

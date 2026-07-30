@@ -193,6 +193,11 @@ constexpr PublicKey CHECKPOINT_PUBLIC_KEYS_STAGENET[] = {
     common::pfh<PublicKey>("c9b8aa2f09fb81f77c135d1eb23cd7eac5b66c409058d5b53f724a1b887fe70f"),
     common::pfh<PublicKey>("62020c71bbf2447ee588b28c15430434f2ceac8443c40b6e48b627e437110981")};
 
+// Preserve the seven-slot checkpoint-difficulty database format on the fixed qualification network
+// without inheriting a mainnet, stagenet or testnet checkpoint signing authority. Zero public keys
+// cannot validate a signed checkpoint.
+constexpr PublicKey CHECKPOINT_PUBLIC_KEYS_ONYX[7] = {};
+
 const char *const SEED_NODES[] = {
     "207.246.127.160:8080", "108.61.174.232:8080", "45.32.156.183:8080", "45.76.29.96:8080"};
 const char *const SEED_NODES_STAGENET[] = {

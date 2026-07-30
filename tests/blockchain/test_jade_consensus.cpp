@@ -12,6 +12,7 @@
 #include "Core/Config.hpp"
 #include "Core/Currency.hpp"
 #include "Core/OnyxWalletPolicy.hpp"
+#include "Core/Wallet.hpp"
 #include "Core/WalletSync.hpp"
 #include "CryptoNote.hpp"
 #include "CryptoNoteConfig.hpp"
@@ -118,6 +119,54 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	invariant(currency.uses_randomx(currency.onyx_block_version,
 	              parameters::UPGRADE_HEIGHT_ONYX),
 	    "RandomX did not activate with Onyx");
+	{
+		const char *onyx_args[] = {"tests", "--net=onyx", "--data-folder=."};
+		common::CommandLine onyx_cmd(3, onyx_args);
+#ifdef onyx_USE_ZK
+		Config onyx_config(onyx_cmd);
+		Currency onyx_currency(onyx_config);
+		const char *main_args[] = {"tests", "--net=main", "--data-folder=."};
+		common::CommandLine main_cmd(3, main_args);
+		Config main_config(main_cmd);
+		Currency main_currency(main_config);
+		invariant(onyx_config.net == "onyx" && onyx_config.seed_nodes.empty(),
+		    "Onyx qualification network inherited another network's topology");
+		invariant(onyx_config.network_id.data[0] ==
+		              static_cast<uint8_t>(main_config.network_id.data[0] + 3),
+		    "Onyx qualification P2P identity is not distinct");
+		invariant(onyx_config.p2p_bind_port == parameters::P2P_DEFAULT_PORT + 3000 &&
+		              onyx_config.bytecoind_bind_port == parameters::RPC_DEFAULT_PORT + 3000 &&
+		              onyx_config.walletd_bind_port == parameters::WALLET_RPC_DEFAULT_PORT + 3000,
+		    "Onyx qualification ports are not isolated");
+		invariant(onyx_currency.genesis_block_hash != main_currency.genesis_block_hash,
+		    "Onyx qualification genesis aliases mainnet");
+		invariant(onyx_currency.hard_checkpoint_count() == 0 &&
+		              onyx_currency.get_checkpoint_keys_count() == 7,
+		    "Onyx qualification checkpoint database shape changed");
+		for (size_t key_id = 0; key_id != onyx_currency.get_checkpoint_keys_count(); ++key_id)
+			invariant(onyx_currency.get_checkpoint_public_key(key_id) == PublicKey{},
+			    "Onyx qualification network inherited checkpoint signing authority");
+		invariant(std::all_of(onyx_currency.upgrade_heights.begin(),
+		              onyx_currency.upgrade_heights.end(), [](Height height) { return height == 1; }) &&
+		              onyx_currency.get_block_major_version_for_height(1) ==
+		                  onyx_currency.onyx_block_version &&
+		              onyx_currency.uses_randomx(onyx_currency.onyx_block_version, 1),
+		    "Onyx qualification network did not co-activate V7 and RandomX at height 1");
+		const auto main_onyx_id = Wallet::onyx_network_id_for_net("main");
+		const auto qualification_onyx_id = Wallet::onyx_network_id_for_net("onyx");
+		invariant(main_onyx_id != qualification_onyx_id &&
+		              qualification_onyx_id[0] == static_cast<uint8_t>(main_onyx_id[0] + 3),
+		    "Onyx wallet addresses are not qualification-network bound");
+#else
+		bool rejected = false;
+		try {
+			Config onyx_config(onyx_cmd);
+		} catch (const Config::ConfigError &) {
+			rejected = true;
+		}
+		invariant(rejected, "non-ZK build joined the Onyx qualification network");
+#endif
+	}
 	Currency isolated_jade(config);
 	isolated_jade.upgrade_heights = {1, 1, 1, 100, 200, 300};
 	invariant(isolated_jade.get_next_block_major_version(98) ==

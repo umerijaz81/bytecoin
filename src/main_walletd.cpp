@@ -65,7 +65,7 @@ Running with selected wallet:
                                         Use https://<host:port> format to connect to a daemon via HTTPS.
   --bytecoind-authorization=<user:pass> HTTP basic authentication credentials for RPC API [default: ""].
   --wallet-sync-privacy                Hide wallet age and sparse-chain fingerprints from a remote node (slower initial sync).
-  --net=<main|stage|test>               Configure for mainnet, stagenet, or testnet [default: main].
+  --net=<main|stage|test|onyx>          Configure network [default: main].
 
 Options for BIP39 mnemonic creation:
   --create-mnemonic                     Create a new random BIP39 mnemonic, then exit.
@@ -139,7 +139,7 @@ static const bool separate_thread_for_bytecoind = true;
 //  --launch-after-command
 
 // Config options
-//  --net=<main|stage|test>               Configure for mainnet or testnet [default: main].
+//  --net=<main|stage|test|onyx>          Configure network [default: main].
 //  --secrets-via-api                     Specify to allow...
 //  --walletd-bind-address=<ip:port>      IP and port for walletd RPC API [default: 127.0.0.1:8070].
 //  --data-folder=<folder-path>           Folder for wallet cache, blockchain, logs and peer DB

@@ -1075,6 +1075,8 @@ bool BlockChain::add_checkpoint(const SignedCheckpoint &checkpoint, const std::s
 		return false;  // Height is ignored when disabling key_id
 	PublicKey public_key =
 	    m_currency.get_checkpoint_public_key(checkpoint.key_id);  // returns empty key if out of range
+	if (public_key == PublicKey{})
+		return false;
 	auto key_latest               = CHECKPOINT_PREFIX_LATEST + common::write_varint_sqlite4(checkpoint.key_id);
 	auto key_stable               = CHECKPOINT_PREFIX_STABLE + common::write_varint_sqlite4(checkpoint.key_id);
 	BinaryArray binary_checkpoint = seria::to_binary(checkpoint);

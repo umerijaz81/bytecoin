@@ -101,6 +101,12 @@ Currency::Currency(const Config &config)
 		upgrade_heights = {1, 1, 64233, UPGRADE_HEIGHT_V5, UPGRADE_HEIGHT_RESERVED_V6, UPGRADE_HEIGHT_ONYX};
 		upgrade_window  = EXPECTED_NUMBER_OF_BLOCKS_PER_DAY;
 	}
+	if (net == "onyx") {
+		upgrade_heights       = {1, 1, 1, 1, 1, 1};
+		randomx_switch_height = 1;
+		upgrade_voting_window = 30;
+		upgrade_window        = 10;
+	}
 	{
 		BinaryArray miner_tx_blob;
 		invariant(from_hex(GENESIS_COINBASE_TX_HEX, &miner_tx_blob),
@@ -135,6 +141,8 @@ Currency::Currency(const Config &config)
 	}
 	if (net == "stage")
 		genesis_block_template.nonce.at(0) += 2;
+	if (net == "onyx")
+		genesis_block_template.nonce.at(0) += 3;
 	auto body_proxy    = get_body_proxy_from_template(genesis_block_template);
 	genesis_block_hash = get_block_hash(genesis_block_template, body_proxy);
 	if (net == "main") {
@@ -155,6 +163,11 @@ Currency::Currency(const Config &config)
 		checkpoint_keys_begin = CHECKPOINT_PUBLIC_KEYS_STAGENET;
 		checkpoint_keys_end   = CHECKPOINT_PUBLIC_KEYS_STAGENET +
 		                      sizeof(CHECKPOINT_PUBLIC_KEYS_STAGENET) / sizeof(*CHECKPOINT_PUBLIC_KEYS_STAGENET);
+	}
+	if (net == "onyx") {
+		checkpoint_keys_begin = CHECKPOINT_PUBLIC_KEYS_ONYX;
+		checkpoint_keys_end =
+		    CHECKPOINT_PUBLIC_KEYS_ONYX + sizeof(CHECKPOINT_PUBLIC_KEYS_ONYX) / sizeof(*CHECKPOINT_PUBLIC_KEYS_ONYX);
 	}
 	miner_tx_blob_reserved_size =
 	    get_maximum_tx_size_amethyst(1, get_max_coinbase_outputs(), 0) + 1 + extra::Nonce::MAX_COUNT;  // ~1k bytes
@@ -247,7 +260,7 @@ uint8_t Currency::get_next_block_major_version(Height current_height) const {
 }
 
 Difficulty Currency::get_minimum_difficulty(uint8_t block_major_version) const {
-	if (block_major_version == 1 || net == "test")
+	if (block_major_version == 1 || net == "test" || net == "onyx")
 		return MINIMUM_DIFFICULTY_V1;
 	return MINIMUM_DIFFICULTY;
 }

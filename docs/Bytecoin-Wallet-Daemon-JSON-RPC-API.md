@@ -613,7 +613,7 @@ Returns basic information about the wallet.
 | `wallet_creation_timestamp`   | `timestamp` | Returns a timestamp of the wallet creation. `0` if not known (restored form keys and did not sync yet). |
 | `total_address_count`         | `uint32`    | Total number of addresses in a wallet.                                                                  |
 | `first_address`               | `string`    | First address in the wallet.                                                                            |
-| `net`                         | `string`    | Shows the network `walletd` is launched on (`main`, `stage` or `test`).                                 |
+| `net`                         | `string`    | Shows the network `walletd` is launched on (`main`, `stage`, `test` or `onyx`).                          |
 | `secret_view_key`             | `string`    | Secret view key                                                                                         |
 | `public_view_key`             | `string`    | Public view key                                                                                         |
 | `import_keys`                 | `string`    | Value for --import-keys (for legacy wallet)                                                             |

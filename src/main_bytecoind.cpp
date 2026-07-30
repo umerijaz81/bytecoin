@@ -32,7 +32,7 @@ Options:
   --exclusive-node-address=<address:port> Specify numeric/onion/I2P node(s), ignoring all others.
   --data-folder=<folder-path>            Folder for blockchain, logs and peer DB [default: %appdata%/bytecoin].
   --backup-blockchain=<folder-path>      Perform hot backup of blockchain into specified backup data folder, then exit.
-  --net=<main|stage|test>                Configure for mainnet or testnet [default: main].
+  --net=<main|stage|test|onyx>           Configure network [default: main].
   --bytecoind-authorization=<usr:pass>   HTTP basic authentication credentials for RPC API.
   --bytecoind-authorization-private=<usr:pass>   HTTP basic authentication credentials for get_statistics and get_archive methods.
   --import-blocks=<folder-path>          Perform import of blockchain from specified folder as blocks.bin and blockindexes.bin, then exit.

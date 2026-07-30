@@ -769,7 +769,7 @@ No parameters.
 |----------------------------------------|----------------|----------------------------------------------------------|
 | `version`                              | `string`       | Version of the daemon.                                   |
 | `platform`                             | `string`       | Operating system the daemon was launched in.             |
-| `net`                                  | `string`       | `main`, `stage` or `test`.                               |
+| `net`                                  | `string`       | `main`, `stage`, `test` or `onyx`.                       |
 | `genesis_block_hash`                   | `string`       | Hash of genesis block.                                   |
 | `peer_id`                              | `bool`         | Randomly generated unique peer id.                       |
 | `start_time`                           | `timestamp`    | Timestamp of `bytecoind` start time in UTC.              |

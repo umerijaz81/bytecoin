@@ -38,6 +38,8 @@ std::array<uint8_t, 16> Wallet::onyx_network_id_for_net(const std::string &net) 
 		id.data[0] += 1;
 	else if (net == "stage")
 		id.data[0] += 2;
+	else if (net == "onyx")
+		id.data[0] += 3;
 	std::array<uint8_t, 16> network{};
 	static_assert(sizeof(id.data) == network.size(), "Onyx network identifier size changed");
 	std::copy(std::begin(id.data), std::end(id.data), network.begin());
