@@ -142,6 +142,25 @@ def test_duplicate_content_length(process, port):
     print("duplicate Content-Length request rejected")
 
 
+def test_duplicate_json_member(process, port):
+    body = (
+        b'{"jsonrpc":"2.0","id":"duplicate-member","method":"get_status",'
+        b'"\\u006dethod":"get_onyx_supply_audit","params":{}}'
+    )
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(http_request(body))
+        response = read_response(sock)
+    _, separator, payload = response.partition(b"\r\n\r\n")
+    if not separator:
+        raise RuntimeError(f"duplicate JSON member produced no HTTP response: {response[:200]!r}")
+    decoded = json.loads(payload.decode("utf-8"))
+    error = decoded.get("error")
+    if not isinstance(error, dict) or error.get("code") != -32700 or "result" in decoded:
+        raise RuntimeError(f"duplicate JSON member was not rejected as a parse error: {decoded!r}")
+    assert_alive(process, port)
+    print("decoded duplicate JSON-RPC member rejected before method dispatch")
+
+
 def test_connection_cap(process, port):
     idle = []
     overflow = None
@@ -219,6 +238,7 @@ def run(binary):
                 test_oversized_body(process, rpc_port)
                 test_oversized_header(process, rpc_port)
                 test_duplicate_content_length(process, rpc_port)
+                test_duplicate_json_member(process, rpc_port)
                 test_supply_audit_cache_stability(process, rpc_port)
                 test_connection_cap(process, rpc_port)
                 test_header_timeout(process, rpc_port)

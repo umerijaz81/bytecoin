@@ -31,6 +31,7 @@ class SeedCorpusTest(unittest.TestCase):
         self.assertIn(b"\x8a\x80\x80\x40", seeds)
         self.assertTrue(any(seed.startswith(b"\x00" + GENERATOR.KV_HEADER) for seed in seeds))
         self.assertTrue(any(b"\x01a\x08\x01\x01a\x08\x02" in seed for seed in seeds))
+        self.assertIn(b"\xc8{\"method\":\"a\",\"\\u006dethod\":\"b\"}", seeds)
 
     def test_generation_is_deterministic_and_preserves_findings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

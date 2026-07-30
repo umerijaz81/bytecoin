@@ -129,7 +129,7 @@ class ReleaseToolsTest(unittest.TestCase):
         )
         self.assertRegex(compiler_digest, r"^[0-9a-f]{64}$")
         self.assertEqual(
-            "5338ec6c1581e05bb9eb0026d8b25c69a4aa542dc603a1cc19e74bc8968ded3c",
+            "41072cc660e01367910e3fdba37fd683f7738ad6888683037f501b35e0ebb82c",
             target_profile_digest,
         )
 

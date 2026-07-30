@@ -1034,7 +1034,10 @@ void JsonValue::read_object(size_t level, StreamContext &ctx) {
 
 			ctx.expect(c, ':');
 
-			value[name].read_json(level, ctx);
+			auto inserted = value.emplace(name, JsonValue{});
+			if (!inserted.second)
+				ctx.throw_error("Duplicate object key");
+			inserted.first->second.read_json(level, ctx);
 			c = ctx.read_non_ws_char();
 
 			if (c == '}')

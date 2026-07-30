@@ -93,6 +93,13 @@ void test_json(const std::string &test_vectors_folder) {
 	                                  std::string(common::JsonValue::MAX_NESTING_DEPTH, ']');
 	invariant(parses(maximum_depth), "JSON maximum nesting depth was rejected");
 	invariant(!parses("[" + maximum_depth + "]"), "JSON excessive nesting depth was accepted");
+	invariant(!parses(R"({"id":1,"id":2})"), "duplicate JSON object key was accepted");
+	invariant(!parses(R"({"id":1,"\u0069d":2})"),
+	    "escape-equivalent duplicate JSON object key was accepted");
+	invariant(!parses(R"({"outer":{"key":1,"key":2}})"),
+	    "nested duplicate JSON object key was accepted");
+	invariant(parses(R"({"left":{"key":1},"right":{"key":2}})"),
+	    "same JSON key in distinct objects was rejected");
 
 	for (const auto &ca : cases1) {
 		common::JsonValue jv;

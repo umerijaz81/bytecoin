@@ -25,6 +25,7 @@ def seeds() -> list[bytes]:
             b"\xc8{}",
             b"\xc8[]",
             b"\xc8{\"jsonrpc\":\"2.0\",\"id\":1}",
+            b"\xc8{\"method\":\"a\",\"\\u006dethod\":\"b\"}",
             b"\xc9invalid-address",
             b"\x8a\x00",  # canonical empty compact-binary vector
             b"\x8a\x80\x80\x40",  # compact vector count 1,048,576 in a truncated input
