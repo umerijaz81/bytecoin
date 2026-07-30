@@ -55,6 +55,10 @@ inline bool round_amount_up(Amount amount, Amount quantum, Amount *rounded) {
 	return true;
 }
 
+inline size_t absolute_index_distance(size_t left, size_t right) {
+	return left >= right ? left - right : right - left;
+}
+
 bool get_tx_fee(const TransactionPrefix &tx, Amount *fee);
 Amount get_tx_fee(const TransactionPrefix &tx);
 

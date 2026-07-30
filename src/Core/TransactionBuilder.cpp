@@ -349,10 +349,10 @@ size_t UnspentSelector::add_mixed_inputs(
 		std::sort(mix_outputs.begin(), mix_outputs.end(), APIOutputLessStackIndex);
 		mix_outputs.erase(
 		    std::unique(mix_outputs.begin(), mix_outputs.end(), APIOutputEqualStackIndex), mix_outputs.end());
-		int best_distance = 0;
+		size_t best_distance = 0;
 		size_t best_index = mix_outputs.size();
 		for (size_t i = 0; i != mix_outputs.size(); ++i) {
-			int distance = abs(int(uu.stack_index) - int(mix_outputs[i].stack_index));
+			const size_t distance = absolute_index_distance(uu.stack_index, mix_outputs[i].stack_index);
 			if (best_index == mix_outputs.size() || distance < best_distance) {
 				best_index    = i;
 				best_distance = distance;

@@ -153,6 +153,13 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		    "wallet fee rounding wrapped at the amount limit");
 		Amount required = std::numeric_limits<Amount>::max();
 		invariant(!add_amount(required, 1), "wallet amount-plus-fee arithmetic wrapped");
+		invariant(absolute_index_distance(0, std::numeric_limits<size_t>::max()) ==
+		              std::numeric_limits<size_t>::max() &&
+		              absolute_index_distance(std::numeric_limits<size_t>::max(), 0) ==
+		                  std::numeric_limits<size_t>::max() &&
+		              absolute_index_distance(std::numeric_limits<size_t>::max() - 1,
+		                  std::numeric_limits<size_t>::max()) == 1,
+		    "wallet decoy stack-index distance narrowed or overflowed");
 	}
 	{
 		OnyxConstructionWindow window;

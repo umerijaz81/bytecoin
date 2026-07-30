@@ -147,6 +147,9 @@ Wallet and node documentation now states the legacy remote-decoy correlation lim
 privacy sync flag is visible in walletd help, and walletd's internal logs omit construction requests,
 amount sets, decoy sets, hashes and raw transaction bodies. This prevents accidental hosted-service
 logging but cannot make an untrusted remote operator cryptographically trustworthy.
+Attacker-controlled decoy stack indexes are compared at full `size_t` width, including opposite
+numeric extremes, so a remote node cannot trigger signed narrowing or subtraction overflow while the
+wallet removes a duplicate candidate before inserting its real output.
 The experimental Emscripten wallet no longer stores mnemonic-bearing JSON in plaintext. Its IndexedDB
 record is a size-bounded, password-derived ChaCha20 envelope with a keyed authentication tag; empty
 passwords, wrong passwords, malformed fields and modified ciphertext fail closed. Existing plaintext
