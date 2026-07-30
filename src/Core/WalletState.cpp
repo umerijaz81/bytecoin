@@ -475,6 +475,25 @@ bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, A
 #ifdef onyx_USE_ZK
 	if (m_wallet.get_onyx_seed() == Hash{} || unsigned_bridge == nullptr || ownership_sighash == nullptr)
 		return false;
+	for (const auto &entry : payment_queue) {
+		if (entry.in_blockchain())
+			continue;
+		Transaction pending;
+		try {
+			seria::from_binary(pending, entry.binary_transaction);
+		} catch (const std::exception &) {
+			return false;
+		}
+		if (pending.version != m_currency.onyx_transaction_version ||
+		    pending.onyx_type != parameters::ONYX_TYPE_BRIDGE)
+			continue;
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+		if (!zk::Halo2ProofSystem::verify_bridge(
+		        pending.onyx_envelope, parameters::ONYX_CIRCUIT_K, &bridge))
+			return false;
+		if (bridge.legacy_key_image == legacy_key_image)
+			return false;
+	}
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
 	return zk::Halo2ProofSystem::wallet_create_bridge(seed, recipient, expiry_height, fee, legacy_amount,

@@ -354,7 +354,9 @@ It returns `unsigned_bridge` plus the 32-byte `ownership_sighash`.
 
 Sign `ownership_sighash` using the selected legacy output's one-member CryptoNote ring signature.
 Pass the resulting 64-byte signature (128 hexadecimal characters) and the unchanged
-`unsigned_bridge` to `finalize_onyx_bridge`. Submit its `binary_transaction` with
+`unsigned_bridge` to `finalize_onyx_bridge`. Once submitted, walletd reserves that bridge's legacy
+key image and rejects another bridge construction for the same output while it remains pending.
+Submit its `binary_transaction` with
 `send_transaction`.
 
 ```json
