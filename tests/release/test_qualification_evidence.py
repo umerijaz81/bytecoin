@@ -575,13 +575,20 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "gate_id": "governance-approval",
                 "revision": REVISION,
                 "approved_revision": REVISION,
+                "proposal_id": "jade-onyx-activation-v1",
+                "started_at": "2026-07-16T00:00:00Z",
                 "completed_at": "2026-07-17T00:00:00Z",
                 "compiler_digest": DIGEST,
                 "target_profile_digest": DIGEST,
                 "activation_heights": ACTIVATION_HEIGHTS,
                 "quorum_met": True,
+                "eligible_approvers": 3,
+                "eligible_approver_ids": ["alice", "bob", "carol"],
+                "required_approvals": 2,
                 "approvals": 2,
                 "approver_ids": ["alice", "bob"],
+                "unresolved_blocking_objections": 0,
+                "objections": [],
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)
@@ -607,6 +614,24 @@ class QualificationEvidenceTest(unittest.TestCase):
             evidence = self.write_document(root, "governance.json", document)
             errors = qualification_evidence.verify_gate("governance-approval", [evidence], root)
             self.assertTrue(any("approved_revision" in error for error in errors), errors)
+            document["approved_revision"] = REVISION
+            document["required_approvals"] = 4
+            document["approver_ids"] = ["alice", "mallory"]
+            document["unresolved_blocking_objections"] = 1
+            evidence = self.write_document(root, "governance.json", document)
+            errors = qualification_evidence.verify_gate(
+                "governance-approval",
+                [evidence],
+                root,
+                revision_committed_at=datetime(2026, 7, 16, 12, tzinfo=timezone.utc),
+            )
+            self.assertTrue(any("cannot exceed eligible_approvers" in error for error in errors))
+            self.assertTrue(any("approvals must meet the threshold" in error for error in errors))
+            self.assertTrue(any("eligible electorate" in error for error in errors))
+            self.assertTrue(any("blocking_objections must be zero" in error for error in errors))
+            self.assertTrue(
+                any("vote started before the frozen release revision" in error for error in errors)
+            )
 
     def test_governance_rejects_duplicate_normalized_approvers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -616,13 +641,20 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "gate_id": "governance-approval",
                 "revision": REVISION,
                 "approved_revision": REVISION,
+                "proposal_id": "jade-onyx-activation-v1",
+                "started_at": "2026-07-16T00:00:00Z",
                 "completed_at": "2026-07-17T00:00:00Z",
                 "compiler_digest": DIGEST,
                 "target_profile_digest": DIGEST,
                 "activation_heights": ACTIVATION_HEIGHTS,
                 "quorum_met": True,
+                "eligible_approvers": 3,
+                "eligible_approver_ids": ["alice", "bob", "carol"],
+                "required_approvals": 2,
                 "approvals": 2,
                 "approver_ids": ["Alice", "  alice  "],
+                "unresolved_blocking_objections": 0,
+                "objections": [],
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)
@@ -639,6 +671,8 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "gate_id": "governance-approval",
                 "revision": REVISION,
                 "approved_revision": REVISION,
+                "proposal_id": "jade-onyx-activation-v1",
+                "started_at": "2026-07-16T00:00:00Z",
                 "completed_at": "2026-07-17T00:00:00Z",
                 "compiler_digest": DIGEST,
                 "target_profile_digest": DIGEST,
@@ -647,8 +681,13 @@ class QualificationEvidenceTest(unittest.TestCase):
                     "UPGRADE_HEIGHT_ONYX": ACTIVATION_HEIGHTS["UPGRADE_HEIGHT_ONYX"] + 1,
                 },
                 "quorum_met": True,
+                "eligible_approvers": 3,
+                "eligible_approver_ids": ["alice", "bob", "carol"],
+                "required_approvals": 2,
                 "approvals": 2,
                 "approver_ids": ["alice", "bob"],
+                "unresolved_blocking_objections": 0,
+                "objections": [],
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)

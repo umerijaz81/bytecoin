@@ -772,6 +772,13 @@ def _governance(
     authoritative_activation_heights: dict[str, int] | None,
 ) -> list[str]:
     errors = _common(document, "governance-approval", label)
+    started = _utc(document.get("started_at"), "started_at", errors, label)
+    completed = _utc(document.get("completed_at"), "completed_at", errors, label)
+    if started is not None and completed is not None and started > completed:
+        errors.append(f"{label}: started_at must not follow completed_at")
+    proposal_id = document.get("proposal_id")
+    if not isinstance(proposal_id, str) or not proposal_id.strip():
+        errors.append(f"{label}: proposal_id is required")
     if document.get("approved_revision") != document.get("revision"):
         errors.append(f"{label}: approved_revision must equal revision")
     for key in ("compiler_digest", "target_profile_digest"):
@@ -786,6 +793,37 @@ def _governance(
             errors.append(f"{label}: target_profile_digest does not match frozen release revision")
     if document.get("quorum_met") is not True:
         errors.append(f"{label}: quorum_met must be true")
+    eligible_ids = _distinct_identities(
+        document,
+        "eligible_approvers",
+        "eligible_approver_ids",
+        2,
+        errors,
+        label,
+    )
+    eligible = document.get("eligible_approvers")
+    if not isinstance(eligible, int) or isinstance(eligible, bool):
+        eligible = 0
+    required = _integer(document, "required_approvals", 2, errors, label)
+    approval_count = document.get("approvals")
+    if required > eligible:
+        errors.append(f"{label}: required_approvals cannot exceed eligible_approvers")
+    if (
+        isinstance(approval_count, int)
+        and not isinstance(approval_count, bool)
+        and (approval_count < required or approval_count > eligible)
+    ):
+        errors.append(
+            f"{label}: approvals must meet the threshold without exceeding the electorate"
+        )
+    blocking = document.get("unresolved_blocking_objections")
+    if not isinstance(blocking, int) or isinstance(blocking, bool) or blocking != 0:
+        errors.append(f"{label}: unresolved_blocking_objections must be zero")
+    objections = document.get("objections")
+    if not isinstance(objections, list) or any(
+        not isinstance(objection, str) or not objection.strip() for objection in objections
+    ):
+        errors.append(f"{label}: objections must be an array of non-empty descriptions")
     activation_heights = document.get("activation_heights")
     if (
         not isinstance(activation_heights, dict)
@@ -804,9 +842,15 @@ def _governance(
         and activation_heights != authoritative_activation_heights
     ):
         errors.append(f"{label}: activation_heights do not match activation configuration")
-    _distinct_identities(
+    approval_ids = _distinct_identities(
         document, "approvals", "approver_ids", 2, errors, label
     )
+    if (
+        eligible_ids is not None
+        and approval_ids is not None
+        and not set(approval_ids).issubset(set(eligible_ids))
+    ):
+        errors.append(f"{label}: every approver must belong to the eligible electorate")
     _artifact(document, root, errors, label, tracked_paths)
     return errors
 
@@ -861,6 +905,7 @@ def verify_gate(
                 "public-testnet-soak",
                 "incident-response-drill",
                 "independent-audits",
+                "governance-approval",
             }:
                 started = _valid_utc(document.get("started_at"))
                 if started is not None and started < revision_committed_at:
@@ -868,6 +913,7 @@ def verify_gate(
                         "public-testnet-soak": "public testnet soak",
                         "incident-response-drill": "incident-response drill",
                         "independent-audits": "independent audit",
+                        "governance-approval": "governance vote",
                     }[gate_id]
                     errors.append(f"{label}: {activity} started before the frozen release revision")
         if gate_id == "source-provenance":

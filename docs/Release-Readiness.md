@@ -149,9 +149,12 @@ The enforced minimums are release policy, not claims about the current branch:
   ordered detection, triage and recovery timestamps within the drill plus preserved artifacts,
   clean-room reproduction and verified recovery;
 - governance must approve the exact revision plus compiler and target-profile SHA-256 digests, record
-  quorum, contain at least two approvals, and bind the exact positive integer values of all four
-  canonical activation heights. The verifier compares that map with the activation commit's
-  `CryptoNoteConfig.hpp`; approval for one schedule cannot authorize another.
+  a proposal-specific vote window beginning after the freeze, a distinct eligible-electorate list,
+  approval threshold, actual distinct in-electorate approvals, zero unresolved blocking objections,
+  and an objection record. Quorum is
+  recomputed from those counts rather than trusted as a boolean. Approval also binds the exact
+  positive integer values of all four canonical activation heights; the verifier compares that map
+  with the activation commit's `CryptoNoteConfig.hpp`, so one schedule cannot authorize another.
 
 Every independent-node, builder, drill-participant, and governance-approval count must be accompanied
 by an equally sized list of distinct normalized identities. Numeric counts alone cannot satisfy a
