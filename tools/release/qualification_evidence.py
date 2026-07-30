@@ -340,11 +340,82 @@ def _testnet(
             endpoint_valid = False
     if not endpoint_valid:
         errors.append(f"{label}: public_endpoint must be HTTPS")
-    _distinct_identities(
+    node_ids = _distinct_identities(
         document, "independent_nodes", "node_ids", 3, errors, label
     )
+    network = document.get("network")
+    if not isinstance(network, str) or not network.strip():
+        errors.append(f"{label}: network is required")
+    for key in ("genesis_hash", "start_block_hash", "end_block_hash"):
+        value = document.get(key)
+        if not isinstance(value, str) or not HEX_32.fullmatch(value):
+            errors.append(f"{label}: {key} must be a lowercase 32-byte hash")
+    start_height = _integer(document, "start_height", 0, errors, label)
+    end_height = _integer(document, "end_height", 1, errors, label)
+    observed_blocks = _integer(document, "observed_blocks", 10_000, errors, label)
+    if end_height <= start_height:
+        errors.append(f"{label}: end_height must follow start_height")
+    elif end_height - start_height < observed_blocks:
+        errors.append(f"{label}: height span must cover every observed block")
+    if document.get("migration_supply_reconciled") is not True:
+        errors.append(f"{label}: migration_supply_reconciled must be true")
+    divergences = document.get("unresolved_consensus_divergences")
+    if not isinstance(divergences, int) or isinstance(divergences, bool) or divergences != 0:
+        errors.append(f"{label}: unresolved_consensus_divergences must be zero")
+
+    supply_audit = document.get("supply_audit")
+    supply_keys = {
+        "total_bridged",
+        "total_fees",
+        "circulating_supply",
+        "commitment_count",
+        "program_count",
+        "current_block_program_cost",
+        "commitment_root",
+        "block_height",
+    }
+    if not isinstance(supply_audit, dict) or set(supply_audit) != supply_keys:
+        errors.append(f"{label}: supply_audit must bind the complete daemon audit response")
+    else:
+        for key in supply_keys - {"commitment_root"}:
+            value = supply_audit.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                errors.append(f"{label}: supply_audit.{key} must be a non-negative integer")
+        commitment_root = supply_audit.get("commitment_root")
+        if not isinstance(commitment_root, str) or not HEX_32.fullmatch(commitment_root):
+            errors.append(f"{label}: supply_audit.commitment_root must be a lowercase 32-byte hash")
+        if supply_audit.get("block_height") != end_height:
+            errors.append(f"{label}: supply_audit.block_height must equal end_height")
+
+    node_results = document.get("node_results")
+    if not isinstance(node_results, list):
+        errors.append(f"{label}: node_results must bind every independent node")
+    else:
+        result_ids: list[str] = []
+        for result in node_results:
+            if not isinstance(result, dict):
+                errors.append(f"{label}: invalid node result")
+                continue
+            node_id = result.get("node_id")
+            if not isinstance(node_id, str) or not node_id.strip():
+                errors.append(f"{label}: node result has an invalid node_id")
+            else:
+                result_ids.append(" ".join(node_id.split()).casefold())
+            if result.get("revision") != document.get("revision"):
+                errors.append(f"{label}: node result revision must equal the attested revision")
+            if result.get("final_height") != end_height:
+                errors.append(f"{label}: every node must report the attested end_height")
+            if result.get("final_block_hash") != document.get("end_block_hash"):
+                errors.append(f"{label}: every node must converge on end_block_hash")
+            if result.get("supply_audit") != supply_audit:
+                errors.append(f"{label}: every node must converge on the complete supply_audit")
+        if (
+            node_ids is None
+            or len(result_ids) != len(node_ids)
+            or set(result_ids) != set(node_ids)
+        ):
+            errors.append(f"{label}: node_results must cover every independent node exactly once")
     for key, minimum in {
-        "observed_blocks": 10_000,
         "reorg_scenarios": 1,
         "malformed_bundle_cases": 1,
         "dos_scenarios": 1,

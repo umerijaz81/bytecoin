@@ -127,7 +127,11 @@ The enforced minimums are release policy, not claims about the current branch:
   binding its report and declaring zero unresolved critical or high findings;
 - public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,
   and recorded reorg, malformed-bundle, and denial-of-service scenarios at a credential-free public
-  HTTPS endpoint with a valid host and optional valid port;
+  HTTPS endpoint with a valid host and optional valid port. Evidence binds the network and genesis,
+  start/end heights and block hashes, the complete final `get_onyx_supply_audit` response, successful
+  migration/supply reconciliation and zero unresolved consensus divergences. A result for every
+  declared node must run the attested revision and converge on the exact final height, block hash and
+  supply-audit snapshot;
 - binary reproducibility requires Linux x86-64, macOS ARM64, and Windows x86-64, with two independent
   builders and byte-identical normalized hashes for each platform; each platform must appear exactly
   once, and every named builder must bind its own SHA-256 to that platform's normalized SHA-256;

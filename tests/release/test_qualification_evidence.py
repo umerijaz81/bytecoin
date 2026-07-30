@@ -299,6 +299,77 @@ class QualificationEvidenceTest(unittest.TestCase):
                 errors,
             )
 
+    def test_public_testnet_binds_multi_node_consensus_and_supply_convergence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            node_ids = ["node-a", "node-b", "node-c"]
+            supply_audit = {
+                "total_bridged": 500,
+                "total_fees": 25,
+                "circulating_supply": 475,
+                "commitment_count": 200,
+                "program_count": 4,
+                "current_block_program_cost": 10,
+                "commitment_root": "6" * 64,
+                "block_height": 11_000,
+            }
+            document = {
+                "schema_version": 1,
+                "gate_id": "public-testnet-soak",
+                "revision": REVISION,
+                "started_at": "2026-07-01T00:00:00Z",
+                "completed_at": "2026-07-16T00:00:00Z",
+                "public_endpoint": "https://testnet.example",
+                "network": "onyx-public-testnet-v1",
+                "genesis_hash": "3" * 64,
+                "start_height": 1_000,
+                "start_block_hash": "4" * 64,
+                "end_height": 11_000,
+                "end_block_hash": "5" * 64,
+                "supply_audit": supply_audit,
+                "independent_nodes": 3,
+                "node_ids": node_ids,
+                "node_results": [
+                    {
+                        "node_id": node_id,
+                        "revision": REVISION,
+                        "final_height": 11_000,
+                        "final_block_hash": "5" * 64,
+                        "supply_audit": dict(supply_audit),
+                    }
+                    for node_id in node_ids
+                ],
+                "observed_blocks": 10_000,
+                "reorg_scenarios": 1,
+                "malformed_bundle_cases": 1,
+                "dos_scenarios": 1,
+                "migration_supply_reconciled": True,
+                "unresolved_consensus_divergences": 0,
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "soak.json", document)
+            self.assertEqual(
+                [],
+                qualification_evidence.verify_gate(
+                    "public-testnet-soak",
+                    [evidence],
+                    root,
+                ),
+            )
+
+            document["node_results"][1]["final_block_hash"] = "7" * 64
+            document["node_results"][2]["supply_audit"]["circulating_supply"] += 1
+            document["unresolved_consensus_divergences"] = 1
+            evidence = self.write_document(root, "soak.json", document)
+            errors = qualification_evidence.verify_gate(
+                "public-testnet-soak",
+                [evidence],
+                root,
+            )
+            self.assertTrue(any("converge on end_block_hash" in error for error in errors))
+            self.assertTrue(any("converge on the complete supply_audit" in error for error in errors))
+            self.assertTrue(any("divergences must be zero" in error for error in errors))
+
     def test_attestation_cannot_complete_before_frozen_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
