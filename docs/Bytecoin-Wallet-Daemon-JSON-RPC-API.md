@@ -34,6 +34,9 @@ thereafter. The remote server can still observe synchronization progress. Wallet
 the identifying sparse chain. This mode does not solve decoy/broadcast correlation. Walletd deliberately omits transaction construction,
 requested amounts, returned decoys, transaction hashes and raw transaction bodies from its logs.
 Onyx shielded transfers do not use the legacy amount-specific ring-decoy flow.
+Privacy sync also omits wallet-local `known_hashes` from `sync_mempool`; it requests the node's full
+current pool and reconciles removals locally. This costs additional bandwidth but prevents the
+request from fingerprinting the wallet's exact transaction-awareness set.
 where:
 * `<ip>` is the IPv4 address of the `walletd` service. If the service is on a local machine, use `127.0.0.1` instead of `localhost`.
 * `<port>` is TCP port of `walletd`. By default the service is bound to `8070`.

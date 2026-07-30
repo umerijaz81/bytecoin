@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "WalletSync.hpp"
+#include <set>
 #include "Config.hpp"
 #include "CryptoNoteTools.hpp"
 #include "TransactionBuilder.hpp"
@@ -172,16 +173,30 @@ void WalletSync::advance_sync() {
 	send_get_status();
 }
 
+std::vector<Hash> WalletSync::calculate_privacy_pool_removals(
+    const std::vector<Hash> &known_hashes, const std::vector<api::Transaction> &current_transactions) {
+	std::set<Hash> current_hashes;
+	for (const auto &transaction : current_transactions)
+		current_hashes.insert(transaction.hash);
+	std::vector<Hash> removed;
+	for (const auto &hash : known_hashes)
+		if (current_hashes.count(hash) == 0)
+			removed.push_back(hash);
+	return removed;
+}
+
 void WalletSync::send_sync_pool() {
 	m_log(logging::TRACE) << "Sending SyncMemPool request";
 	api::cnd::SyncMemPool::Request msg;
-	msg.known_hashes = m_wallet_state.get_tx_pool_hashes();
+	const std::vector<Hash> local_known_hashes = m_wallet_state.get_tx_pool_hashes();
+	if (!m_config.wallet_sync_privacy)
+		msg.known_hashes = local_known_hashes;
 	http::RequestBody req_header;
 	req_header.r.set_firstline("POST", api::cnd::binary_url(), 1, 1);
 	req_header.r.basic_authorization = m_config.bytecoind_authorization;
 	req_header.set_body(json_rpc::create_binary_request_body(api::cnd::SyncMemPool::bin_method(), msg));
 	m_sync_request = std::make_unique<http::Request>(m_sync_agent, std::move(req_header),
-	    [&](http::ResponseBody &&response) {
+	    [&, local_known_hashes](http::ResponseBody &&response) {
 		    m_sync_request.reset();
 		    m_log(logging::TRACE) << "Received SyncMemPool response status=" << response.r.status;
 		    if (response.r.status == 401) {
@@ -204,6 +219,9 @@ void WalletSync::send_sync_pool() {
 			    return;
 		    }
 		    m_last_node_status = m_last_syncpool_status = resp.status;
+		    if (m_config.wallet_sync_privacy)
+			    resp.removed_hashes =
+			        calculate_privacy_pool_removals(local_known_hashes, resp.added_transactions);
 		    m_wallet_state.sync_with_blockchain(resp.removed_hashes);
 		    size_t c = std::min(resp.added_raw_transactions.size(), resp.added_transactions.size());
 		    for (size_t i = 0; i != c; ++i) {

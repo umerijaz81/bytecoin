@@ -10,6 +10,7 @@
 #include "Core/BlockChainState.hpp"
 #include "Core/Config.hpp"
 #include "Core/Currency.hpp"
+#include "Core/WalletSync.hpp"
 #include "CryptoNote.hpp"
 #include "CryptoNoteConfig.hpp"
 #include "common/Invariant.hpp"
@@ -264,7 +265,33 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		std::cout << "  [onyx] global commitment-history sync request round-trip ok" << std::endl;
 	}
 
-	// 8. Dandelion++ is negotiated as P2P v5 and its one-descriptor stem message is canonical.
+	// 8. Privacy-mode mempool sync sends no wallet-local hash fingerprint and reconciles its old
+	// cache against the node's full authoritative response.
+	{
+		api::cnd::SyncMemPool::Request request;
+		const common::BinaryArray encoded = seria::to_binary_kv(request);
+		api::cnd::SyncMemPool::Request decoded;
+		seria::from_binary_kv(decoded, encoded);
+		invariant(decoded.known_hashes.empty(),
+		    "privacy mempool request disclosed known transaction hashes");
+		Hash first{};
+		Hash retained{};
+		Hash added{};
+		first.data[0] = 1;
+		retained.data[0] = 2;
+		added.data[0] = 3;
+		api::Transaction retained_transaction;
+		retained_transaction.hash = retained;
+		api::Transaction added_transaction;
+		added_transaction.hash = added;
+		const std::vector<Hash> removed = WalletSync::calculate_privacy_pool_removals(
+		    {first, retained}, {retained_transaction, added_transaction});
+		invariant(removed == std::vector<Hash>{first},
+		    "privacy mempool reconciliation did not remove exactly the absent transaction");
+		std::cout << "  [privacy] mempool fingerprint omission and reconciliation ok" << std::endl;
+	}
+
+	// 9. Dandelion++ is negotiated as P2P v5 and its one-descriptor stem message is canonical.
 	{
 		invariant(P2PProtocolVersion::DANDELION == 5, "Dandelion P2P version changed unexpectedly");
 		invariant(P2PProtocolVersion::ANONYMITY_ADDRESSES == 6,

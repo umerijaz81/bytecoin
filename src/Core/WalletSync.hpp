@@ -24,6 +24,8 @@ public:
 
 	WalletState &get_wallet_state() { return m_wallet_state; }
 	const WalletState &get_wallet_state() const { return m_wallet_state; }
+	static std::vector<Hash> calculate_privacy_pool_removals(
+	    const std::vector<Hash> &known_hashes, const std::vector<api::Transaction> &current_transactions);
 
 protected:
 	bool on_prepared_block(const PreparedWalletBlock &block);
