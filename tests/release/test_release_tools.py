@@ -143,6 +143,11 @@ class ReleaseToolsTest(unittest.TestCase):
             ),
             mock.patch.object(
                 verify_release_gates,
+                "source_date_epoch",
+                return_value=0,
+            ),
+            mock.patch.object(
+                verify_release_gates,
                 "governance_digests_at_revision",
                 return_value=("3" * 64, "4" * 64),
             ),

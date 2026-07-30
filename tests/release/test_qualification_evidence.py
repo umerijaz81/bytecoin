@@ -8,6 +8,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -261,6 +262,53 @@ class QualificationEvidenceTest(unittest.TestCase):
             evidence = self.write_document(root, "soak.json", document)
             errors = qualification_evidence.verify_gate("public-testnet-soak", [evidence], root)
             self.assertTrue(any("at least 14 days" in error for error in errors), errors)
+
+    def test_testnet_soak_cannot_start_before_frozen_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = {
+                "schema_version": 1,
+                "gate_id": "public-testnet-soak",
+                "revision": REVISION,
+                "started_at": "2026-07-01T00:00:00Z",
+                "completed_at": "2026-07-20T00:00:00Z",
+                "public_endpoint": "https://testnet.example",
+                "independent_nodes": 3,
+                "node_ids": ["node-a", "node-b", "node-c"],
+                "observed_blocks": 10_000,
+                "reorg_scenarios": 1,
+                "malformed_bundle_cases": 1,
+                "dos_scenarios": 1,
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "soak.json", document)
+            errors = qualification_evidence.verify_gate(
+                "public-testnet-soak",
+                [evidence],
+                root,
+                revision_committed_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            )
+            self.assertTrue(
+                any("started before the frozen release revision" in error for error in errors),
+                errors,
+            )
+
+    def test_attestation_cannot_complete_before_frozen_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first = self.write_document(root, "audit-a.json", self.audit(root, "A Labs", "a.txt"))
+            second = self.write_document(root, "audit-b.json", self.audit(root, "B Labs", "b.txt"))
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+                revision_committed_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
+            )
+            self.assertEqual(
+                2,
+                sum("completed_at predates the frozen release revision" in error for error in errors),
+                errors,
+            )
 
     def test_public_endpoint_must_be_a_credential_free_https_origin(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

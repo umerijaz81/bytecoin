@@ -94,6 +94,9 @@ time, and a repository-relative artifact whose lowercase SHA-256 is recomputed b
 completion time cannot be more than five minutes in the future, allowing limited clock skew without
 letting evidence pre-authorize work that has not occurred. The
 attestation and its referenced artifact must both be committed before the activation-gate change.
+Every completion time must be at or after the frozen revision's Git commit time. For public-testnet
+evidence, `started_at` must also be at or after that time, so a newly frozen revision cannot inherit
+soak duration accumulated by different code.
 The verifier requires canonical contained paths, rejects path and symlink escapes, and requires every
 listed evidence file to be present in the Git index.
 Before any external gate passes, `release/activation-gates.json` must freeze one lowercase

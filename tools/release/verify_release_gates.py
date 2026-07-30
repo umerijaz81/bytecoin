@@ -8,8 +8,9 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 
-from release_common import ROOT, revision_file, revision_file_sha256, tracked_files
+from release_common import ROOT, revision_file, revision_file_sha256, source_date_epoch, tracked_files
 from qualification_evidence import _repository_file, verify_gate
 
 
@@ -193,6 +194,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         )
     governance_digests = None
     dependencies_lock_digest = None
+    revision_committed_at = None
     if (
         passed_external
         and isinstance(release_revision, str)
@@ -203,8 +205,11 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
             dependencies_lock_digest = revision_file_sha256(
                 release_revision, "release/dependencies.lock.json"
             )
-        except (OSError, subprocess.CalledProcessError) as error:
-            errors.append(f"cannot derive frozen dependency-lock digest: {error}")
+            revision_committed_at = datetime.fromtimestamp(
+                source_date_epoch(release_revision), timezone.utc
+            )
+        except (OSError, OverflowError, ValueError, subprocess.CalledProcessError) as error:
+            errors.append(f"cannot derive frozen revision metadata: {error}")
         try:
             allowed = qualification_paths(gates, tracked)
             unexpected = changed_paths_since(release_revision) - allowed
@@ -260,6 +265,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                     tracked,
                     governance_digests,
                     dependencies_lock_digest,
+                    revision_committed_at,
                 )
             )
     audit_gate = by_id.get("independent-audits", {})

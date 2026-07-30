@@ -88,6 +88,15 @@ def _utc(value: object, key: str, errors: list[str], label: str) -> datetime | N
         return None
 
 
+def _valid_utc(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return None
+    try:
+        return datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 def _common(document: dict, gate_id: str, label: str) -> list[str]:
     errors: list[str] = []
     if document.get("schema_version") != 1:
@@ -465,6 +474,7 @@ def verify_gate(
     tracked_paths: set[str] | None = None,
     governance_digests: tuple[str, str] | None = None,
     dependencies_lock_digest: str | None = None,
+    revision_committed_at: datetime | None = None,
 ) -> list[str]:
     """Validate JSON attestations for one gate already marked passed."""
     if gate_id not in EXTERNAL_GATES:
@@ -495,6 +505,16 @@ def verify_gate(
         label = path.relative_to(root.resolve()).as_posix()
         if expected_revision is not None and document.get("revision") != expected_revision:
             errors.append(f"{label}: revision does not match frozen release_revision")
+        if revision_committed_at is not None:
+            completed = _valid_utc(document.get("completed_at"))
+            if completed is not None and completed < revision_committed_at:
+                errors.append(f"{label}: completed_at predates the frozen release revision")
+            if gate_id == "public-testnet-soak":
+                started = _valid_utc(document.get("started_at"))
+                if started is not None and started < revision_committed_at:
+                    errors.append(
+                        f"{label}: public testnet soak started before the frozen release revision"
+                    )
         if gate_id == "source-provenance":
             errors.extend(
                 _source_provenance(
