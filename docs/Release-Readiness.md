@@ -145,7 +145,8 @@ The enforced minimums are release policy, not claims about the current branch:
 - independent audits require two attestations from distinct normalized organization identities, each
   started after the frozen revision exists, binding its report, affirming independence, recording a
   non-empty methodology, verifying remediation, and declaring typed non-negative finding counts with
-  zero unresolved critical or high findings. Together the reports must cover ZK cryptography,
+  zero unresolved critical or high findings. The two organizations must bind distinct report
+  digests; renaming or reusing one report cannot satisfy the count. Together the reports must cover ZK cryptography,
   consensus/state transition, wallet key management/privacy, network/DoS, migration/supply
   invariants, and compiler/reproducibility;
 - public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,

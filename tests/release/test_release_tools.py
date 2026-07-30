@@ -122,6 +122,18 @@ class ReleaseToolsTest(unittest.TestCase):
             release_common.strict_json_loads('{"text":"[{\\\\\\"nested-looking\\\\\\":true}]"}'),
         )
 
+    def test_activation_gate_rejects_duplicate_evidence_paths(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        source_gate = next(
+            gate for gate in gates["gates"] if gate["id"] == "source-provenance"
+        )
+        source_gate["evidence"].append(source_gate["evidence"][0])
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(
+            any("evidence paths must be distinct strings" in error for error in errors),
+            errors,
+        )
+
     def test_activation_height_change_fails_closed(self) -> None:
         changed = self.config.replace(
             "const Height UPGRADE_HEIGHT_V5 = 9000000;", "const Height UPGRADE_HEIGHT_V5 = 42;"

@@ -59,7 +59,7 @@ class QualificationEvidenceTest(unittest.TestCase):
 
     def write_artifact(self, root: pathlib.Path, name: str = "report.txt") -> dict:
         path = root / name
-        path.write_text("independent evidence\n", encoding="utf-8")
+        path.write_text(f"independent evidence: {name}\n", encoding="utf-8")
         return {"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
     def write_document(self, root: pathlib.Path, name: str, document: dict) -> str:
@@ -376,6 +376,25 @@ class QualificationEvidenceTest(unittest.TestCase):
                     root,
                     tracked_paths={first, second, "a.txt", "b.txt"},
                 ),
+            )
+
+    def test_distinct_auditors_cannot_reuse_identical_report_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first_document = self.audit(root, "A Labs", "a.txt")
+            first = self.write_document(root, "audit-a.json", first_document)
+            second_document = self.audit(root, "B Labs", "b.txt")
+            second_document["artifact"] = first_document["artifact"]
+            second = self.write_document(root, "audit-b.json", second_document)
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+                tracked_paths={first, second, "a.txt", "b.txt"},
+            )
+            self.assertTrue(
+                any("distinct report content" in error for error in errors),
+                errors,
             )
 
     def test_duplicate_auditor_and_unresolved_high_finding_fail(self) -> None:

@@ -922,6 +922,7 @@ def verify_gate(
         return errors
 
     organizations: list[str] = []
+    audit_records: list[tuple[str, str]] = []
     audited_scopes: set[str] = set()
     for path, document in documents:
         label = path.relative_to(root.resolve()).as_posix()
@@ -964,6 +965,10 @@ def verify_gate(
             errors.extend(document_errors)
             if organization:
                 organizations.append(organization)
+                artifact = document.get("artifact")
+                digest = artifact.get("sha256") if isinstance(artifact, dict) else None
+                if isinstance(digest, str) and HEX_32.fullmatch(digest):
+                    audit_records.append((organization, digest))
             audited_scopes.update(scopes)
         elif gate_id == "public-testnet-soak":
             errors.extend(_testnet(document, root, label, tracked_paths))
@@ -992,6 +997,14 @@ def verify_gate(
             )
     if gate_id == "independent-audits" and len(set(organizations)) < 2:
         errors.append("independent-audits: reports must come from distinct organizations")
+    if gate_id == "independent-audits" and not any(
+        left_organization != right_organization and left_digest != right_digest
+        for index, (left_organization, left_digest) in enumerate(audit_records)
+        for right_organization, right_digest in audit_records[index + 1 :]
+    ):
+        errors.append(
+            "independent-audits: distinct organizations must bind distinct report content"
+        )
     if gate_id == "independent-audits" and audited_scopes != REQUIRED_AUDIT_SCOPES:
         errors.append(
             "independent-audits: reports must collectively cover every required audit scope"

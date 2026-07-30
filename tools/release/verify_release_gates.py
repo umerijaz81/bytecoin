@@ -401,6 +401,9 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         if not isinstance(evidence, list):
             errors.append(f"{gate_id}: evidence must be an array")
             continue
+        string_evidence = [relative for relative in evidence if isinstance(relative, str)]
+        if len(string_evidence) != len(evidence) or len(set(string_evidence)) != len(evidence):
+            errors.append(f"{gate_id}: evidence paths must be distinct strings")
         for relative in evidence:
             path = _repository_file(ROOT, relative)
             if path is None:
