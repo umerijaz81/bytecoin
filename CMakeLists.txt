@@ -216,13 +216,28 @@ if(ONYX_ZK)
     else()
         set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/libonyx_zk.a)
     endif()
-    file(GLOB ONYX_ZK_RUST_SOURCES CONFIGURE_DEPENDS ${ONYX_ZK_DIR}/src/*.rs)
+    # Track every first-party crate source, including bin targets and nested modules.  A non-recursive
+    # glob can leave the imported static library silently stale after a nested consensus/prover source
+    # changes because Cargo is only invoked when one of CMake's declared dependencies is newer.
+    file(GLOB_RECURSE ONYX_ZK_RUST_SOURCES
+        CONFIGURE_DEPENDS
+        LIST_DIRECTORIES false
+        ${ONYX_ZK_DIR}/src/*.rs)
+    set(ONYX_ZK_BUILD_INPUTS
+        ${ONYX_ZK_RUST_SOURCES}
+        ${ONYX_ZK_DIR}/Cargo.toml
+        ${ONYX_ZK_DIR}/Cargo.lock
+        ${ONYX_ZK_DIR}/include/onyx_zk.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/rust-toolchain.toml
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cargo/config.toml)
+    if(EXISTS ${ONYX_ZK_DIR}/build.rs)
+        list(APPEND ONYX_ZK_BUILD_INPUTS ${ONYX_ZK_DIR}/build.rs)
+    endif()
     add_custom_command(
         OUTPUT ${ONYX_ZK_LIB}
         COMMAND ${CARGO_EXECUTABLE} build --release --locked --offline --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
         WORKING_DIRECTORY ${ONYX_ZK_DIR}
-        DEPENDS ${ONYX_ZK_RUST_SOURCES} ${ONYX_ZK_DIR}/Cargo.toml ${ONYX_ZK_DIR}/Cargo.lock
-                ${ONYX_ZK_DIR}/include/onyx_zk.h
+        DEPENDS ${ONYX_ZK_BUILD_INPUTS}
         COMMENT "Building Onyx ZK backend (cargo build --release)"
         VERBATIM)
     add_custom_target(onyx_zk_build DEPENDS ${ONYX_ZK_LIB})
