@@ -596,7 +596,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "revision": REVISION,
                 "started_at": "2026-07-01T00:00:00Z",
                 "completed_at": "2026-07-15T00:00:00Z",
-                "public_endpoint": "https://user:secret@example.test",
+                "public_endpoint": "https://testnet.example",
                 "independent_nodes": 3,
                 "node_ids": ["node-a", "node-b", "node-c"],
                 "observed_blocks": 10_000,
@@ -605,9 +605,35 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "dos_scenarios": 1,
                 "artifact": self.write_artifact(root),
             }
+            for endpoint in (
+                "https://user:secret@example.test",
+                "https://testnet.example/rpc",
+                "https://testnet.example?token=secret",
+                "https://testnet.example#status",
+                "https://bad_host.example",
+                "https://%zz",
+                "https://localhost",
+                "https://127.0.0.1",
+            ):
+                with self.subTest(endpoint=endpoint):
+                    document["public_endpoint"] = endpoint
+                    evidence = self.write_document(root, "soak.json", document)
+                    errors = qualification_evidence.verify_gate(
+                        "public-testnet-soak",
+                        [evidence],
+                        root,
+                    )
+                    self.assertTrue(
+                        any("credential-free HTTPS origin" in error for error in errors),
+                        errors,
+                    )
+            document["public_endpoint"] = "https://testnet.example:443/"
             evidence = self.write_document(root, "soak.json", document)
             errors = qualification_evidence.verify_gate("public-testnet-soak", [evidence], root)
-            self.assertTrue(any("public_endpoint must be HTTPS" in error for error in errors), errors)
+            self.assertFalse(
+                any("credential-free HTTPS origin" in error for error in errors),
+                errors,
+            )
 
     def test_incident_drill_requires_operational_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1033,6 +1059,23 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "independent-audits", [first, second], root
             )
             self.assertTrue(any("completed_at cannot be in the future" in error for error in errors), errors)
+
+    def test_attestation_timestamps_must_be_canonical_utc(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first_document = self.audit(root, "A Labs", "a.txt")
+            first_document["started_at"] = "2026-07-10 00:00:00Z"
+            first = self.write_document(root, "audit-a.json", first_document)
+            second = self.write_document(root, "audit-b.json", self.audit(root, "B Labs", "b.txt"))
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+            )
+            self.assertTrue(
+                any("started_at must be a canonical UTC timestamp" in error for error in errors),
+                errors,
+            )
 
 
 if __name__ == "__main__":

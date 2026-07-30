@@ -151,7 +151,8 @@ The enforced minimums are release policy, not claims about the current branch:
   invariants, and compiler/reproducibility;
 - public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,
   and recorded reorg, malformed-bundle, and denial-of-service scenarios at a credential-free public
-  HTTPS endpoint with a valid host and optional valid port. Evidence binds the network and genesis,
+  HTTPS origin with a syntactically valid IDNA DNS name (or globally routable IP literal), optional
+  valid port, and no path, query, user information or fragment. Evidence binds the network and genesis,
   start/end heights and block hashes, the complete final `get_onyx_supply_audit` response, successful
   migration/supply reconciliation and zero unresolved consensus divergences. A result for every
   declared node must run the attested revision and converge on the exact final height, block hash and
@@ -183,6 +184,9 @@ whitespace and case, so full-width or compatibility spellings cannot inflate ind
 Governance compiler and target-profile digests are recomputed from the frozen revision: the
 compiler digest is the LF-canonicalized `tools/onyx/compiler_v1.py` hash, and all four approved
 standard-program manifests must bind that compiler and one identical target-profile digest.
+All evidence timestamps use one canonical UTC representation:
+`YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. Alternate separators, offsets and excess fractional precision are
+rejected before ordering against the frozen revision or another event.
 
 JSON alone is not treated as an audit, soak, drill, build, or governance record. Its `artifact` object
 must name the committed primary record and its digest. Reviewers should additionally verify any

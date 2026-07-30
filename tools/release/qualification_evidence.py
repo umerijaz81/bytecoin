@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import ipaddress
 import json
 import pathlib
 import re
@@ -24,6 +25,10 @@ EXTERNAL_GATES = {
 }
 HEX_32 = re.compile(r"^[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
+UTC_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z$"
+)
 REQUIRED_PLATFORMS = {"linux-x86_64", "macos-arm64", "windows-x86_64"}
 REQUIRED_RELEASE_PROGRAMS = {"bytecoind", "walletd", "minerd"}
 MINIMUM_ACTIVATION_LEAD_BLOCKS = 5_040
@@ -40,6 +45,30 @@ REQUIRED_AUDIT_SCOPES = {
 def _normalize_identity(value: str) -> str:
     compatible = unicodedata.normalize("NFKC", value)
     return " ".join(compatible.split()).casefold()
+
+
+def _valid_public_host(value: str | None) -> bool:
+    if value is None or value.endswith("."):
+        return False
+    try:
+        return ipaddress.ip_address(value).is_global
+    except ValueError:
+        pass
+    try:
+        ascii_host = value.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    if len(ascii_host) > 253:
+        return False
+    labels = ascii_host.split(".")
+    if len(labels) < 2:
+        return False
+    return all(
+        1 <= len(label) <= 63
+        and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+        is not None
+        for label in labels
+    )
 
 
 def _repository_file(root: pathlib.Path, relative: object) -> pathlib.Path | None:
@@ -103,8 +132,8 @@ def _distinct_identities(
 
 
 def _utc(value: object, key: str, errors: list[str], label: str) -> datetime | None:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        errors.append(f"{label}: {key} must be an ISO-8601 UTC timestamp")
+    if not isinstance(value, str) or not UTC_TIMESTAMP.fullmatch(value):
+        errors.append(f"{label}: {key} must be a canonical UTC timestamp")
         return None
     try:
         return datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
@@ -114,7 +143,7 @@ def _utc(value: object, key: str, errors: list[str], label: str) -> datetime | N
 
 
 def _valid_utc(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.endswith("Z"):
+    if not isinstance(value, str) or not UTC_TIMESTAMP.fullmatch(value):
         return None
     try:
         return datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
@@ -444,16 +473,18 @@ def _testnet(
             port_valid = parsed.port is None or 1 <= parsed.port <= 65535
             endpoint_valid = (
                 parsed.scheme == "https"
-                and bool(parsed.hostname)
+                and _valid_public_host(parsed.hostname)
                 and parsed.username is None
                 and parsed.password is None
+                and parsed.path in ("", "/")
+                and parsed.query == ""
                 and parsed.fragment == ""
                 and port_valid
             )
         except ValueError:
             endpoint_valid = False
     if not endpoint_valid:
-        errors.append(f"{label}: public_endpoint must be HTTPS")
+        errors.append(f"{label}: public_endpoint must be a credential-free HTTPS origin")
     node_ids = _distinct_identities(
         document, "independent_nodes", "node_ids", 3, errors, label
     )
