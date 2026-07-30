@@ -49,8 +49,8 @@ void Request::parse(const std::string &request_body, bool allow_empty_id) {
 	stripped_req = common::JsonValue{};
 	try {
 		stripped_req = common::JsonValue::from_string(request_body);
-	} catch (const std::exception &ex) {
-		throw Error(PARSE_ERROR, common::what(ex));
+	} catch (const std::exception &) {
+		throw Error(PARSE_ERROR);
 	}
 	if (!stripped_req.is_object())
 		throw Error(INVALID_REQUEST, "Request is not a json object");
@@ -100,8 +100,8 @@ void Response::parse(const std::string &response_body) {
 	common::JsonValue ps_req;
 	try {
 		ps_req = common::JsonValue::from_string(response_body);
-	} catch (const std::exception &ex) {
-		throw Error(PARSE_ERROR, common::what(ex));
+	} catch (const std::exception &) {
+		throw Error(PARSE_ERROR);
 	}
 	if (!ps_req.is_object())
 		throw Error(INVALID_REQUEST, "Response is not a json object");

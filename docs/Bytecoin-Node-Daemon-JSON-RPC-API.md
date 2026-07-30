@@ -12,6 +12,8 @@ The built-in HTTP server accepts at most 128 simultaneous clients, 32 KiB of req
 4 MiB request body. Larger declared bodies receive HTTP 413; oversized or ambiguous headers are
 closed fail-safe. Clients have 5 seconds to complete headers and 30 seconds to complete an allowed
 body. These limits apply before JSON-RPC dispatch.
+Malformed JSON receives the stable JSON-RPC `-32700` / `Parse error` response. Parser diagnostics
+and request fragments are not reflected to clients or written to the daemon log.
 Peer addresses are redacted from normal logs. `--log-peer-addresses` is an explicit temporary
 diagnostic opt-in and makes log files privacy-sensitive. Archive records omit transaction/block
 source IPs by default; `--archive-store-source-ips` opts into that attribution and should only be

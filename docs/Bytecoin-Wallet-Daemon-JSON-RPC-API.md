@@ -17,6 +17,8 @@ The built-in HTTP server accepts at most 128 simultaneous clients, 32 KiB of req
 closed fail-safe. Clients have 5 seconds to complete headers and 30 seconds to complete an allowed
 body. These limits apply before JSON-RPC dispatch. Keep walletd bound to localhost unless it is
 protected by an authenticated TLS reverse proxy.
+Malformed JSON receives the stable JSON-RPC `-32700` / `Parse error` response. Parser diagnostics
+and request fragments are not reflected to clients or written to the daemon log.
 
 For unattended operation, store a single `user:password` credential in a file readable only by the
 walletd account and pass `--walletd-http-auth-file=<path>`. On POSIX systems walletd rejects files

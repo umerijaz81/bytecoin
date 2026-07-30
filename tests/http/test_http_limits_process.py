@@ -180,6 +180,40 @@ def test_invalid_json_unicode(process, port):
     print("invalid JSON-RPC Unicode rejected before method dispatch")
 
 
+def test_stable_parse_error(process, port, output):
+    marker = "BYTECOIN_PARSE_SECRET_8a371f"
+    body = (
+        b'{"jsonrpc":"2.0","id":"stable-parse-error","method":"get_status",'
+        + f'"params":{{"private":"{marker}"}}'.encode("ascii")
+    )
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(http_request(body))
+        response = read_response(sock)
+    _, separator, payload = response.partition(b"\r\n\r\n")
+    if not separator:
+        raise RuntimeError(f"malformed JSON produced no HTTP response: {response[:200]!r}")
+    decoded = json.loads(payload.decode("utf-8"))
+    error = decoded.get("error")
+    if (
+        not isinstance(error, dict)
+        or error.get("code") != -32700
+        or error.get("message") != "Parse error"
+        or "result" in decoded
+    ):
+        raise RuntimeError(f"malformed JSON did not produce a stable parse error: {decoded!r}")
+    if marker.encode("ascii") in response:
+        raise RuntimeError("malformed JSON request fragment was reflected in the response")
+    output.flush()
+    position = output.tell()
+    output.seek(0)
+    log = output.read()
+    output.seek(position)
+    if marker in log:
+        raise RuntimeError("malformed JSON request fragment was written to the daemon log")
+    assert_alive(process, port)
+    print("JSON-RPC parse errors are stable and do not reflect request fragments")
+
+
 def test_connection_cap(process, port):
     idle = []
     overflow = None
@@ -259,6 +293,7 @@ def run(binary):
                 test_duplicate_content_length(process, rpc_port)
                 test_duplicate_json_member(process, rpc_port)
                 test_invalid_json_unicode(process, rpc_port)
+                test_stable_parse_error(process, rpc_port, output)
                 test_supply_audit_cache_stability(process, rpc_port)
                 test_connection_cap(process, rpc_port)
                 test_header_timeout(process, rpc_port)
