@@ -20,6 +20,10 @@ class DuplicateJsonKey(ValueError):
     pass
 
 
+class NonFiniteJsonNumber(ValueError):
+    pass
+
+
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
     result = {}
     for key, value in pairs:
@@ -29,8 +33,16 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
+def _reject_json_constant(value: str) -> object:
+    raise NonFiniteJsonNumber(f"non-finite JSON number: {value}")
+
+
 def strict_json_loads(value: str | bytes | bytearray) -> object:
-    return json.loads(value, object_pairs_hook=_unique_json_object)
+    return json.loads(
+        value,
+        object_pairs_hook=_unique_json_object,
+        parse_constant=_reject_json_constant,
+    )
 
 
 def sha256_file(path: pathlib.Path) -> str:

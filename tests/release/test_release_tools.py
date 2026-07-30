@@ -78,6 +78,21 @@ class ReleaseToolsTest(unittest.TestCase):
             release_common.strict_json_loads('{"outer":{"left":1,"right":2}}'),
         )
 
+    def test_release_json_rejects_non_finite_numbers(self) -> None:
+        for value in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    release_common.NonFiniteJsonNumber,
+                    "non-finite JSON number",
+                ):
+                    release_common.strict_json_loads(
+                        f'{{"gate_id":"public-testnet-soak","measurement":{{"value":{value}}}}}'
+                    )
+        self.assertEqual(
+            {"finite": [-1.5, 0, 2.75]},
+            release_common.strict_json_loads('{"finite":[-1.5,0,2.75]}'),
+        )
+
     def test_activation_height_change_fails_closed(self) -> None:
         changed = self.config.replace(
             "const Height UPGRADE_HEIGHT_V5 = 9000000;", "const Height UPGRADE_HEIGHT_V5 = 42;"
