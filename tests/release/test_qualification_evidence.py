@@ -42,6 +42,63 @@ class QualificationEvidenceTest(unittest.TestCase):
             "artifact": self.write_artifact(root, report),
         }
 
+    def source_provenance(self, root: pathlib.Path) -> dict:
+        artifacts = {}
+        for key, name in {
+            "source_archive": "source.tar.gz",
+            "spdx_sbom": "source.spdx.json",
+            "provenance": "source.provenance.json",
+            "checksums": "SHA256SUMS",
+        }.items():
+            artifacts[key] = self.write_artifact(root, name)
+        return {
+            "schema_version": 1,
+            "gate_id": "source-provenance",
+            "revision": REVISION,
+            "completed_at": "2026-07-17T00:00:00Z",
+            "independent_builders": 2,
+            "builder_ids": ["builder-a", "builder-b"],
+            "source_archive_identical": True,
+            "spdx_sbom_identical": True,
+            "dependencies_lock_sha256": DIGEST,
+            "artifacts": artifacts,
+        }
+
+    def test_source_provenance_binds_independent_builders_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = self.source_provenance(root)
+            evidence = self.write_document(root, "source-evidence.json", document)
+            tracked = {evidence}
+            tracked.update(binding["path"] for binding in document["artifacts"].values())
+            self.assertEqual(
+                [],
+                qualification_evidence.verify_gate(
+                    "source-provenance",
+                    [evidence],
+                    root,
+                    tracked_paths=tracked,
+                    dependencies_lock_digest=DIGEST,
+                ),
+            )
+
+            document["builder_ids"] = ["same builder", " Same  Builder "]
+            document["artifacts"]["checksums"] = document["artifacts"]["provenance"]
+            document["dependencies_lock_sha256"] = "3" * 64
+            evidence = self.write_document(root, "source-evidence.json", document)
+            errors = qualification_evidence.verify_gate(
+                "source-provenance",
+                [evidence],
+                root,
+                tracked_paths=tracked,
+                dependencies_lock_digest=DIGEST,
+            )
+            self.assertTrue(any("distinct normalized identities" in error for error in errors), errors)
+            self.assertTrue(any("artifact paths must be distinct" in error for error in errors), errors)
+            self.assertTrue(
+                any("does not match frozen release revision" in error for error in errors), errors
+            )
+
     def test_two_distinct_clean_audits_pass(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

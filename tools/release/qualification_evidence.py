@@ -12,6 +12,7 @@ import urllib.parse
 
 
 EXTERNAL_GATES = {
+    "source-provenance",
     "independent-audits",
     "public-testnet-soak",
     "reproducible-platform-binaries",
@@ -123,6 +124,45 @@ def _artifact(
         errors.append(f"{label}: artifact is not Git-tracked: {relative}")
     elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
         errors.append(f"{label}: artifact digest mismatch: {relative}")
+
+
+def _source_provenance(
+    document: dict,
+    root: pathlib.Path,
+    label: str,
+    tracked_paths: set[str] | None,
+    dependencies_lock_digest: str | None,
+) -> list[str]:
+    errors = _common(document, "source-provenance", label)
+    _distinct_identities(
+        document, "independent_builders", "builder_ids", 2, errors, label
+    )
+    if document.get("source_archive_identical") is not True:
+        errors.append(f"{label}: source_archive_identical must be true")
+    if document.get("spdx_sbom_identical") is not True:
+        errors.append(f"{label}: spdx_sbom_identical must be true")
+    lock_digest = document.get("dependencies_lock_sha256")
+    if not isinstance(lock_digest, str) or not HEX_32.fullmatch(lock_digest):
+        errors.append(f"{label}: dependencies_lock_sha256 must be lowercase SHA-256")
+    elif dependencies_lock_digest is not None and lock_digest != dependencies_lock_digest:
+        errors.append(
+            f"{label}: dependencies_lock_sha256 does not match frozen release revision"
+        )
+
+    artifacts = document.get("artifacts")
+    required = {"source_archive", "spdx_sbom", "provenance", "checksums"}
+    if not isinstance(artifacts, dict) or set(artifacts) != required:
+        errors.append(f"{label}: artifacts must bind exactly {sorted(required)}")
+        return errors
+    paths: list[str] = []
+    for name in sorted(required):
+        binding = artifacts.get(name)
+        _artifact({"artifact": binding}, root, errors, f"{label}:{name}", tracked_paths)
+        if isinstance(binding, dict) and isinstance(binding.get("path"), str):
+            paths.append(binding["path"])
+    if len(paths) != len(set(paths)):
+        errors.append(f"{label}: artifact paths must be distinct")
+    return errors
 
 
 def _audit(
@@ -301,6 +341,7 @@ def verify_gate(
     expected_revision: str | None = None,
     tracked_paths: set[str] | None = None,
     governance_digests: tuple[str, str] | None = None,
+    dependencies_lock_digest: str | None = None,
 ) -> list[str]:
     """Validate JSON attestations for one gate already marked passed."""
     if gate_id not in EXTERNAL_GATES:
@@ -331,7 +372,17 @@ def verify_gate(
         label = path.relative_to(root.resolve()).as_posix()
         if expected_revision is not None and document.get("revision") != expected_revision:
             errors.append(f"{label}: revision does not match frozen release_revision")
-        if gate_id == "independent-audits":
+        if gate_id == "source-provenance":
+            errors.extend(
+                _source_provenance(
+                    document,
+                    root,
+                    label,
+                    tracked_paths,
+                    dependencies_lock_digest,
+                )
+            )
+        elif gate_id == "independent-audits":
             document_errors, organization = _audit(document, root, label, tracked_paths)
             errors.extend(document_errors)
             if organization:

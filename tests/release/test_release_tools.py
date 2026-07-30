@@ -85,6 +85,19 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertEqual([], errors)
         self.assertIn("reproducible-platform-binaries", incomplete)
 
+    def test_source_provenance_cannot_pass_without_typed_attestation(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        gates["release_revision"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+        source = next(gate for gate in gates["gates"] if gate["id"] == "source-provenance")
+        source["status"] = "passed"
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(
+            any("source-provenance: passed status requires 1 typed JSON attestation" in error for error in errors),
+            errors,
+        )
+
     def test_activation_evidence_must_be_contained_and_tracked(self) -> None:
         gates = copy.deepcopy(self.gates)
         source = next(gate for gate in gates["gates"] if gate["id"] == "source-provenance")

@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 
-from release_common import ROOT, revision_file, tracked_files
+from release_common import ROOT, revision_file, revision_file_sha256, tracked_files
 from qualification_evidence import _repository_file, verify_gate
 
 
@@ -89,6 +89,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         for gate_id, gate in by_id.items()
         if gate_id
         in {
+            "source-provenance",
             "independent-audits",
             "public-testnet-soak",
             "reproducible-platform-binaries",
@@ -108,6 +109,19 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
             "frozen release_revision must name an existing commit that is an ancestor of HEAD"
         )
     governance_digests = None
+    dependencies_lock_digest = None
+    if (
+        passed_external
+        and isinstance(release_revision, str)
+        and re.fullmatch(r"[0-9a-f]{40}", release_revision)
+        and frozen_revision_is_ancestor(release_revision)
+    ):
+        try:
+            dependencies_lock_digest = revision_file_sha256(
+                release_revision, "release/dependencies.lock.json"
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            errors.append(f"cannot derive frozen dependency-lock digest: {error}")
     if (
         by_id.get("governance-approval", {}).get("status") == "passed"
         and isinstance(release_revision, str)
@@ -143,6 +157,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                     release_revision if isinstance(release_revision, str) else None,
                     tracked,
                     governance_digests,
+                    dependencies_lock_digest,
                 )
             )
     audit_gate = by_id.get("independent-audits", {})
