@@ -61,6 +61,17 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertEqual([], errors)
         self.assertIn("reproducible-platform-binaries", incomplete)
 
+    def test_activation_evidence_must_be_contained_and_tracked(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        source = next(gate for gate in gates["gates"] if gate["id"] == "source-provenance")
+        source["evidence"] = ["../outside"]
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(any("invalid repository evidence '../outside'" in error for error in errors), errors)
+        source["evidence"] = ["docs/Release-Readiness.md"]
+        with mock.patch.object(verify_release_gates, "tracked_files", return_value=[]):
+            errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(any("evidence is not Git-tracked" in error for error in errors), errors)
+
     def test_spdx_identifiers_are_unique_and_deterministic(self) -> None:
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         first = generate_spdx.generate(revision, 0)

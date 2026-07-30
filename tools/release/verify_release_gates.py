@@ -7,8 +7,8 @@ import json
 import re
 import sys
 
-from release_common import ROOT
-from qualification_evidence import verify_gate
+from release_common import ROOT, tracked_files
+from qualification_evidence import _repository_file, verify_gate
 
 
 REQUIRED_GATES = {
@@ -24,6 +24,7 @@ ALLOWED_STATUS = {"pending", "implemented", "passed"}
 
 def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
+    tracked = set(tracked_files())
     if gates_document.get("schema_version") != 1:
         errors.append("activation gate schema_version must be 1")
     gates = gates_document.get("gates", [])
@@ -60,8 +61,11 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
             errors.append(f"{gate_id}: evidence must be an array")
             continue
         for relative in evidence:
-            if not isinstance(relative, str) or not relative or not (ROOT / relative).exists():
-                errors.append(f"{gate_id}: missing repository evidence {relative!r}")
+            path = _repository_file(ROOT, relative)
+            if path is None:
+                errors.append(f"{gate_id}: invalid repository evidence {relative!r}")
+            elif relative not in tracked:
+                errors.append(f"{gate_id}: evidence is not Git-tracked: {relative!r}")
         if status == "passed" and not evidence:
             errors.append(f"{gate_id}: passed status requires concrete evidence")
         if status == "passed":
@@ -71,6 +75,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                     evidence,
                     ROOT,
                     release_revision if isinstance(release_revision, str) else None,
+                    tracked,
                 )
             )
     audit_gate = by_id.get("independent-audits", {})

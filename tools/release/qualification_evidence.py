@@ -22,6 +22,24 @@ REVISION = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_PLATFORMS = {"linux-x86_64", "macos-arm64", "windows-x86_64"}
 
 
+def _repository_file(root: pathlib.Path, relative: object) -> pathlib.Path | None:
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or "\\" in relative
+        or pathlib.PurePosixPath(relative).is_absolute()
+        or any(part in ("", ".", "..") for part in pathlib.PurePosixPath(relative).parts)
+    ):
+        return None
+    root = root.resolve()
+    path = (root / relative).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path if path.is_file() else None
+
+
 def _integer(document: dict, key: str, minimum: int, errors: list[str], label: str) -> int:
     value = document.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
@@ -53,31 +71,33 @@ def _common(document: dict, gate_id: str, label: str) -> list[str]:
     return errors
 
 
-def _artifact(document: dict, root: pathlib.Path, errors: list[str], label: str) -> None:
+def _artifact(
+    document: dict,
+    root: pathlib.Path,
+    errors: list[str],
+    label: str,
+    tracked_paths: set[str] | None,
+) -> None:
     artifact = document.get("artifact")
     if not isinstance(artifact, dict):
         errors.append(f"{label}: artifact must bind a repository file and SHA-256")
         return
     relative, expected = artifact.get("path"), artifact.get("sha256")
-    if not isinstance(relative, str) or not relative or pathlib.PurePath(relative).is_absolute():
-        errors.append(f"{label}: artifact.path must be repository-relative")
-        return
     if not isinstance(expected, str) or not HEX_32.fullmatch(expected):
         errors.append(f"{label}: artifact.sha256 must be lowercase SHA-256")
         return
-    path = (root / relative).resolve()
-    try:
-        path.relative_to(root.resolve())
-    except ValueError:
-        errors.append(f"{label}: artifact path escapes the repository")
-        return
-    if not path.is_file():
-        errors.append(f"{label}: artifact does not exist: {relative}")
+    path = _repository_file(root, relative)
+    if path is None:
+        errors.append(f"{label}: artifact.path must be a contained repository file")
+    elif tracked_paths is not None and relative not in tracked_paths:
+        errors.append(f"{label}: artifact is not Git-tracked: {relative}")
     elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
         errors.append(f"{label}: artifact digest mismatch: {relative}")
 
 
-def _audit(document: dict, root: pathlib.Path, label: str) -> tuple[list[str], str | None]:
+def _audit(
+    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+) -> tuple[list[str], str | None]:
     errors = _common(document, "independent-audits", label)
     auditor = document.get("auditor")
     organization = auditor.get("organization") if isinstance(auditor, dict) else None
@@ -87,11 +107,13 @@ def _audit(document: dict, root: pathlib.Path, label: str) -> tuple[list[str], s
     findings = document.get("unresolved_findings")
     if not isinstance(findings, dict) or findings.get("critical") != 0 or findings.get("high") != 0:
         errors.append(f"{label}: unresolved critical and high findings must both be zero")
-    _artifact(document, root, errors, label)
+    _artifact(document, root, errors, label, tracked_paths)
     return errors, organization.casefold() if organization else None
 
 
-def _testnet(document: dict, root: pathlib.Path, label: str) -> list[str]:
+def _testnet(
+    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+) -> list[str]:
     errors = _common(document, "public-testnet-soak", label)
     start = _utc(document.get("started_at"), "started_at", errors, label)
     end = _utc(document.get("completed_at"), "completed_at", errors, label)
@@ -108,11 +130,13 @@ def _testnet(document: dict, root: pathlib.Path, label: str) -> list[str]:
         "dos_scenarios": 1,
     }.items():
         _integer(document, key, minimum, errors, label)
-    _artifact(document, root, errors, label)
+    _artifact(document, root, errors, label, tracked_paths)
     return errors
 
 
-def _reproducibility(document: dict, root: pathlib.Path, label: str) -> list[str]:
+def _reproducibility(
+    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+) -> list[str]:
     errors = _common(document, "reproducible-platform-binaries", label)
     platforms = document.get("platforms")
     if not isinstance(platforms, list):
@@ -129,22 +153,26 @@ def _reproducibility(document: dict, root: pathlib.Path, label: str) -> list[str
             _integer(item, "independent_builders", 2, errors, f"{label}:{name}")
             if item.get("hashes_match") is not True:
                 errors.append(f"{label}:{name}: hashes_match must be true")
-    _artifact(document, root, errors, label)
+    _artifact(document, root, errors, label, tracked_paths)
     return errors
 
 
-def _incident(document: dict, root: pathlib.Path, label: str) -> list[str]:
+def _incident(
+    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+) -> list[str]:
     errors = _common(document, "incident-response-drill", label)
     _integer(document, "participants", 2, errors, label)
     scenarios = document.get("scenarios")
     required = {"consensus-stall", "reorg", "proof-dos"}
     if not isinstance(scenarios, list) or not required.issubset(set(scenarios)):
         errors.append(f"{label}: scenarios must cover {sorted(required)}")
-    _artifact(document, root, errors, label)
+    _artifact(document, root, errors, label, tracked_paths)
     return errors
 
 
-def _governance(document: dict, root: pathlib.Path, label: str) -> list[str]:
+def _governance(
+    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+) -> list[str]:
     errors = _common(document, "governance-approval", label)
     if document.get("approved_revision") != document.get("revision"):
         errors.append(f"{label}: approved_revision must equal revision")
@@ -155,7 +183,7 @@ def _governance(document: dict, root: pathlib.Path, label: str) -> list[str]:
     if document.get("quorum_met") is not True:
         errors.append(f"{label}: quorum_met must be true")
     _integer(document, "approvals", 2, errors, label)
-    _artifact(document, root, errors, label)
+    _artifact(document, root, errors, label, tracked_paths)
     return errors
 
 
@@ -164,6 +192,7 @@ def verify_gate(
     evidence: list[str],
     root: pathlib.Path,
     expected_revision: str | None = None,
+    tracked_paths: set[str] | None = None,
 ) -> list[str]:
     """Validate JSON attestations for one gate already marked passed."""
     if gate_id not in EXTERNAL_GATES:
@@ -173,7 +202,10 @@ def verify_gate(
     for relative in evidence:
         if not isinstance(relative, str) or not relative.endswith(".json"):
             continue
-        path = root / relative
+        path = _repository_file(root, relative)
+        if path is None:
+            errors.append(f"{gate_id}: invalid repository evidence path {relative!r}")
+            continue
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -188,22 +220,22 @@ def verify_gate(
 
     organizations: list[str] = []
     for path, document in documents:
-        label = path.relative_to(root).as_posix()
+        label = path.relative_to(root.resolve()).as_posix()
         if expected_revision is not None and document.get("revision") != expected_revision:
             errors.append(f"{label}: revision does not match frozen release_revision")
         if gate_id == "independent-audits":
-            document_errors, organization = _audit(document, root, label)
+            document_errors, organization = _audit(document, root, label, tracked_paths)
             errors.extend(document_errors)
             if organization:
                 organizations.append(organization)
         elif gate_id == "public-testnet-soak":
-            errors.extend(_testnet(document, root, label))
+            errors.extend(_testnet(document, root, label, tracked_paths))
         elif gate_id == "reproducible-platform-binaries":
-            errors.extend(_reproducibility(document, root, label))
+            errors.extend(_reproducibility(document, root, label, tracked_paths))
         elif gate_id == "incident-response-drill":
-            errors.extend(_incident(document, root, label))
+            errors.extend(_incident(document, root, label, tracked_paths))
         elif gate_id == "governance-approval":
-            errors.extend(_governance(document, root, label))
+            errors.extend(_governance(document, root, label, tracked_paths))
     if gate_id == "independent-audits" and len(set(organizations)) < 2:
         errors.append("independent-audits: reports must come from distinct organizations")
     return errors

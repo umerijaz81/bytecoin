@@ -92,6 +92,8 @@ two independent operators/environments have not reproduced and signed the artifa
 gate-specific JSON attestations. Every attestation binds a 40-character Git revision, a UTC completion
 time, and a repository-relative artifact whose lowercase SHA-256 is recomputed by the verifier. The
 attestation and its referenced artifact must both be committed before the activation-gate change.
+The verifier requires canonical contained paths, rejects path and symlink escapes, and requires every
+listed evidence file to be present in the Git index.
 Before any external gate passes, `release/activation-gates.json` must freeze one lowercase
 40-character `release_revision`; every typed attestation must bind that exact revision. It remains
 `null` while qualification is still in progress.

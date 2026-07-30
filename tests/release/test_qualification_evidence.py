@@ -51,6 +51,22 @@ class QualificationEvidenceTest(unittest.TestCase):
                 [],
                 qualification_evidence.verify_gate("independent-audits", [first, second], root),
             )
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+                tracked_paths={first, second},
+            )
+            self.assertTrue(any("artifact is not Git-tracked" in error for error in errors), errors)
+            self.assertEqual(
+                [],
+                qualification_evidence.verify_gate(
+                    "independent-audits",
+                    [first, second],
+                    root,
+                    tracked_paths={first, second, "a.txt", "b.txt"},
+                ),
+            )
 
     def test_duplicate_auditor_and_unresolved_high_finding_fail(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -110,6 +126,30 @@ class QualificationEvidenceTest(unittest.TestCase):
             evidence = self.write_document(root, "governance.json", document)
             errors = qualification_evidence.verify_gate("governance-approval", [evidence], root)
             self.assertTrue(any("approved_revision" in error for error in errors), errors)
+
+    def test_attestation_and_artifact_paths_cannot_escape_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = pathlib.Path(temporary)
+            root = parent / "repository"
+            root.mkdir()
+            outside = parent / "outside.json"
+            document = self.audit(root, "A Labs", "report.txt")
+            outside.write_text(json.dumps(document), encoding="utf-8")
+            errors = qualification_evidence.verify_gate(
+                "independent-audits", ["../outside.json", "../outside.json"], root
+            )
+            self.assertTrue(any("invalid repository evidence path" in error for error in errors))
+
+            document["artifact"]["path"] = "../outside-report.txt"
+            first = self.write_document(root, "audit-a.json", document)
+            second = self.write_document(root, "audit-b.json", self.audit(root, "B Labs", "b.txt"))
+            errors = qualification_evidence.verify_gate(
+                "independent-audits", [first, second], root
+            )
+            self.assertTrue(
+                any("artifact.path must be a contained repository file" in error for error in errors),
+                errors,
+            )
 
 
 if __name__ == "__main__":
