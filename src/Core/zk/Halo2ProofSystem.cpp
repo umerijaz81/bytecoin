@@ -284,10 +284,12 @@ bool Halo2ProofSystem::extract_authenticated_standard_program_delta(
 bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta) {
+	if (next_snapshot != nullptr)
+		next_snapshot->clear();
+	if (delta != nullptr)
+		*delta = VerifiedBridgeDelta{};
 	if (next_snapshot == nullptr || delta == nullptr)
 		return false;
-	next_snapshot->clear();
-	*delta = VerifiedBridgeDelta{};
 	if (encoded.empty())
 		return false;
 	uint8_t *next_ptr = nullptr;
@@ -316,9 +318,10 @@ bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t
 
 bool Halo2ProofSystem::verify_bridge(
     const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta) {
+	if (delta != nullptr)
+		*delta = VerifiedBridgeDelta{};
 	if (delta == nullptr)
 		return false;
-	*delta = VerifiedBridgeDelta{};
 	if (encoded.empty())
 		return false;
 	VerifiedBridgeDelta result;
@@ -538,10 +541,12 @@ bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
     uint64_t legacy_amount, uint64_t legacy_stack_index,
     const std::array<uint8_t, 32> &legacy_key_image, const BinaryArray &memo, uint32_t circuit_k,
     BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash) {
+	if (unsigned_bridge != nullptr)
+		unsigned_bridge->clear();
+	if (ownership_sighash != nullptr)
+		ownership_sighash->fill(0);
 	if (unsigned_bridge == nullptr || ownership_sighash == nullptr)
 		return false;
-	unsigned_bridge->clear();
-	ownership_sighash->fill(0);
 	uint8_t *ptr = nullptr;
 	size_t len = 0;
 	const int rc = onyx_wallet_create_bridge(seed.data(), recipient.data(), expiry_height, fee, legacy_amount,

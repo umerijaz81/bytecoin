@@ -267,6 +267,30 @@ void test_zk() {
 		              BinaryArray{}, ownership_signature, &stale_bridge),
 		    "empty bridge finalization was accepted");
 		invariant(stale_bridge.empty(), "rejected bridge finalization left stale output");
+		stale_bridge.assign(1, 0xff);
+		invariant(!Halo2ProofSystem::wallet_create_bridge(seed, recipient, 100, 5, 30, 42,
+		              key_image, memo, 13, &stale_bridge, nullptr),
+		    "bridge proving accepted a null sighash output");
+		invariant(stale_bridge.empty(), "null bridge sighash output left stale envelope bytes");
+		ownership_sighash.fill(0xff);
+		invariant(!Halo2ProofSystem::wallet_create_bridge(seed, recipient, 100, 5, 30, 42,
+		              key_image, memo, 13, nullptr, &ownership_sighash),
+		    "bridge proving accepted a null envelope output");
+		const bool null_envelope_sighash_cleared =
+		    ownership_sighash == std::array<uint8_t, 32>{};
+		invariant(null_envelope_sighash_cleared,
+		    "null bridge envelope output left a stale sighash");
+		verified.legacy_amount = 99;
+		invariant(!Halo2ProofSystem::verify_apply_bridge(
+		              state, 100, bridge, 13, network, 2, nullptr, &verified),
+		    "bridge apply accepted a null snapshot output");
+		invariant(verified.legacy_amount == 0,
+		    "null bridge snapshot output left a stale verified delta");
+		stale_state.assign(1, 0xff);
+		invariant(!Halo2ProofSystem::verify_apply_bridge(
+		              state, 100, bridge, 13, network, 2, &stale_state, nullptr),
+		    "bridge apply accepted a null delta output");
+		invariant(stale_state.empty(), "null bridge delta output left a stale snapshot");
 		std::cout << "  [zk] bridge proving, replay defense, and supply accounting ok" << std::endl;
 	}
 
