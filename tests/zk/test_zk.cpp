@@ -74,6 +74,12 @@ void test_zk() {
 	{
 		BinaryArray proof, vk_bytes;
 		std::array<uint8_t, 32> public_in{};
+		invariant(!Halo2ProofSystem::toy_prove(6, 7, nullptr, &vk_bytes, &public_in),
+		    "toy_prove accepted a null proof output");
+		invariant(!Halo2ProofSystem::toy_prove(6, 7, &proof, nullptr, &public_in),
+		    "toy_prove accepted a null verifying-key output");
+		invariant(!Halo2ProofSystem::toy_prove(6, 7, &proof, &vk_bytes, nullptr),
+		    "toy_prove accepted a null public-input output");
 		invariant(Halo2ProofSystem::toy_prove(6, 7, &proof, &vk_bytes, &public_in), "toy_prove failed");
 
 		VerifyingKey vk;

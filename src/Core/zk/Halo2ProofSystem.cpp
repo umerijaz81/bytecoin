@@ -765,18 +765,42 @@ bool Halo2ProofSystem::wallet_create_mixed_token_transfer(const BinaryArray &sna
 
 bool Halo2ProofSystem::toy_prove(
     uint64_t a, uint64_t b, BinaryArray *proof, BinaryArray *vk, std::array<uint8_t, 32> *public_out) {
+	if (proof == nullptr || vk == nullptr || public_out == nullptr)
+		return false;
+	proof->clear();
+	vk->clear();
+	public_out->fill(0);
 	uint8_t *proof_ptr = nullptr;
 	uint8_t *vk_ptr    = nullptr;
 	size_t proof_len   = 0;
 	size_t vk_len      = 0;
-	uint8_t public_buf[32];
-	if (onyx_toy_prove(a, b, &proof_ptr, &proof_len, &vk_ptr, &vk_len, public_buf) != 0)
+	std::array<uint8_t, 32> public_buf{};
+	if (onyx_toy_prove(a, b, &proof_ptr, &proof_len, &vk_ptr, &vk_len, public_buf.data()) != 0) {
+		onyx_free(proof_ptr, proof_len);
+		onyx_free(vk_ptr, vk_len);
 		return false;
-	proof->assign(proof_ptr, proof_ptr + proof_len);
-	vk->assign(vk_ptr, vk_ptr + vk_len);
-	std::copy(public_buf, public_buf + 32, public_out->begin());
+	}
+	if (proof_ptr == nullptr || proof_len == 0 || (vk_ptr == nullptr && vk_len != 0)) {
+		onyx_free(proof_ptr, proof_len);
+		onyx_free(vk_ptr, vk_len);
+		return false;
+	}
+	BinaryArray proof_result;
+	BinaryArray vk_result;
+	try {
+		proof_result.assign(proof_ptr, proof_ptr + proof_len);
+		if (vk_len != 0)
+			vk_result.assign(vk_ptr, vk_ptr + vk_len);
+	} catch (...) {
+		onyx_free(proof_ptr, proof_len);
+		onyx_free(vk_ptr, vk_len);
+		throw;
+	}
 	onyx_free(proof_ptr, proof_len);
 	onyx_free(vk_ptr, vk_len);
+	*proof      = std::move(proof_result);
+	*vk         = std::move(vk_result);
+	*public_out = public_buf;
 	return true;
 }
 
