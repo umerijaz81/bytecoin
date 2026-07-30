@@ -134,7 +134,9 @@ The enforced minimums are release policy, not claims about the current branch:
 - an incident drill requires at least two participants and consensus-stall, reorg, and proof-DoS
   scenarios;
 - governance must approve the exact revision plus compiler and target-profile SHA-256 digests, record
-  quorum, and contain at least two approvals.
+  quorum, contain at least two approvals, and bind the exact positive integer values of all four
+  canonical activation heights. The verifier compares that map with the activation commit's
+  `CryptoNoteConfig.hpp`; approval for one schedule cannot authorize another.
 
 Every independent-node, builder, drill-participant, and governance-approval count must be accompanied
 by an equally sized list of distinct normalized identities. Numeric counts alone cannot satisfy a

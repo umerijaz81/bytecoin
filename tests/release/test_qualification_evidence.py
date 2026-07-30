@@ -19,6 +19,12 @@ import qualification_evidence  # noqa: E402
 
 REVISION = "1" * 40
 DIGEST = "2" * 64
+ACTIVATION_HEIGHTS = {
+    "UPGRADE_HEIGHT_V5": 1_000_000,
+    "RANDOMX_SWITCH_HEIGHT": 1_000_100,
+    "UPGRADE_HEIGHT_RESERVED_V6": 1_000_200,
+    "UPGRADE_HEIGHT_ONYX": 1_000_300,
+}
 
 
 class QualificationEvidenceTest(unittest.TestCase):
@@ -343,6 +349,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "completed_at": "2026-07-17T00:00:00Z",
                 "compiler_digest": DIGEST,
                 "target_profile_digest": DIGEST,
+                "activation_heights": ACTIVATION_HEIGHTS,
                 "quorum_met": True,
                 "approvals": 2,
                 "approver_ids": ["alice", "bob"],
@@ -356,6 +363,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                     [evidence],
                     root,
                     governance_digests=(DIGEST, DIGEST),
+                    governance_activation_heights=ACTIVATION_HEIGHTS,
                 ),
             )
             errors = qualification_evidence.verify_gate(
@@ -363,6 +371,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 [evidence],
                 root,
                 governance_digests=("3" * 64, "4" * 64),
+                governance_activation_heights=ACTIVATION_HEIGHTS,
             )
             self.assertTrue(any("does not match frozen release revision" in error for error in errors))
             document["approved_revision"] = "3" * 40
@@ -381,6 +390,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "completed_at": "2026-07-17T00:00:00Z",
                 "compiler_digest": DIGEST,
                 "target_profile_digest": DIGEST,
+                "activation_heights": ACTIVATION_HEIGHTS,
                 "quorum_met": True,
                 "approvals": 2,
                 "approver_ids": ["Alice", "  alice  "],
@@ -391,6 +401,38 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "governance-approval", [evidence], root
             )
             self.assertTrue(any("distinct normalized identities" in error for error in errors), errors)
+
+    def test_governance_must_approve_exact_activation_heights(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = {
+                "schema_version": 1,
+                "gate_id": "governance-approval",
+                "revision": REVISION,
+                "approved_revision": REVISION,
+                "completed_at": "2026-07-17T00:00:00Z",
+                "compiler_digest": DIGEST,
+                "target_profile_digest": DIGEST,
+                "activation_heights": {
+                    **ACTIVATION_HEIGHTS,
+                    "UPGRADE_HEIGHT_ONYX": ACTIVATION_HEIGHTS["UPGRADE_HEIGHT_ONYX"] + 1,
+                },
+                "quorum_met": True,
+                "approvals": 2,
+                "approver_ids": ["alice", "bob"],
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "governance.json", document)
+            errors = qualification_evidence.verify_gate(
+                "governance-approval",
+                [evidence],
+                root,
+                governance_activation_heights=ACTIVATION_HEIGHTS,
+            )
+            self.assertTrue(
+                any("do not match activation configuration" in error for error in errors),
+                errors,
+            )
 
     def test_reproducibility_binds_each_builder_to_identical_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -443,6 +443,7 @@ def _governance(
     label: str,
     tracked_paths: set[str] | None,
     authoritative_digests: tuple[str, str] | None,
+    authoritative_activation_heights: dict[str, int] | None,
 ) -> list[str]:
     errors = _common(document, "governance-approval", label)
     if document.get("approved_revision") != document.get("revision"):
@@ -459,6 +460,24 @@ def _governance(
             errors.append(f"{label}: target_profile_digest does not match frozen release revision")
     if document.get("quorum_met") is not True:
         errors.append(f"{label}: quorum_met must be true")
+    activation_heights = document.get("activation_heights")
+    if (
+        not isinstance(activation_heights, dict)
+        or not activation_heights
+        or any(
+            not isinstance(name, str)
+            or not isinstance(height, int)
+            or isinstance(height, bool)
+            or height <= 0
+            for name, height in activation_heights.items()
+        )
+    ):
+        errors.append(f"{label}: activation_heights must contain positive integer heights")
+    elif (
+        authoritative_activation_heights is not None
+        and activation_heights != authoritative_activation_heights
+    ):
+        errors.append(f"{label}: activation_heights do not match activation configuration")
     _distinct_identities(
         document, "approvals", "approver_ids", 2, errors, label
     )
@@ -475,6 +494,7 @@ def verify_gate(
     governance_digests: tuple[str, str] | None = None,
     dependencies_lock_digest: str | None = None,
     revision_committed_at: datetime | None = None,
+    governance_activation_heights: dict[str, int] | None = None,
 ) -> list[str]:
     """Validate JSON attestations for one gate already marked passed."""
     if gate_id not in EXTERNAL_GATES:
@@ -544,6 +564,7 @@ def verify_gate(
                     label,
                     tracked_paths,
                     governance_digests,
+                    governance_activation_heights,
                 )
             )
     if gate_id == "independent-audits" and len(set(organizations)) < 2:

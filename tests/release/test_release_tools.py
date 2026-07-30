@@ -42,6 +42,16 @@ class ReleaseToolsTest(unittest.TestCase):
         errors, _ = verify_release_gates.verify(self.gates, changed)
         self.assertTrue(any("UPGRADE_HEIGHT_V5 changed" in error for error in errors), errors)
 
+    def test_placeholder_manifest_requires_exact_activation_height_set(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        del gates["placeholder_heights"]["UPGRADE_HEIGHT_ONYX"]
+        gates["placeholder_heights"]["UNREVIEWED_HEIGHT"] = 42
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(
+            any("placeholder_heights must contain exactly" in error for error in errors),
+            errors,
+        )
+
     def test_required_gate_cannot_opt_out_of_activation(self) -> None:
         gates = copy.deepcopy(self.gates)
         audit = next(gate for gate in gates["gates"] if gate["id"] == "independent-audits")

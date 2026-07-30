@@ -24,6 +24,12 @@ REQUIRED_GATES = {
 }
 ALLOWED_STATUS = {"pending", "implemented", "passed"}
 STANDARD_PROGRAMS = ("nft", "vesting", "multisig", "swap")
+REQUIRED_ACTIVATION_HEIGHTS = {
+    "UPGRADE_HEIGHT_V5",
+    "RANDOMX_SWITCH_HEIGHT",
+    "UPGRADE_HEIGHT_RESERVED_V6",
+    "UPGRADE_HEIGHT_ONYX",
+}
 
 
 def frozen_revision_is_ancestor(revision: str) -> bool:
@@ -168,6 +174,21 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     for gate_id in REQUIRED_GATES & by_id.keys():
         if by_id[gate_id].get("required_for_activation") is not True:
             errors.append(f"{gate_id}: required_for_activation must be true")
+    placeholders = gates_document.get("placeholder_heights")
+    if not isinstance(placeholders, dict) or set(placeholders) != REQUIRED_ACTIVATION_HEIGHTS:
+        errors.append(
+            f"placeholder_heights must contain exactly {sorted(REQUIRED_ACTIVATION_HEIGHTS)}"
+        )
+        placeholders = {}
+    current: dict[str, int] = {}
+    for name, expected in placeholders.items():
+        match = re.search(rf"\b{name}\s*=\s*(\d+)\s*;", config)
+        if not match:
+            errors.append(f"activation constant not found: {name}")
+            continue
+        current[name] = int(match.group(1))
+        if not isinstance(expected, int) or isinstance(expected, bool) or expected <= 0:
+            errors.append(f"invalid placeholder height for {name}")
     passed_external = [
         gate_id
         for gate_id, gate in by_id.items()
@@ -266,6 +287,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                     governance_digests,
                     dependencies_lock_digest,
                     revision_committed_at,
+                    current,
                 )
             )
     audit_gate = by_id.get("independent-audits", {})
@@ -273,17 +295,6 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         audit_gate.get("minimum_independent_reports", 2)
     ):
         errors.append("independent-audits: passed status requires two distinct report paths")
-
-    placeholders = gates_document.get("placeholder_heights", {})
-    current: dict[str, int] = {}
-    for name, expected in placeholders.items():
-        match = re.search(rf"\b{name}\s*=\s*(\d+)\s*;", config)
-        if not match:
-            errors.append(f"activation constant not found: {name}")
-            continue
-        current[name] = int(match.group(1))
-        if not isinstance(expected, int) or expected <= 0:
-            errors.append(f"invalid placeholder height for {name}")
 
     incomplete = [
         gate_id
