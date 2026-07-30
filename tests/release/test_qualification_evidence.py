@@ -121,6 +121,21 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "checksums": "SHA256SUMS",
             }.items()
         }
+        builders = [
+            {
+                "builder_id": builder_id,
+                "environment_sha256": environment,
+                "revision": REVISION,
+                "source_archive_sha256": artifacts["source_archive"]["sha256"],
+                "spdx_sbom_sha256": artifacts["spdx_sbom"]["sha256"],
+                "archive_tool": "bytecoin create_source_archive.py v1",
+                "sbom_tool": "bytecoin generate_spdx.py v1",
+            }
+            for builder_id, environment in (
+                ("builder-a", "3" * 64),
+                ("builder-b", "4" * 64),
+            )
+        ]
         return {
             "schema_version": 1,
             "gate_id": "source-provenance",
@@ -128,6 +143,7 @@ class QualificationEvidenceTest(unittest.TestCase):
             "completed_at": "2026-07-17T00:00:00Z",
             "independent_builders": 2,
             "builder_ids": ["builder-a", "builder-b"],
+            "builders": builders,
             "source_archive_identical": True,
             "spdx_sbom_identical": True,
             "dependencies_lock_sha256": DIGEST,
@@ -149,10 +165,18 @@ class QualificationEvidenceTest(unittest.TestCase):
                     root,
                     tracked_paths=tracked,
                     dependencies_lock_digest=DIGEST,
+                    authoritative_source_digests=(
+                        document["artifacts"]["source_archive"]["sha256"],
+                        document["artifacts"]["spdx_sbom"]["sha256"],
+                    ),
                 ),
             )
 
             document["builder_ids"] = ["same builder", " Same  Builder "]
+            document["builders"][1]["environment_sha256"] = document["builders"][0][
+                "environment_sha256"
+            ]
+            document["builders"][1]["source_archive_sha256"] = "4" * 64
             document["artifacts"]["checksums"] = document["artifacts"]["provenance"]
             document["dependencies_lock_sha256"] = "3" * 64
             evidence = self.write_document(root, "source-evidence.json", document)
@@ -164,6 +188,8 @@ class QualificationEvidenceTest(unittest.TestCase):
                 dependencies_lock_digest=DIGEST,
             )
             self.assertTrue(any("distinct normalized identities" in error for error in errors), errors)
+            self.assertTrue(any("distinct environment identities" in error for error in errors), errors)
+            self.assertTrue(any("source archive hash must match" in error for error in errors), errors)
             self.assertTrue(any("artifact paths must be distinct" in error for error in errors), errors)
             self.assertTrue(
                 any("does not match frozen release revision" in error for error in errors), errors

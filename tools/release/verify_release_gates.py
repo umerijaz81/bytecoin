@@ -8,9 +8,21 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
-from release_common import ROOT, revision_file, revision_file_sha256, source_date_epoch, tracked_files
+from create_source_archive import create as create_source_archive
+from generate_spdx import generate as generate_spdx
+from release_common import (
+    ROOT,
+    canonical_json_bytes,
+    revision_file,
+    revision_file_sha256,
+    sha256_file,
+    source_date_epoch,
+    tracked_files,
+)
 from qualification_evidence import _repository_file, verify_gate
 
 
@@ -156,6 +168,18 @@ def governance_digests_at_revision(revision: str) -> tuple[str, str]:
     return compiler_digest, next(iter(target_digests))
 
 
+def source_digests_at_revision(revision: str) -> tuple[str, str]:
+    epoch = source_date_epoch(revision)
+    with tempfile.TemporaryDirectory(prefix="bytecoin-gate-source-") as temporary:
+        archive = Path(temporary) / f"bytecoin-{revision[:12]}-source.tar.gz"
+        create_source_archive(archive, revision, epoch)
+        archive_digest = sha256_file(archive)
+    sbom_digest = hashlib.sha256(
+        canonical_json_bytes(generate_spdx(revision, epoch))
+    ).hexdigest()
+    return archive_digest, sbom_digest
+
+
 def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     tracked = set(tracked_files())
@@ -216,6 +240,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     governance_digests = None
     dependencies_lock_digest = None
     revision_committed_at = None
+    authoritative_source_digests = None
     if (
         passed_external
         and isinstance(release_revision, str)
@@ -250,6 +275,22 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                 )
         except (OSError, UnicodeError, ValueError, subprocess.CalledProcessError) as error:
             errors.append(f"cannot validate post-freeze activation configuration: {error}")
+    if (
+        by_id.get("source-provenance", {}).get("status") == "passed"
+        and isinstance(release_revision, str)
+        and re.fullmatch(r"[0-9a-f]{40}", release_revision)
+        and frozen_revision_is_ancestor(release_revision)
+    ):
+        try:
+            authoritative_source_digests = source_digests_at_revision(release_revision)
+        except (
+            OSError,
+            UnicodeError,
+            ValueError,
+            json.JSONDecodeError,
+            subprocess.CalledProcessError,
+        ) as error:
+            errors.append(f"cannot regenerate frozen source evidence: {error}")
     if (
         by_id.get("governance-approval", {}).get("status") == "passed"
         and isinstance(release_revision, str)
@@ -288,6 +329,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                     dependencies_lock_digest,
                     revision_committed_at,
                     current,
+                    authoritative_source_digests,
                 )
             )
     audit_gate = by_id.get("independent-audits", {})

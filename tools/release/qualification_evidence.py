@@ -150,9 +150,10 @@ def _source_provenance(
     label: str,
     tracked_paths: set[str] | None,
     dependencies_lock_digest: str | None,
+    authoritative_source_digests: tuple[str, str] | None,
 ) -> list[str]:
     errors = _common(document, "source-provenance", label)
-    _distinct_identities(
+    builder_ids = _distinct_identities(
         document, "independent_builders", "builder_ids", 2, errors, label
     )
     if document.get("source_archive_identical") is not True:
@@ -187,7 +188,58 @@ def _source_provenance(
         return errors
     if len(paths) != len(set(paths)):
         errors.append(f"{label}: artifact paths must be distinct")
-        return errors
+    if authoritative_source_digests is not None:
+        archive_digest, sbom_digest = authoritative_source_digests
+        if artifacts["source_archive"]["sha256"] != archive_digest:
+            errors.append(f"{label}: source archive does not match frozen Git tree")
+        if artifacts["spdx_sbom"]["sha256"] != sbom_digest:
+            errors.append(f"{label}: SPDX SBOM does not match frozen Git tree")
+
+    builders = document.get("builders")
+    builder_records: list[str] = []
+    environment_digests: list[str] = []
+    if not isinstance(builders, list):
+        errors.append(f"{label}: builders must bind each independent generation")
+    else:
+        for builder in builders:
+            if not isinstance(builder, dict):
+                errors.append(f"{label}: invalid source builder")
+                continue
+            builder_id = builder.get("builder_id")
+            if not isinstance(builder_id, str) or not builder_id.strip():
+                errors.append(f"{label}: source builder_id is invalid")
+            else:
+                builder_records.append(" ".join(builder_id.split()).casefold())
+            environment_digest = builder.get("environment_sha256")
+            if not isinstance(environment_digest, str) or not HEX_32.fullmatch(
+                environment_digest
+            ):
+                errors.append(f"{label}: builder environment_sha256 must be lowercase SHA-256")
+            else:
+                environment_digests.append(environment_digest)
+            if builder.get("revision") != document.get("revision"):
+                errors.append(f"{label}: every source builder must use the attested revision")
+            if builder.get("source_archive_sha256") != artifacts["source_archive"]["sha256"]:
+                errors.append(f"{label}: every builder source archive hash must match")
+            if builder.get("spdx_sbom_sha256") != artifacts["spdx_sbom"]["sha256"]:
+                errors.append(f"{label}: every builder SPDX SBOM hash must match")
+            for key in ("archive_tool", "sbom_tool"):
+                value = builder.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"{label}: source builder {key} identity is required")
+    if (
+        builder_ids is None
+        or len(builder_records) != len(builder_ids)
+        or set(builder_records) != set(builder_ids)
+    ):
+        errors.append(f"{label}: builders must cover every source builder exactly once")
+    expected_environments = len(builders) if isinstance(builders, list) else 0
+    if (
+        expected_environments < 2
+        or len(environment_digests) != expected_environments
+        or len(set(environment_digests)) != expected_environments
+    ):
+        errors.append(f"{label}: source builders must use distinct environment identities")
 
     resolved = {
         name: _repository_file(root, artifacts[name].get("path"))
@@ -769,6 +821,7 @@ def verify_gate(
     dependencies_lock_digest: str | None = None,
     revision_committed_at: datetime | None = None,
     governance_activation_heights: dict[str, int] | None = None,
+    authoritative_source_digests: tuple[str, str] | None = None,
 ) -> list[str]:
     """Validate JSON attestations for one gate already marked passed."""
     if gate_id not in EXTERNAL_GATES:
@@ -825,6 +878,7 @@ def verify_gate(
                     label,
                     tracked_paths,
                     dependencies_lock_digest,
+                    authoritative_source_digests,
                 )
             )
         elif gate_id == "independent-audits":

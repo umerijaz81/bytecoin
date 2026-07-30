@@ -119,10 +119,12 @@ the activation decision.
 The enforced minimums are release policy, not claims about the current branch:
 
 - source provenance requires a committed typed attestation from two distinct independent builders,
-  byte-identical source archives and SPDX SBOMs, the frozen revision's dependency-lock digest, and
-  distinct digest-bound source archive, SBOM, provenance, and checksum artifacts. The verifier also
-  cross-checks canonical filenames, the provenance schema/revision/materials/reproduction result, the
-  SPDX root package revision, and every canonical `SHA256SUMS` entry;
+  in distinct digest-bound environments, each naming its archive/SBOM tools and binding the exact
+  frozen revision plus byte-identical source archive and SPDX SBOM hashes. The verifier independently
+  regenerates both outputs from the frozen Git tree and commit epoch before accepting those hashes.
+  Evidence also binds the frozen dependency lock and distinct source archive, SBOM, provenance, and
+  checksum artifacts. The verifier cross-checks canonical filenames, provenance
+  schema/revision/materials/reproduction, the SPDX root package, and every `SHA256SUMS` entry;
 - independent audits require two attestations from distinct normalized organization identities, each
   started after the frozen revision exists, binding its report, affirming independence, recording a
   non-empty methodology, verifying remediation, and declaring typed non-negative finding counts with
