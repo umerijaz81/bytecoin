@@ -29,6 +29,9 @@ python3 tools/release/build_release_evidence.py --output-dir dist --revision HEA
 
 `--allow-dirty` exists only to test the generator while developing it. Provenance records the dirty
 state, and the GitHub workflow never enables that option. A dirty artifact is not releasable.
+The requested release revision must resolve to the checked-out `HEAD`; this prevents dependency
+verification against the current index from being combined with source evidence for a different
+historical tree.
 
 ## CI trust boundary
 

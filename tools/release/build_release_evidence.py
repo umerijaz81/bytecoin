@@ -27,6 +27,17 @@ def dirty_worktree() -> bool:
     return bool(git("status", "--porcelain", "--untracked-files=no").strip())
 
 
+def resolve_checked_out_revision(specification: str) -> str:
+    revision = git("rev-parse", f"{specification}^{{commit}}").strip()
+    head = git("rev-parse", "HEAD^{commit}").strip()
+    if revision != head:
+        raise ValueError(
+            "release revision must equal the checked-out HEAD so dependency verification, "
+            "source evidence, and provenance describe one tree"
+        )
+    return revision
+
+
 def build_once(directory: pathlib.Path, revision: str, epoch: int) -> tuple[pathlib.Path, pathlib.Path]:
     short = revision[:12]
     archive = directory / f"bytecoin-{short}-source.tar.gz"
@@ -50,7 +61,10 @@ def main() -> int:
     if dirty and not args.allow_dirty:
         raise SystemExit("tracked worktree is dirty; commit the exact release source or use --allow-dirty for development")
 
-    revision = git("rev-parse", f"{args.revision}^{{commit}}").strip()
+    try:
+        revision = resolve_checked_out_revision(args.revision)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     epoch = source_date_epoch(revision)
     output = args.output_dir.resolve()
     if output == ROOT:

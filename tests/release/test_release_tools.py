@@ -8,11 +8,13 @@ import pathlib
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 
+import build_release_evidence  # noqa: E402
 import generate_spdx  # noqa: E402
 import verify_dependencies  # noqa: E402
 import verify_release_gates  # noqa: E402
@@ -68,6 +70,27 @@ class ReleaseToolsTest(unittest.TestCase):
 
     def test_cargo_vendor_is_complete_and_checksum_exact(self) -> None:
         self.assertEqual([], verify_dependencies.verify_cargo_vendor("vendor/onyx-zk"))
+
+    def test_release_revision_must_equal_checked_out_head(self) -> None:
+        def fake_git(*arguments: str, text: bool = True) -> str:
+            del text
+            if arguments == ("rev-parse", "candidate^{commit}"):
+                return "1" * 40 + "\n"
+            if arguments == ("rev-parse", "HEAD^{commit}"):
+                return "2" * 40 + "\n"
+            raise AssertionError(arguments)
+
+        with mock.patch.object(build_release_evidence, "git", side_effect=fake_git):
+            with self.assertRaisesRegex(ValueError, "must equal the checked-out HEAD"):
+                build_release_evidence.resolve_checked_out_revision("candidate")
+
+        with mock.patch.object(
+            build_release_evidence, "git", return_value="3" * 40 + "\n"
+        ):
+            self.assertEqual(
+                "3" * 40,
+                build_release_evidence.resolve_checked_out_revision("HEAD"),
+            )
 
 
 if __name__ == "__main__":
