@@ -186,6 +186,49 @@ class QualificationEvidenceTest(unittest.TestCase):
             )
             self.assertTrue(any("distinct normalized identities" in error for error in errors), errors)
 
+    def test_reproducibility_binds_each_builder_to_identical_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            platforms = []
+            for name in sorted(qualification_evidence.REQUIRED_PLATFORMS):
+                platforms.append(
+                    {
+                        "name": name,
+                        "independent_builders": 2,
+                        "builder_ids": [f"{name}-a", f"{name}-b"],
+                        "hashes_match": True,
+                        "normalized_sha256": DIGEST,
+                        "builds": [
+                            {"builder_id": f"{name}-a", "sha256": DIGEST},
+                            {"builder_id": f"{name}-b", "sha256": DIGEST},
+                        ],
+                    }
+                )
+            document = {
+                "schema_version": 1,
+                "gate_id": "reproducible-platform-binaries",
+                "revision": REVISION,
+                "completed_at": "2026-07-17T00:00:00Z",
+                "platforms": platforms,
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "reproducibility.json", document)
+            self.assertEqual(
+                [],
+                qualification_evidence.verify_gate(
+                    "reproducible-platform-binaries", [evidence], root
+                ),
+            )
+            platforms[0]["builds"][1]["sha256"] = "3" * 64
+            evidence = self.write_document(root, "reproducibility.json", document)
+            errors = qualification_evidence.verify_gate(
+                "reproducible-platform-binaries", [evidence], root
+            )
+            self.assertTrue(
+                any("every builder hash must equal normalized_sha256" in error for error in errors),
+                errors,
+            )
+
     def test_attestation_and_artifact_paths_cannot_escape_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = pathlib.Path(temporary)

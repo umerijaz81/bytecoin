@@ -107,7 +107,8 @@ The enforced minimums are release policy, not claims about the current branch:
   and recorded reorg, malformed-bundle, and denial-of-service scenarios at a credential-free public
   HTTPS endpoint with a valid host and optional valid port;
 - binary reproducibility requires Linux x86-64, macOS ARM64, and Windows x86-64, with two independent
-  builders and byte-identical normalized hashes for each platform;
+  builders and byte-identical normalized hashes for each platform; each platform must appear exactly
+  once, and every named builder must bind its own SHA-256 to that platform's normalized SHA-256;
 - an incident drill requires at least two participants and consensus-stall, reorg, and proof-DoS
   scenarios;
 - governance must approve the exact revision plus compiler and target-profile SHA-256 digests, record

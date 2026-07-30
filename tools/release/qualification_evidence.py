@@ -56,12 +56,12 @@ def _distinct_identities(
     minimum: int,
     errors: list[str],
     label: str,
-) -> None:
+) -> list[str] | None:
     count = _integer(document, count_key, minimum, errors, label)
     identities = document.get(identities_key)
     if not isinstance(identities, list):
         errors.append(f"{label}: {identities_key} must be an array of distinct identities")
-        return
+        return None
     normalized = []
     for identity in identities:
         if not isinstance(identity, str) or not identity.strip():
@@ -72,6 +72,8 @@ def _distinct_identities(
         errors.append(
             f"{label}: {identities_key} must contain exactly {count} distinct normalized identities"
         )
+        return None
+    return normalized
 
 
 def _utc(value: object, key: str, errors: list[str], label: str) -> datetime | None:
@@ -186,15 +188,18 @@ def _reproducibility(
     if not isinstance(platforms, list):
         errors.append(f"{label}: platforms must be an array")
     else:
-        names = {item.get("name") for item in platforms if isinstance(item, dict)}
-        if not REQUIRED_PLATFORMS.issubset(names):
-            errors.append(f"{label}: missing required platforms {sorted(REQUIRED_PLATFORMS - names)}")
+        listed_names = [item.get("name") for item in platforms if isinstance(item, dict)]
+        names = set(listed_names)
+        if names != REQUIRED_PLATFORMS or len(listed_names) != len(REQUIRED_PLATFORMS):
+            errors.append(
+                f"{label}: platforms must contain each required platform exactly once"
+            )
         for item in platforms:
             if not isinstance(item, dict):
                 errors.append(f"{label}: invalid platform entry")
                 continue
             name = item.get("name", "unknown")
-            _distinct_identities(
+            builder_ids = _distinct_identities(
                 item,
                 "independent_builders",
                 "builder_ids",
@@ -204,6 +209,41 @@ def _reproducibility(
             )
             if item.get("hashes_match") is not True:
                 errors.append(f"{label}:{name}: hashes_match must be true")
+            normalized_sha256 = item.get("normalized_sha256")
+            if not isinstance(normalized_sha256, str) or not HEX_32.fullmatch(normalized_sha256):
+                errors.append(f"{label}:{name}: normalized_sha256 must be lowercase SHA-256")
+            builds = item.get("builds")
+            if not isinstance(builds, list):
+                errors.append(f"{label}:{name}: builds must bind each builder identity and hash")
+                continue
+            build_ids: list[str] = []
+            build_hashes: list[str] = []
+            for build in builds:
+                if not isinstance(build, dict):
+                    errors.append(f"{label}:{name}: invalid build entry")
+                    continue
+                builder_id = build.get("builder_id")
+                digest = build.get("sha256")
+                if not isinstance(builder_id, str) or not builder_id.strip():
+                    errors.append(f"{label}:{name}: build builder_id is invalid")
+                else:
+                    build_ids.append(" ".join(builder_id.split()).casefold())
+                if not isinstance(digest, str) or not HEX_32.fullmatch(digest):
+                    errors.append(f"{label}:{name}: build sha256 must be lowercase SHA-256")
+                else:
+                    build_hashes.append(digest)
+            if (
+                builder_ids is None
+                or len(build_ids) != len(builder_ids)
+                or set(build_ids) != set(builder_ids)
+            ):
+                errors.append(f"{label}:{name}: builds must cover every declared builder exactly once")
+            if (
+                not isinstance(normalized_sha256, str)
+                or len(build_hashes) != len(builds)
+                or any(digest != normalized_sha256 for digest in build_hashes)
+            ):
+                errors.append(f"{label}:{name}: every builder hash must equal normalized_sha256")
     _artifact(document, root, errors, label, tracked_paths)
     return errors
 
