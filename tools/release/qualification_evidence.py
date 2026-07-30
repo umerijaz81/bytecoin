@@ -46,10 +46,17 @@ def _repository_file(root: pathlib.Path, relative: object) -> pathlib.Path | Non
     ):
         return None
     root = root.resolve()
-    path = (root / relative).resolve()
+    candidate = root
+    for part in pathlib.PurePosixPath(relative).parts:
+        candidate /= part
+        if candidate.is_symlink():
+            return None
+    path = candidate.resolve()
     try:
         path.relative_to(root)
     except ValueError:
+        return None
+    if path != candidate.absolute():
         return None
     return path if path.is_file() else None
 

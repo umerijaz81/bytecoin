@@ -130,6 +130,8 @@ so non-finite values cannot bypass thresholds or enter canonical release evidenc
 Release JSON is limited to 16 MiB of UTF-8 and 64 nested object/array containers before decoding.
 These uniform limits cover attestations, provenance, SPDX, activation and dependency evidence and
 prevent repository-controlled evidence from relying on host memory or recursion exhaustion.
+Evidence and bound artifacts must be regular files reached without symlinks or other path aliases at
+any component. The verifier hashes and parses the bytes at the exact Git-tracked path it authorizes.
 
 The enforced minimums are release policy, not claims about the current branch:
 

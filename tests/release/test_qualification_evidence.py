@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -28,6 +29,34 @@ ACTIVATION_HEIGHTS = {
 
 
 class QualificationEvidenceTest(unittest.TestCase):
+    def test_repository_evidence_rejects_symlink_components(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            evidence = root / "release" / "evidence" / "audit.json"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("{}", encoding="utf-8")
+            self.assertEqual(
+                evidence.resolve(),
+                qualification_evidence._repository_file(
+                    root,
+                    "release/evidence/audit.json",
+                ),
+            )
+            original = pathlib.Path.is_symlink
+
+            def mark_evidence_directory(path: pathlib.Path) -> bool:
+                if path == root / "release" / "evidence":
+                    return True
+                return original(path)
+
+            with mock.patch.object(pathlib.Path, "is_symlink", mark_evidence_directory):
+                self.assertIsNone(
+                    qualification_evidence._repository_file(
+                        root,
+                        "release/evidence/audit.json",
+                    )
+                )
+
     def write_artifact(self, root: pathlib.Path, name: str = "report.txt") -> dict:
         path = root / name
         path.write_text("independent evidence\n", encoding="utf-8")
