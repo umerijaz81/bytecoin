@@ -814,16 +814,24 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         }
         let mut anchors = Vec::with_capacity(anchor_count);
         let mut previous_height = 0;
+        let mut previous_root = None;
         for index in 0..anchor_count {
             let root = reader.field()?;
             let height = reader.varint()?;
-            if height > current_height || (index != 0 && height < previous_height) {
+            if height > current_height
+                || (index != 0 && height < previous_height)
+                || previous_root == Some(root)
+            {
                 return Err(SnapshotError::InvalidAnchorHistory);
             }
             previous_height = height;
+            previous_root = Some(root);
             anchors.push(Anchor { root, height });
         }
-        if anchors.last().map(|anchor| anchor.root) != Some(tree.root()) {
+        if anchors
+            .last()
+            .is_none_or(|anchor| anchor.root != tree.root() || anchor.height != current_height)
+        {
             return Err(SnapshotError::InvalidAnchorHistory);
         }
         let oldest_height = current_height.saturating_sub(anchor_window_blocks - 1);
@@ -1186,6 +1194,29 @@ mod tests {
         assert_eq!(state.root(), initial);
         assert_eq!(state.leaf_count(), 0);
         assert!(!state.is_spent(&Nullifier([1; 32])));
+    }
+
+    #[test]
+    fn snapshot_rejects_unreachable_anchor_histories() {
+        let mut state = ShieldedState::<4>::new(8);
+        let tx = transaction(state.root(), 1, 30);
+        state.apply_transaction(&tx, 5).unwrap();
+        let canonical = state.encode_snapshot();
+        assert!(ShieldedState::<4>::decode_snapshot(&canonical).is_ok());
+
+        let final_anchor = *state.anchors.last().unwrap();
+        state.anchors.push(final_anchor);
+        assert_eq!(
+            ShieldedState::<4>::decode_snapshot(&state.encode_snapshot()).err(),
+            Some(SnapshotError::InvalidAnchorHistory)
+        );
+
+        state.anchors.pop();
+        state.anchors.last_mut().unwrap().height -= 1;
+        assert_eq!(
+            ShieldedState::<4>::decode_snapshot(&state.encode_snapshot()).err(),
+            Some(SnapshotError::InvalidAnchorHistory)
+        );
     }
 
     #[test]
