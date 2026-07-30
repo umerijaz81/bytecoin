@@ -112,6 +112,10 @@ The enforced minimums are release policy, not claims about the current branch:
 - governance must approve the exact revision plus compiler and target-profile SHA-256 digests, record
   quorum, and contain at least two approvals.
 
+Every independent-node, builder, drill-participant, and governance-approval count must be accompanied
+by an equally sized list of distinct normalized identities. Numeric counts alone cannot satisfy a
+gate.
+
 JSON alone is not treated as an audit, soak, drill, build, or governance record. Its `artifact` object
 must name the committed primary record and its digest. Reviewers should additionally verify any
 detached signatures or public transparency-log entries used by the participating organizations; those

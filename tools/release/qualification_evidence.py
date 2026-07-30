@@ -49,6 +49,31 @@ def _integer(document: dict, key: str, minimum: int, errors: list[str], label: s
     return value
 
 
+def _distinct_identities(
+    document: dict,
+    count_key: str,
+    identities_key: str,
+    minimum: int,
+    errors: list[str],
+    label: str,
+) -> None:
+    count = _integer(document, count_key, minimum, errors, label)
+    identities = document.get(identities_key)
+    if not isinstance(identities, list):
+        errors.append(f"{label}: {identities_key} must be an array of distinct identities")
+        return
+    normalized = []
+    for identity in identities:
+        if not isinstance(identity, str) or not identity.strip():
+            errors.append(f"{label}: {identities_key} contains an invalid identity")
+            continue
+        normalized.append(" ".join(identity.split()).casefold())
+    if len(normalized) != count or len(set(normalized)) != count:
+        errors.append(
+            f"{label}: {identities_key} must contain exactly {count} distinct normalized identities"
+        )
+
+
 def _utc(value: object, key: str, errors: list[str], label: str) -> datetime | None:
     if not isinstance(value, str) or not value.endswith("Z"):
         errors.append(f"{label}: {key} must be an ISO-8601 UTC timestamp")
@@ -139,8 +164,10 @@ def _testnet(
             endpoint_valid = False
     if not endpoint_valid:
         errors.append(f"{label}: public_endpoint must be HTTPS")
+    _distinct_identities(
+        document, "independent_nodes", "node_ids", 3, errors, label
+    )
     for key, minimum in {
-        "independent_nodes": 3,
         "observed_blocks": 10_000,
         "reorg_scenarios": 1,
         "malformed_bundle_cases": 1,
@@ -167,7 +194,14 @@ def _reproducibility(
                 errors.append(f"{label}: invalid platform entry")
                 continue
             name = item.get("name", "unknown")
-            _integer(item, "independent_builders", 2, errors, f"{label}:{name}")
+            _distinct_identities(
+                item,
+                "independent_builders",
+                "builder_ids",
+                2,
+                errors,
+                f"{label}:{name}",
+            )
             if item.get("hashes_match") is not True:
                 errors.append(f"{label}:{name}: hashes_match must be true")
     _artifact(document, root, errors, label, tracked_paths)
@@ -178,7 +212,9 @@ def _incident(
     document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
 ) -> list[str]:
     errors = _common(document, "incident-response-drill", label)
-    _integer(document, "participants", 2, errors, label)
+    _distinct_identities(
+        document, "participants", "participant_ids", 2, errors, label
+    )
     scenarios = document.get("scenarios")
     required = {"consensus-stall", "reorg", "proof-dos"}
     if not isinstance(scenarios, list) or not required.issubset(set(scenarios)):
@@ -199,7 +235,9 @@ def _governance(
             errors.append(f"{label}: {key} must be lowercase SHA-256")
     if document.get("quorum_met") is not True:
         errors.append(f"{label}: quorum_met must be true")
-    _integer(document, "approvals", 2, errors, label)
+    _distinct_identities(
+        document, "approvals", "approver_ids", 2, errors, label
+    )
     _artifact(document, root, errors, label, tracked_paths)
     return errors
 

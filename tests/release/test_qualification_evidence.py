@@ -93,6 +93,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "completed_at": "2026-07-02T00:00:00Z",
                 "public_endpoint": "https://testnet.example",
                 "independent_nodes": 3,
+                "node_ids": ["node-a", "node-b", "node-c"],
                 "observed_blocks": 10_000,
                 "reorg_scenarios": 1,
                 "malformed_bundle_cases": 1,
@@ -114,6 +115,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "completed_at": "2026-07-15T00:00:00Z",
                 "public_endpoint": "https://user:secret@example.test",
                 "independent_nodes": 3,
+                "node_ids": ["node-a", "node-b", "node-c"],
                 "observed_blocks": 10_000,
                 "reorg_scenarios": 1,
                 "malformed_bundle_cases": 1,
@@ -137,6 +139,7 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "target_profile_digest": DIGEST,
                 "quorum_met": True,
                 "approvals": 2,
+                "approver_ids": ["alice", "bob"],
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)
@@ -147,6 +150,28 @@ class QualificationEvidenceTest(unittest.TestCase):
             evidence = self.write_document(root, "governance.json", document)
             errors = qualification_evidence.verify_gate("governance-approval", [evidence], root)
             self.assertTrue(any("approved_revision" in error for error in errors), errors)
+
+    def test_governance_rejects_duplicate_normalized_approvers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = {
+                "schema_version": 1,
+                "gate_id": "governance-approval",
+                "revision": REVISION,
+                "approved_revision": REVISION,
+                "completed_at": "2026-07-17T00:00:00Z",
+                "compiler_digest": DIGEST,
+                "target_profile_digest": DIGEST,
+                "quorum_met": True,
+                "approvals": 2,
+                "approver_ids": ["Alice", "  alice  "],
+                "artifact": self.write_artifact(root),
+            }
+            evidence = self.write_document(root, "governance.json", document)
+            errors = qualification_evidence.verify_gate(
+                "governance-approval", [evidence], root
+            )
+            self.assertTrue(any("distinct normalized identities" in error for error in errors), errors)
 
     def test_attestation_and_artifact_paths_cannot_escape_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
