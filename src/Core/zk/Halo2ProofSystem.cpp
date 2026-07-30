@@ -23,6 +23,14 @@ class OnyxBuffer {
 		return BinaryArray(data, data + size);
 	}
 
+	bool valid_nonempty(size_t maximum) const {
+		return data != nullptr && size != 0 && size <= maximum;
+	}
+
+	bool valid_optional(size_t maximum) const {
+		return size <= maximum && (size == 0 || data != nullptr);
+	}
+
 	uint8_t *data = nullptr;
 	size_t size   = 0;
 };
@@ -106,7 +114,7 @@ bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64
 	const int rc      = onyx_verify_apply_transfer(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(),
 	    anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, circuit_k, expected_network.data(),
 	    block_height, &next.data, &next.size, &next_fee);
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -177,7 +185,7 @@ bool Halo2ProofSystem::verify_apply_program_deployment(const BinaryArray &snapsh
 	const int rc = onyx_verify_apply_program_deployment(snapshot.empty() ? nullptr : snapshot.data(),
 	    snapshot.size(), anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, circuit_k,
 	    expected_network.data(), block_height, &next.data, &next.size, &next_fee, next_program.data());
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -229,7 +237,7 @@ bool Halo2ProofSystem::verify_apply_token_issuance(const BinaryArray &snapshot, 
 	const int rc = onyx_verify_apply_token_issuance(snapshot.data(), snapshot.size(), encoded.data(),
 	    encoded.size(), merkle_depth, circuit_k, expected_network.data(), block_height, &next.data, &next.size,
 	    result.program_id.data(), &result.sequence, &result.issued_amount);
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -264,7 +272,7 @@ bool Halo2ProofSystem::verify_apply_standard_program_transaction(const BinaryArr
 	    encoded.data(), encoded.size(), merkle_depth, circuit_k, expected_network.data(), block_height,
 	    &next.data, &next.size, result.network.data(), result.anchor.data(), &result.expiry_height,
 	    nullifiers.data(), 2, &nullifier_count, commitments.data(), 2, &commitment_count);
-	if (rc != 1 || next.data == nullptr || next.size == 0 ||
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES) ||
 	    nullifier_count > 2 || commitment_count > 2) {
 		next_snapshot->clear();
 		return false;
@@ -344,7 +352,7 @@ bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t
 	    &next.data, &next.size, &result.legacy_amount, &result.legacy_stack_index,
 	    result.legacy_key_image.data(), result.ownership_sighash.data(), result.ownership_signature.data(),
 	    &result.fee);
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -443,7 +451,7 @@ bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array
 	    network.data(), envelope_type, block_height, circuit_k,
 	    encoded.data(), encoded.size(), &next.data, &next.size, &scanned.balance,
 	    &scanned.note_count, scanned.root.data());
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -473,7 +481,7 @@ bool Halo2ProofSystem::wallet_scan_viewing(const BinaryArray &snapshot, const Bi
 	    viewing_key.data(), viewing_key.size(), envelope_type, block_height, circuit_k,
 	    encoded.data(), encoded.size(), &next.data,
 	    &next.size, &scanned.balance, &scanned.note_count, scanned.root.data());
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -525,7 +533,8 @@ bool Halo2ProofSystem::wallet_token_program_status(const BinaryArray &snapshot,
 	    query_height, status.issuer.data(), &status.max_supply, &status.issued_supply,
 	    &status.next_sequence, &status.activation_height, &status.deactivation_height, &active,
 	    &metadata.data, &metadata.size);
-	if (rc != 1 || (metadata.size != 0 && metadata.data == nullptr))
+	if (rc != 1 || !metadata.valid_optional(ONYX_ZK_MAX_TOKEN_METADATA_BYTES) ||
+	    (active != 0 && active != 1))
 		return false;
 	status.metadata = metadata.copy();
 	status.active = active != 0;
@@ -545,7 +554,7 @@ bool Halo2ProofSystem::wallet_reserve_spends(const BinaryArray &snapshot,
 	OnyxBuffer next;
 	const int rc = onyx_wallet_reserve_spends(snapshot.data(), snapshot.size(), seed.data(), network.data(),
 	    encoded.data(), encoded.size(), &next.data, &next.size);
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -566,7 +575,7 @@ bool Halo2ProofSystem::wallet_reserve_deployment_spends(const BinaryArray &snaps
 	OnyxBuffer next;
 	const int rc = onyx_wallet_reserve_deployment_spends(snapshot.data(), snapshot.size(), seed.data(),
 	    network.data(), encoded.data(), encoded.size(), &next.data, &next.size);
-	if (rc != 1 || next.data == nullptr || next.size == 0) {
+	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
 	}
@@ -592,7 +601,7 @@ bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
 	const int rc = onyx_wallet_create_bridge(seed.data(), recipient.data(), expiry_height, fee, legacy_amount,
 	    legacy_stack_index, legacy_key_image.data(), memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k,
 	    &encoded.data, &encoded.size, sighash.data());
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES)) {
 		unsigned_bridge->clear();
 		ownership_sighash->fill(0);
 		return false;
@@ -614,7 +623,7 @@ bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge
 	OnyxBuffer encoded;
 	const int rc = onyx_wallet_finalize_bridge(unsigned_bridge.data(), unsigned_bridge.size(),
 	    ownership_signature.data(), &encoded.data, &encoded.size);
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES)) {
 		finalized_bridge->clear();
 		return false;
 	}
@@ -645,7 +654,7 @@ bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &walle
 	const int rc = onyx_wallet_create_program_deployment(wallet_snapshot.data(), wallet_snapshot.size(),
 	    seed.data(), max_supply, metadata.data(), metadata.size(), inclusion_height, activation_height,
 	    deactivation_height, expiry_height, fee, circuit_k, &encoded.data, &encoded.size, next_program.data());
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_PROGRAM_DEPLOYMENT_BYTES)) {
 		deployment->clear();
 		program_id->fill(0);
 		return false;
@@ -678,7 +687,7 @@ bool Halo2ProofSystem::wallet_create_standard_program_deployment(const BinaryArr
 	const int rc = onyx_wallet_create_standard_program_deployment(wallet_snapshot.data(),
 	    wallet_snapshot.size(), seed.data(), kind, inclusion_height, activation_height,
 	    deactivation_height, expiry_height, fee, circuit_k, &encoded.data, &encoded.size, next_program.data());
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_PROGRAM_DEPLOYMENT_BYTES)) {
 		deployment->clear();
 		program_id->fill(0);
 		return false;
@@ -706,7 +715,7 @@ bool Halo2ProofSystem::wallet_create_standard_program_call(const BinaryArray &wa
 	    wallet_snapshot.size(), seed.data(), program_id.data(), inclusion_height, valid_from_height,
 	    expiry_height, application.data(), application.size(), prior_state.data(), next_state.data(),
 	    witness.data(), witness.size() / 32, circuit_k, &encoded.data, &encoded.size);
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_CONTEXTUAL_TRANSACTION_BYTES)) {
 		transaction->clear();
 		return false;
 	}
@@ -737,7 +746,7 @@ bool Halo2ProofSystem::wallet_create_token_issuance(const BinaryArray &wallet_sn
 	    seed.data(), recipient.data(), program_id.data(), issued_amount, inclusion_height, expiry_height,
 	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k,
 	    &encoded.data, &encoded.size, &next_sequence);
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_TOKEN_ISSUANCE_BYTES)) {
 		issuance->clear();
 		return false;
 	}
@@ -761,7 +770,7 @@ bool Halo2ProofSystem::wallet_create_transfer(const BinaryArray &snapshot,
 	const int rc = onyx_wallet_create_transfer(snapshot.data(), snapshot.size(), seed.data(), recipient.data(),
 	    amount, fee, expiry_height, memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k,
 	    &encoded.data, &encoded.size);
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES)) {
 		transaction->clear();
 		return false;
 	}
@@ -784,7 +793,7 @@ bool Halo2ProofSystem::wallet_create_mixed_token_transfer(const BinaryArray &sna
 	const int rc = onyx_wallet_create_mixed_token_transfer(snapshot.data(), snapshot.size(), seed.data(),
 	    recipient.data(), program_id.data(), token_amount, fee, expiry_height,
 	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k, &encoded.data, &encoded.size);
-	if (rc != 1 || encoded.data == nullptr || encoded.size == 0) {
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES)) {
 		transaction->clear();
 		return false;
 	}
@@ -813,8 +822,8 @@ bool Halo2ProofSystem::toy_prove(
 	if (onyx_toy_prove(a, b, &proof_buffer.data, &proof_buffer.size,
 	        &vk_buffer.data, &vk_buffer.size, public_buf.data()) != 0)
 		return false;
-	if (proof_buffer.data == nullptr || proof_buffer.size == 0 ||
-	    (vk_buffer.data == nullptr && vk_buffer.size != 0))
+	if (!proof_buffer.valid_nonempty(ONYX_ZK_MAX_PROOF_BYTES) ||
+	    !vk_buffer.valid_optional(ONYX_ZK_MAX_VK_BYTES))
 		return false;
 	BinaryArray proof_result = proof_buffer.copy();
 	BinaryArray vk_result    = vk_buffer.copy();

@@ -18,6 +18,16 @@
 #include <stdint.h>
 
 #define ONYX_ZK_ABI_VERSION 1u
+/* Public allocation/input ceilings. Callers must reject returned lengths above the corresponding
+ * ceiling before reading or copying callee-owned memory. */
+#define ONYX_ZK_MAX_PROOF_BYTES (192u * 1024u)
+#define ONYX_ZK_MAX_VK_BYTES (1024u * 1024u)
+#define ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES (384u * 1024u)
+#define ONYX_ZK_MAX_PROGRAM_DEPLOYMENT_BYTES (384u * 1024u)
+#define ONYX_ZK_MAX_TOKEN_ISSUANCE_BYTES (384u * 1024u)
+#define ONYX_ZK_MAX_CONTEXTUAL_TRANSACTION_BYTES (512u * 1024u)
+#define ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES (128u * 1024u * 1024u)
+#define ONYX_ZK_MAX_TOKEN_METADATA_BYTES 128u
 
 #ifdef __cplusplus
 extern "C" {
