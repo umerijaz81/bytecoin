@@ -12,6 +12,30 @@ import tarfile
 from release_common import git_blobs, revision_entries
 
 
+def safe_symlink_target(relative: str, raw_target: bytes) -> str:
+    target = raw_target.decode("utf-8")
+    if (
+        not target
+        or target.startswith("/")
+        or "\\" in target
+        or (len(target) >= 2 and target[1] == ":")
+    ):
+        raise ValueError(f"unsafe symlink target at {relative}: {target!r}")
+    resolved = list(pathlib.PurePosixPath(relative).parent.parts)
+    for part in pathlib.PurePosixPath(target).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not resolved:
+                raise ValueError(f"symlink escapes source archive at {relative}: {target!r}")
+            resolved.pop()
+        else:
+            resolved.append(part)
+    if not resolved:
+        raise ValueError(f"symlink resolves to archive root at {relative}: {target!r}")
+    return target
+
+
 def create(output: pathlib.Path, revision: str, epoch: int) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     prefix = f"bytecoin-{revision[:12]}"
@@ -31,10 +55,12 @@ def create(output: pathlib.Path, revision: str, epoch: int) -> None:
                     if git_mode == 0o120000:
                         info.type = tarfile.SYMTYPE
                         info.mode = 0o777
-                        info.linkname = data.decode("utf-8")
+                        info.linkname = safe_symlink_target(relative, data)
                         info.size = 0
                         archive.addfile(info)
                         continue
+                    if git_mode not in (0o100644, 0o100755):
+                        raise ValueError(f"unsupported Git mode {raw_mode} at {relative}")
                     info.type = tarfile.REGTYPE
                     info.mode = 0o755 if git_mode & 0o111 else 0o644
                     info.size = len(data)

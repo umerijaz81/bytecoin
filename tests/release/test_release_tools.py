@@ -15,7 +15,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 
 import build_release_evidence  # noqa: E402
+import create_source_archive  # noqa: E402
 import generate_spdx  # noqa: E402
+import release_common  # noqa: E402
 import verify_dependencies  # noqa: E402
 import verify_release_gates  # noqa: E402
 
@@ -91,6 +93,30 @@ class ReleaseToolsTest(unittest.TestCase):
                 "3" * 40,
                 build_release_evidence.resolve_checked_out_revision("HEAD"),
             )
+
+    def test_source_archive_rejects_escaping_symlinks(self) -> None:
+        self.assertEqual(
+            "../shared/header.hpp",
+            create_source_archive.safe_symlink_target(
+                "src/platform/header.hpp", b"../shared/header.hpp"
+            ),
+        )
+        for target in (
+            b"/etc/passwd",
+            b"C:/Windows/System32",
+            b"..\\outside",
+            b"../../../outside",
+            b"",
+        ):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(ValueError, "unsafe|escapes"):
+                    create_source_archive.safe_symlink_target("src/link", target)
+
+    def test_source_archive_rejects_non_blob_tree_entries(self) -> None:
+        raw = b"160000 commit " + b"1" * 40 + b"\tvendor/external\0"
+        with mock.patch.object(release_common, "git", return_value=raw):
+            with self.assertRaisesRegex(ValueError, "unsupported Git tree entry type commit"):
+                release_common.revision_entries("HEAD")
 
 
 if __name__ == "__main__":

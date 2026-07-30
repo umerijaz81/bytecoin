@@ -11,7 +11,8 @@ reproduced for every supported binary platform before the corresponding activati
 difference. It emits:
 
 - a gzip-compressed tar archive containing only Git-tracked files, with sorted paths, normalized
-  ownership/modes and the commit timestamp as `SOURCE_DATE_EPOCH`;
+  ownership/modes and the commit timestamp as `SOURCE_DATE_EPOCH`; unsupported Git tree entries,
+  unknown modes and symlinks that can escape the archive root are rejected;
 - an SPDX 2.3 JSON SBOM covering the release lock and every checksummed Cargo package;
 - a provenance statement binding the commit, dependency-lock digest, source archive and SBOM;
 - `SHA256SUMS` for the three artifacts.

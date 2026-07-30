@@ -58,7 +58,10 @@ def revision_entries(revision: str) -> list[tuple[str, str, str]]:
         metadata, raw_path = record.split(b"\t", 1)
         mode, object_type, object_id = metadata.decode("ascii").split()
         if object_type != "blob":
-            continue
+            raise ValueError(
+                f"unsupported Git tree entry type {object_type} at "
+                f"{raw_path.decode('utf-8')}"
+            )
         entries.append((raw_path.decode("utf-8"), mode, object_id))
     return sorted(entries)
 
