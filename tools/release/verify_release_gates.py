@@ -44,6 +44,22 @@ REQUIRED_ACTIVATION_HEIGHTS = {
 }
 
 
+def tracked_worktree_changes(root: Path = ROOT) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
+    return [line for line in result.stdout.splitlines() if line]
+
+
 def frozen_revision_is_ancestor(revision: str) -> bool:
     commit = subprocess.run(
         ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
@@ -437,6 +453,18 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
 
 
 def main() -> int:
+    try:
+        dirty = tracked_worktree_changes()
+    except subprocess.CalledProcessError as error:
+        print(f"ERROR: cannot inspect tracked worktree state: {error}", file=sys.stderr)
+        return 1
+    if dirty:
+        print(
+            "ERROR: release-gate evidence and activation configuration must be committed; "
+            f"tracked worktree changes: {dirty}",
+            file=sys.stderr,
+        )
+        return 1
     gate_path = ROOT / "release" / "activation-gates.json"
     gates_document = json.loads(gate_path.read_text(encoding="utf-8"))
     config = (ROOT / "src" / "CryptoNoteConfig.hpp").read_text(encoding="utf-8")

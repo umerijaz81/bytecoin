@@ -30,6 +30,8 @@ python3 tools/release/build_release_evidence.py --output-dir dist --revision HEA
 
 `--allow-dirty` exists only to test the generator while developing it. Provenance records the dirty
 state, and the GitHub workflow never enables that option. A dirty artifact is not releasable.
+The output directory must start empty; stale files from an earlier or unrelated ceremony are rejected
+instead of being left beside the newly verified manifest.
 The requested release revision must resolve to the checked-out `HEAD`; this prevents dependency
 verification against the current index from being combined with source evidence for a different
 historical tree.
@@ -95,6 +97,9 @@ time, and a repository-relative artifact whose lowercase SHA-256 is recomputed b
 completion time cannot be more than five minutes in the future, allowing limited clock skew without
 letting evidence pre-authorize work that has not occurred. The
 attestation and its referenced artifact must both be committed before the activation-gate change.
+The command-line verifier refuses every staged or unstaged tracked change, so it cannot validate
+working-tree evidence while reporting against a different committed `HEAD`. Untracked build products
+remain outside this check because all accepted evidence paths must independently be Git-tracked.
 Every completion time must be at or after the frozen revision's Git commit time. For public-testnet
 evidence, `started_at` must also be at or after that time, so a newly frozen revision cannot inherit
 soak duration accumulated by different code.

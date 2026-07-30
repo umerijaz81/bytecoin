@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import pathlib
 import subprocess
@@ -34,6 +35,38 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertEqual([], errors)
         self.assertIn("independent-audits", incomplete)
         self.assertIn("governance-approval", incomplete)
+
+    def test_release_gate_cli_rejects_uncommitted_tracked_evidence(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["git", "status"],
+            returncode=0,
+            stdout="M  release/evidence/source-provenance.json\n",
+            stderr="",
+        )
+        with mock.patch.object(verify_release_gates.subprocess, "run", return_value=completed):
+            self.assertEqual(
+                ["M  release/evidence/source-provenance.json"],
+                verify_release_gates.tracked_worktree_changes(ROOT),
+            )
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                verify_release_gates,
+                "tracked_worktree_changes",
+                return_value=["M  release/evidence/source-provenance.json"],
+            ),
+            mock.patch.object(sys, "stderr", stderr),
+        ):
+            self.assertEqual(1, verify_release_gates.main())
+        self.assertIn("must be committed", stderr.getvalue())
+
+    def test_release_output_directory_must_start_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            build_release_evidence.require_empty_output(output)
+            (output / "stale-unverified.bin").write_bytes(b"stale")
+            with self.assertRaisesRegex(ValueError, "stale or unverified artifacts"):
+                build_release_evidence.require_empty_output(output)
 
     def test_activation_height_change_fails_closed(self) -> None:
         changed = self.config.replace(

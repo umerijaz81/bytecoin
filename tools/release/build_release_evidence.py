@@ -38,6 +38,15 @@ def resolve_checked_out_revision(specification: str) -> str:
     return revision
 
 
+def require_empty_output(directory: pathlib.Path) -> None:
+    entries = sorted(path.name for path in directory.iterdir())
+    if entries:
+        raise ValueError(
+            "release output directory must be empty to prevent stale or unverified artifacts: "
+            + ", ".join(entries)
+        )
+
+
 def build_once(directory: pathlib.Path, revision: str, epoch: int) -> tuple[pathlib.Path, pathlib.Path]:
     short = revision[:12]
     archive = directory / f"bytecoin-{short}-source.tar.gz"
@@ -78,6 +87,10 @@ def main() -> int:
         ).returncode != 0
         if output_is_not_ignored:
             raise SystemExit("output directory inside the repository must be ignored by git")
+    try:
+        require_empty_output(output)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
     with tempfile.TemporaryDirectory(prefix="bytecoin-release-a-") as first_raw, tempfile.TemporaryDirectory(
         prefix="bytecoin-release-b-"
