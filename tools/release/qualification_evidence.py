@@ -160,8 +160,131 @@ def _source_provenance(
         _artifact({"artifact": binding}, root, errors, f"{label}:{name}", tracked_paths)
         if isinstance(binding, dict) and isinstance(binding.get("path"), str):
             paths.append(binding["path"])
+    if any(
+        not isinstance(artifacts[name], dict)
+        or not isinstance(artifacts[name].get("sha256"), str)
+        or not HEX_32.fullmatch(artifacts[name]["sha256"])
+        for name in required
+    ):
+        return errors
     if len(paths) != len(set(paths)):
         errors.append(f"{label}: artifact paths must be distinct")
+        return errors
+
+    resolved = {
+        name: _repository_file(root, artifacts[name].get("path"))
+        for name in required
+        if isinstance(artifacts[name], dict)
+    }
+    if len(resolved) != len(required) or any(path is None for path in resolved.values()):
+        return errors
+
+    revision = document.get("revision")
+    if not isinstance(revision, str) or not REVISION.fullmatch(revision):
+        return errors
+    expected_names = {
+        "source_archive": f"bytecoin-{revision[:12]}-source.tar.gz",
+        "spdx_sbom": f"bytecoin-{revision[:12]}.spdx.json",
+        "provenance": f"bytecoin-{revision[:12]}.provenance.json",
+        "checksums": "SHA256SUMS",
+    }
+    for name, expected_name in expected_names.items():
+        if resolved[name].name != expected_name:
+            errors.append(f"{label}:{name}: filename must be {expected_name}")
+
+    try:
+        provenance = json.loads(resolved["provenance"].read_text(encoding="utf-8"))
+        sbom = json.loads(resolved["spdx_sbom"].read_text(encoding="utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        errors.append(f"{label}: invalid provenance or SPDX JSON: {error}")
+        return errors
+    if not isinstance(provenance, dict):
+        errors.append(f"{label}: provenance artifact must contain a JSON object")
+    else:
+        if provenance.get("schema") != "bytecoin-release-provenance/v1":
+            errors.append(f"{label}: provenance schema must be bytecoin-release-provenance/v1")
+        if provenance.get("revision") != revision:
+            errors.append(f"{label}: provenance revision must equal attested revision")
+        if provenance.get("dirty_worktree") is not False:
+            errors.append(f"{label}: provenance dirty_worktree must be false")
+        if provenance.get("dependencies_lock_sha256") != lock_digest:
+            errors.append(f"{label}: provenance dependency-lock digest mismatch")
+        reproduction = provenance.get("reproduction")
+        generations = (
+            reproduction.get("independent_generations")
+            if isinstance(reproduction, dict)
+            else None
+        )
+        if (
+            not isinstance(reproduction, dict)
+            or not isinstance(generations, int)
+            or isinstance(generations, bool)
+            or generations < 2
+            or reproduction.get("source_archive_identical") is not True
+            or reproduction.get("spdx_sbom_identical") is not True
+        ):
+            errors.append(f"{label}: provenance must record two identical independent generations")
+        expected_materials = {
+            resolved[name].name: artifacts[name]["sha256"]
+            for name in ("source_archive", "spdx_sbom")
+        }
+        materials = provenance.get("materials")
+        actual_materials = {}
+        if isinstance(materials, list):
+            for material in materials:
+                if (
+                    isinstance(material, dict)
+                    and isinstance(material.get("name"), str)
+                    and isinstance(material.get("sha256"), str)
+                ):
+                    actual_materials[material["name"]] = material["sha256"]
+        if (
+            not isinstance(materials, list)
+            or len(materials) != 2
+            or actual_materials != expected_materials
+        ):
+            errors.append(f"{label}: provenance materials do not bind the source archive and SPDX SBOM")
+
+    root_package = None
+    if isinstance(sbom, dict):
+        packages = sbom.get("packages")
+        if isinstance(packages, list):
+            root_package = next(
+                (
+                    package
+                    for package in packages
+                    if isinstance(package, dict)
+                    and package.get("SPDXID") == "SPDXRef-Package-bytecoin"
+                ),
+                None,
+            )
+    if (
+        not isinstance(sbom, dict)
+        or sbom.get("spdxVersion") != "SPDX-2.3"
+        or sbom.get("name") != f"bytecoin-{revision}"
+        or not isinstance(root_package, dict)
+        or root_package.get("versionInfo") != revision
+    ):
+        errors.append(f"{label}: SPDX SBOM does not describe the attested revision")
+
+    expected_checksums = {
+        resolved[name].name: artifacts[name]["sha256"]
+        for name in ("source_archive", "spdx_sbom", "provenance")
+    }
+    actual_checksums: dict[str, str] = {}
+    try:
+        lines = resolved["checksums"].read_text(encoding="ascii").splitlines()
+    except UnicodeError as error:
+        errors.append(f"{label}: invalid SHA256SUMS encoding: {error}")
+        return errors
+    for line in lines:
+        match = re.fullmatch(r"([0-9a-f]{64})  ([^/\\\\]+)", line)
+        if match is None or match.group(2) in actual_checksums:
+            errors.append(f"{label}: SHA256SUMS must use canonical unique entries")
+            break
+        actual_checksums[match.group(2)] = match.group(1)
+    if actual_checksums != expected_checksums:
+        errors.append(f"{label}: SHA256SUMS does not bind the generated evidence artifacts")
     return errors
 
 

@@ -43,14 +43,72 @@ class QualificationEvidenceTest(unittest.TestCase):
         }
 
     def source_provenance(self, root: pathlib.Path) -> dict:
-        artifacts = {}
-        for key, name in {
-            "source_archive": "source.tar.gz",
-            "spdx_sbom": "source.spdx.json",
-            "provenance": "source.provenance.json",
-            "checksums": "SHA256SUMS",
-        }.items():
-            artifacts[key] = self.write_artifact(root, name)
+        short = REVISION[:12]
+        archive_name = f"bytecoin-{short}-source.tar.gz"
+        sbom_name = f"bytecoin-{short}.spdx.json"
+        provenance_name = f"bytecoin-{short}.provenance.json"
+        (root / archive_name).write_bytes(b"canonical source archive")
+        (root / sbom_name).write_text(
+            json.dumps(
+                {
+                    "spdxVersion": "SPDX-2.3",
+                    "name": f"bytecoin-{REVISION}",
+                    "packages": [
+                        {
+                            "SPDXID": "SPDXRef-Package-bytecoin",
+                            "versionInfo": REVISION,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        archive_digest = hashlib.sha256((root / archive_name).read_bytes()).hexdigest()
+        sbom_digest = hashlib.sha256((root / sbom_name).read_bytes()).hexdigest()
+        (root / provenance_name).write_text(
+            json.dumps(
+                {
+                    "schema": "bytecoin-release-provenance/v1",
+                    "revision": REVISION,
+                    "dirty_worktree": False,
+                    "dependencies_lock_sha256": DIGEST,
+                    "materials": [
+                        {"name": archive_name, "sha256": archive_digest},
+                        {"name": sbom_name, "sha256": sbom_digest},
+                    ],
+                    "reproduction": {
+                        "independent_generations": 2,
+                        "source_archive_identical": True,
+                        "spdx_sbom_identical": True,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        provenance_digest = hashlib.sha256((root / provenance_name).read_bytes()).hexdigest()
+        (root / "SHA256SUMS").write_text(
+            "".join(
+                f"{digest}  {name}\n"
+                for digest, name in (
+                    (archive_digest, archive_name),
+                    (sbom_digest, sbom_name),
+                    (provenance_digest, provenance_name),
+                )
+            ),
+            encoding="ascii",
+        )
+        artifacts = {
+            key: {
+                "path": name,
+                "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest(),
+            }
+            for key, name in {
+                "source_archive": archive_name,
+                "spdx_sbom": sbom_name,
+                "provenance": provenance_name,
+                "checksums": "SHA256SUMS",
+            }.items()
+        }
         return {
             "schema_version": 1,
             "gate_id": "source-provenance",
@@ -97,6 +155,49 @@ class QualificationEvidenceTest(unittest.TestCase):
             self.assertTrue(any("artifact paths must be distinct" in error for error in errors), errors)
             self.assertTrue(
                 any("does not match frozen release revision" in error for error in errors), errors
+            )
+
+    def test_source_provenance_rejects_internally_consistent_wrong_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = self.source_provenance(root)
+            provenance_binding = document["artifacts"]["provenance"]
+            provenance_path = root / provenance_binding["path"]
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+            provenance["revision"] = "3" * 40
+            provenance["reproduction"]["independent_generations"] = "two"
+            provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+            provenance_binding["sha256"] = hashlib.sha256(provenance_path.read_bytes()).hexdigest()
+
+            checksums_binding = document["artifacts"]["checksums"]
+            checksums_path = root / checksums_binding["path"]
+            checksums_path.write_text(
+                "".join(
+                    f"{document['artifacts'][name]['sha256']}  "
+                    f"{pathlib.Path(document['artifacts'][name]['path']).name}\n"
+                    for name in ("source_archive", "spdx_sbom", "provenance")
+                ),
+                encoding="ascii",
+            )
+            checksums_binding["sha256"] = hashlib.sha256(checksums_path.read_bytes()).hexdigest()
+
+            evidence = self.write_document(root, "source-evidence.json", document)
+            tracked = {evidence}
+            tracked.update(binding["path"] for binding in document["artifacts"].values())
+            errors = qualification_evidence.verify_gate(
+                "source-provenance",
+                [evidence],
+                root,
+                tracked_paths=tracked,
+                dependencies_lock_digest=DIGEST,
+            )
+            self.assertTrue(
+                any("provenance revision must equal attested revision" in error for error in errors),
+                errors,
+            )
+            self.assertTrue(
+                any("two identical independent generations" in error for error in errors),
+                errors,
             )
 
     def test_two_distinct_clean_audits_pass(self) -> None:

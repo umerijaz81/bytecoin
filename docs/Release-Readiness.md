@@ -108,7 +108,9 @@ The enforced minimums are release policy, not claims about the current branch:
 
 - source provenance requires a committed typed attestation from two distinct independent builders,
   byte-identical source archives and SPDX SBOMs, the frozen revision's dependency-lock digest, and
-  distinct digest-bound source archive, SBOM, provenance, and checksum artifacts;
+  distinct digest-bound source archive, SBOM, provenance, and checksum artifacts. The verifier also
+  cross-checks canonical filenames, the provenance schema/revision/materials/reproduction result, the
+  SPDX root package revision, and every canonical `SHA256SUMS` entry;
 - independent audits require two attestations from distinct normalized organization identities, each
   binding its report and declaring zero unresolved critical or high findings;
 - public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,
