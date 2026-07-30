@@ -7,6 +7,8 @@
 //#include <cstddef>
 #include <fstream>
 #include <iostream>
+#include <vector>
+#include "common/Base64.hpp"
 #include "common/Invariant.hpp"
 #include "common/JsonValue.hpp"
 #include "platform/PathTools.hpp"
@@ -54,6 +56,31 @@ static std::map<std::string, int64_t> cases2{
 };
 
 void test_json(const std::string &test_vectors_folder) {
+	common::BinaryArray all_bytes(256);
+	for (size_t i = 0; i != all_bytes.size(); ++i)
+		all_bytes[i] = static_cast<uint8_t>(i);
+	common::BinaryArray decoded;
+	invariant(common::base64::decode(common::base64::encode(all_bytes), &decoded) &&
+	              decoded == all_bytes,
+	    "canonical Base64 round trip failed");
+	const std::map<std::string, std::string> base64_vectors{
+	    {"", ""}, {"Zg==", "f"}, {"Zm8=", "fo"}, {"Zm9v", "foo"}, {"dXNlcjoxMTE=", "user:111"}};
+	for (const auto &vector : base64_vectors) {
+		decoded.assign(1, 0xff);
+		invariant(common::base64::decode(vector.first, &decoded) &&
+		              std::string(decoded.begin(), decoded.end()) == vector.second,
+		    "valid canonical Base64 was rejected");
+	}
+	const std::vector<std::string> invalid_base64{
+	    "Zg", "=m9v", "Z=9v", "Zm=v", "Zg=A", "Zg==AAAA", "Zh==", "Zm9=", "-w==", "_w==", "!!!!",
+	    "Zm 9v"};
+	for (const std::string &invalid : invalid_base64) {
+		decoded.assign(1, 0xff);
+		invariant(!common::base64::decode(invalid, &decoded) && decoded.empty(),
+		    "malformed or noncanonical Base64 was accepted");
+	}
+	invariant(!common::base64::decode("Zg==", nullptr), "Base64 decoder accepted a null output");
+
 	const auto parses = [](const std::string &source) {
 		try {
 			common::JsonValue::from_string(source);
