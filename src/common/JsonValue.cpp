@@ -742,7 +742,7 @@ char JsonValue::StreamContext::read_char() {
 	if (it == end)
 		throw_error("unexpected end of stream");
 	char c           = *it++;
-	bool white_space = isspace(c);
+	bool white_space = isspace(static_cast<unsigned char>(c)) != 0;
 	if (!white_space || !prev_white_space) {
 		if (mini_pos == mini_buf.size()) {
 			if (mini_buf.size() < 32)     // We track up to 32 characters
@@ -767,7 +767,7 @@ char JsonValue::StreamContext::read_non_ws_char() {
 
 	do {
 		c = read_char();
-	} while (isspace(c));
+	} while (isspace(static_cast<unsigned char>(c)) != 0);
 
 	return c;
 }
@@ -775,7 +775,7 @@ char JsonValue::StreamContext::read_non_ws_char() {
 char JsonValue::StreamContext::peek_non_ws_char() {
 	char c = peek_char();
 
-	while (isspace(c)) {
+	while (isspace(static_cast<unsigned char>(c)) != 0) {
 		read_char();
 		c = peek_char();
 	}
@@ -795,20 +795,100 @@ void JsonValue::StreamContext::expect(char c, char should_be_c) {
 
 void JsonValue::StreamContext::eat_all_whitespace() {
 	while (it != end)
-		if (!isspace(read_char()))
+		if (isspace(static_cast<unsigned char>(read_char())) == 0)
 			throw_error("expecting only whitespace at the end of json");
 }
 
 std::string JsonValue::StreamContext::read_string_token() {
 	std::string value;
+	const auto append_utf8 = [this, &value](unsigned cp) {
+		if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) || (cp & 0xFFFF) >= 0xFFFE)
+			throw_error("invalid Unicode scalar value");
+		if (cp < 0x80) {
+			value += static_cast<char>(cp);
+		} else if (cp < 0x800) {
+			value += static_cast<char>(0xC0 | (cp >> 6));
+			value += static_cast<char>(0x80 | (cp & 0x3F));
+		} else if (cp < 0x10000) {
+			value += static_cast<char>(0xE0 | (cp >> 12));
+			value += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+			value += static_cast<char>(0x80 | (cp & 0x3F));
+		} else {
+			value += static_cast<char>(0xF0 | (cp >> 18));
+			value += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+			value += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+			value += static_cast<char>(0x80 | (cp & 0x3F));
+		}
+	};
+	const auto valid_utf8 = [](const std::string &text) {
+		for (size_t i = 0; i != text.size();) {
+			const auto byte = static_cast<unsigned char>(text[i++]);
+			if (byte < 0x80)
+				continue;
+			size_t continuation = 0;
+			unsigned cp = 0;
+			unsigned char minimum_second = 0x80;
+			unsigned char maximum_second = 0xBF;
+			if (byte >= 0xC2 && byte <= 0xDF) {
+				continuation = 1;
+				cp = byte & 0x1F;
+			} else if (byte >= 0xE0 && byte <= 0xEF) {
+				continuation = 2;
+				cp = byte & 0x0F;
+				if (byte == 0xE0)
+					minimum_second = 0xA0;
+				if (byte == 0xED)
+					maximum_second = 0x9F;
+			} else if (byte >= 0xF0 && byte <= 0xF4) {
+				continuation = 3;
+				cp = byte & 0x07;
+				if (byte == 0xF0)
+					minimum_second = 0x90;
+				if (byte == 0xF4)
+					maximum_second = 0x8F;
+			} else {
+				return false;
+			}
+			if (text.size() - i < continuation)
+				return false;
+			const auto second = static_cast<unsigned char>(text[i]);
+			if (second < minimum_second || second > maximum_second)
+				return false;
+			for (size_t offset = 1; offset != continuation; ++offset) {
+				const auto next = static_cast<unsigned char>(text[i + offset]);
+				if (next < 0x80 || next > 0xBF)
+					return false;
+			}
+			for (size_t offset = 0; offset != continuation; ++offset)
+				cp = (cp << 6) | (static_cast<unsigned char>(text[i + offset]) & 0x3F);
+			if ((cp & 0xFFFF) >= 0xFFFE)
+				return false;
+			i += continuation;
+		}
+		return true;
+	};
+	const auto read_hex_quad = [this]() {
+		unsigned cp = 0;
+		for (size_t i = 0; i != 4; ++i) {
+			const char character = read_char();
+			unsigned char nibble = 0;
+			if (!common::from_hex(character, nibble))
+				throw_error("invalid hexadecimal character in Unicode escape");
+			cp = cp * 16 + nibble;
+		}
+		return cp;
+	};
 
 	while (it != end) {
 		char c = read_char();
-		if (iscntrl(c))
+		if (iscntrl(static_cast<unsigned char>(c)) != 0)
 			throw_error("control character inside string '" + std::string({c}) + "' (character code " +
 			            common::to_string(static_cast<unsigned char>(c)) + ")");
-		if (c == '"')
+		if (c == '"') {
+			if (!valid_utf8(value))
+				throw_error("invalid UTF-8 in string");
 			return value;
+		}
 		if (c == '\\') {
 			c = read_char();
 			switch (c) {
@@ -837,35 +917,18 @@ std::string JsonValue::StreamContext::read_string_token() {
 				value += '\f';
 				continue;
 			case 'u': {
-				// WTF those retards invented...
-				char c0           = read_char();
-				char c1           = read_char();
-				char c2           = read_char();
-				char c3           = read_char();
-				unsigned char c0v = 0, c1v = 0, c2v = 0, c3v = 0;
-				if (!common::from_hex(c0, c0v) || !common::from_hex(c1, c1v) || !common::from_hex(c2, c2v) ||
-				    !common::from_hex(c3, c3v))
-					throw_error(
-					    "Unable to parse json: \\u wrong hex characters '" + std::string({c0, c1, c2, c3}) + "'");
-				unsigned cp = unsigned(c0v) * 4096 + unsigned(c1v) * 256 + unsigned(c2v) * 16 + unsigned(c3v);
-				if ((cp >= 0xD800 && cp <= 0xDFFF) || cp >= 0xFFFE)
-					throw_error(
-					    "Unable to parse json: \\u does not support surrogate pairs " + std::string({c0, c1, c2, c3}));
-				if (cp < 0x80) {
-					value += static_cast<char>(cp);
-					continue;
+				unsigned cp = read_hex_quad();
+				if (cp >= 0xD800 && cp <= 0xDBFF) {
+					if (read_char() != '\\' || read_char() != 'u')
+						throw_error("high surrogate is not followed by a low surrogate");
+					const unsigned low = read_hex_quad();
+					if (low < 0xDC00 || low > 0xDFFF)
+						throw_error("high surrogate is not followed by a low surrogate");
+					cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+				} else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+					throw_error("low surrogate has no preceding high surrogate");
 				}
-				if (cp < 0x800) {
-					value += static_cast<char>(0x80 | (cp & 0x3F));
-					cp >>= 6;
-					value += static_cast<char>(0xC0 | cp);
-					continue;
-				}
-				value += static_cast<char>(0x80 | (cp & 0x3F));
-				cp >>= 6;
-				value += static_cast<char>(0x80 | (cp & 0x3F));
-				cp >>= 6;
-				value += static_cast<char>(0xE0 | cp);
+				append_utf8(cp);
 				continue;
 			}
 			default:

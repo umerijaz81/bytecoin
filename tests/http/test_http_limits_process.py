@@ -161,6 +161,25 @@ def test_duplicate_json_member(process, port):
     print("decoded duplicate JSON-RPC member rejected before method dispatch")
 
 
+def test_invalid_json_unicode(process, port):
+    body = (
+        b'{"jsonrpc":"2.0","id":"invalid-unicode",'
+        b'"method":"get_status\\ud800","params":{}}'
+    )
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(http_request(body))
+        response = read_response(sock)
+    _, separator, payload = response.partition(b"\r\n\r\n")
+    if not separator:
+        raise RuntimeError(f"invalid JSON Unicode produced no HTTP response: {response[:200]!r}")
+    decoded = json.loads(payload.decode("utf-8"))
+    error = decoded.get("error")
+    if not isinstance(error, dict) or error.get("code") != -32700 or "result" in decoded:
+        raise RuntimeError(f"invalid JSON Unicode was not rejected as a parse error: {decoded!r}")
+    assert_alive(process, port)
+    print("invalid JSON-RPC Unicode rejected before method dispatch")
+
+
 def test_connection_cap(process, port):
     idle = []
     overflow = None
@@ -239,6 +258,7 @@ def run(binary):
                 test_oversized_header(process, rpc_port)
                 test_duplicate_content_length(process, rpc_port)
                 test_duplicate_json_member(process, rpc_port)
+                test_invalid_json_unicode(process, rpc_port)
                 test_supply_audit_cache_stability(process, rpc_port)
                 test_connection_cap(process, rpc_port)
                 test_header_timeout(process, rpc_port)

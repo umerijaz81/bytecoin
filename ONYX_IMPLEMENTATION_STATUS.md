@@ -123,7 +123,9 @@ The shared bytecoind/walletd HTTP server now rejects request headers above 32 Ki
 clients at 128, requires headers within 5 seconds and an allowed body within 30 seconds, and resumes
 accepting as soon as a slot is released. The JSON parser's existing
 100-level array/object nesting bound is named and boundary-tested. Decoded duplicate object names,
-including escape-equivalent spellings, fail as parse errors before JSON-RPC method dispatch. A raw-socket real-daemon CI test
+including escape-equivalent spellings, fail as parse errors before JSON-RPC method dispatch. Unicode
+escapes produce shortest-form UTF-8 with strict surrogate-pair handling, and malformed raw or escaped
+Unicode fails before dispatch. A raw-socket real-daemon CI test
 proves 413 rejection, streaming-header cutoff, duplicate-length rejection, connection-cap blocking,
 accept recovery, slow-header eviction and daemon liveness. These are transport/resource limits, not
 consensus rules.

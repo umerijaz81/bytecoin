@@ -100,6 +100,21 @@ void test_json(const std::string &test_vectors_folder) {
 	    "nested duplicate JSON object key was accepted");
 	invariant(parses(R"({"left":{"key":1},"right":{"key":2}})"),
 	    "same JSON key in distinct objects was rejected");
+	const std::string unicode_bytes("\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80", 9);
+	const common::JsonValue escaped_unicode =
+	    common::JsonValue::from_string(R"("\u00e9\u20ac\ud83d\ude00")");
+	invariant(escaped_unicode.get_string() == unicode_bytes,
+	    "JSON Unicode escapes did not produce canonical UTF-8");
+	const common::JsonValue raw_unicode =
+	    common::JsonValue::from_string("\"" + unicode_bytes + "\"");
+	invariant(raw_unicode.get_string() == unicode_bytes, "valid raw JSON UTF-8 was rejected");
+	const std::vector<std::string> invalid_unicode{
+	    R"("\ud800")", R"("\udc00")", R"("\ud800\u0041")", R"("\ufffe")",
+	    std::string("\"\xc0\x80\"", 4), std::string("\"\xed\xa0\x80\"", 5),
+	    std::string("\"\xf4\x90\x80\x80\"", 6)};
+	for (const std::string &invalid : invalid_unicode) {
+		invariant(!parses(invalid), "invalid JSON Unicode encoding was accepted");
+	}
 
 	for (const auto &ca : cases1) {
 		common::JsonValue jv;
