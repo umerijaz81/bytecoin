@@ -166,7 +166,10 @@ int onyx_verify_bridge(
     uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
     uint8_t ownership_signature_out[64], uint64_t *fee_out);
 
-/* Derive canonical Onyx address bytes: network[16] || diversifier[11] || transmission[32] ||
+/* Wallet/SDK constructors and queries below clear every fixed, scalar, and allocated output after
+ * all output pointers are validated and before any input-dependent failure.
+ *
+ * Derive canonical Onyx address bytes: network[16] || diversifier[11] || transmission[32] ||
  * spend-authority[32]. */
 int onyx_wallet_address(const uint8_t seed[32], const uint8_t network[16], uint32_t address_index,
                         uint8_t address_out[91]);

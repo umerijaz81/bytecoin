@@ -1654,7 +1654,13 @@ pub extern "C" fn onyx_wallet_address(
     address_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
-        if seed.is_null() || network.is_null() || address_out.is_null() {
+        if address_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(address_out, 0, 91);
+        }
+        if seed.is_null() || network.is_null() {
             return -1;
         }
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
@@ -1663,9 +1669,6 @@ pub extern "C" fn onyx_wallet_address(
         let network: [u8; 16] = unsafe { slice::from_raw_parts(network, 16) }
             .try_into()
             .expect("fixed network length");
-        unsafe {
-            std::ptr::write_bytes(address_out, 0, 91);
-        }
         let address = match keys::MasterSeed::new(seed)
             .derive(network)
             .and_then(|keys| keys.address(address_index))
@@ -1698,7 +1701,13 @@ pub extern "C" fn onyx_full_viewing_key(
     viewing_key_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
-        if seed.is_null() || network.is_null() || viewing_key_out.is_null() {
+        if viewing_key_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(viewing_key_out, 0, keys::FULL_VIEWING_KEY_BYTES);
+        }
+        if seed.is_null() || network.is_null() {
             return -1;
         }
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
@@ -1707,9 +1716,6 @@ pub extern "C" fn onyx_full_viewing_key(
         let network: [u8; 16] = unsafe { slice::from_raw_parts(network, 16) }
             .try_into()
             .expect("fixed network length");
-        unsafe {
-            std::ptr::write_bytes(viewing_key_out, 0, keys::FULL_VIEWING_KEY_BYTES);
-        }
         let viewing = match keys::MasterSeed::new(seed)
             .derive(network)
             .and_then(|keys| keys.full_viewing_key())
@@ -1742,19 +1748,11 @@ pub extern "C" fn onyx_wallet_scan(
     root_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
-        if seed.is_null()
-            || expected_network.is_null()
-            || encoded.is_null()
-            || snapshot_out.is_null()
+        if snapshot_out.is_null()
             || snapshot_len_out.is_null()
             || balance_out.is_null()
             || note_count_out.is_null()
             || root_out.is_null()
-            || encoded_len == 0
-            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
-            || !(10..=20).contains(&circuit_k)
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || (snapshot.is_null() && snapshot_len != 0)
         {
             return -1;
         }
@@ -1763,6 +1761,18 @@ pub extern "C" fn onyx_wallet_scan(
             *snapshot_len_out = 0;
             *balance_out = 0;
             *note_count_out = 0;
+            std::ptr::write_bytes(root_out, 0, 32);
+        }
+        if seed.is_null()
+            || expected_network.is_null()
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
+            || !(10..=20).contains(&circuit_k)
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || (snapshot.is_null() && snapshot_len != 0)
+        {
+            return -1;
         }
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
             .try_into()
@@ -1867,19 +1877,11 @@ pub extern "C" fn onyx_wallet_scan_viewing(
     root_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
-        if viewing_key.is_null()
-            || viewing_key_len != keys::FULL_VIEWING_KEY_BYTES
-            || encoded.is_null()
-            || snapshot_out.is_null()
+        if snapshot_out.is_null()
             || snapshot_len_out.is_null()
             || balance_out.is_null()
             || note_count_out.is_null()
             || root_out.is_null()
-            || encoded_len == 0
-            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
-            || !(10..=20).contains(&circuit_k)
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || (snapshot.is_null() && snapshot_len != 0)
         {
             return -1;
         }
@@ -1888,6 +1890,18 @@ pub extern "C" fn onyx_wallet_scan_viewing(
             *snapshot_len_out = 0;
             *balance_out = 0;
             *note_count_out = 0;
+            std::ptr::write_bytes(root_out, 0, 32);
+        }
+        if viewing_key.is_null()
+            || viewing_key_len != keys::FULL_VIEWING_KEY_BYTES
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
+            || !(10..=20).contains(&circuit_k)
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || (snapshot.is_null() && snapshot_len != 0)
+        {
+            return -1;
         }
         let keys = match keys::FullViewingKey::decode(unsafe {
             slice::from_raw_parts(viewing_key, viewing_key_len)
@@ -1980,6 +1994,13 @@ pub extern "C" fn onyx_wallet_reserve_spends(
     snapshot_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
+        if snapshot_out.is_null() || snapshot_len_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+        }
         if snapshot.is_null()
             || snapshot_len == 0
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
@@ -1988,14 +2009,8 @@ pub extern "C" fn onyx_wallet_reserve_spends(
             || encoded.is_null()
             || encoded_len == 0
             || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
-            || snapshot_out.is_null()
-            || snapshot_len_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *snapshot_out = std::ptr::null_mut();
-            *snapshot_len_out = 0;
         }
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
             .try_into()
@@ -2052,6 +2067,13 @@ pub extern "C" fn onyx_wallet_reserve_deployment_spends(
     snapshot_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
+        if snapshot_out.is_null() || snapshot_len_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *snapshot_out = std::ptr::null_mut();
+            *snapshot_len_out = 0;
+        }
         if snapshot.is_null()
             || snapshot_len == 0
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
@@ -2060,14 +2082,8 @@ pub extern "C" fn onyx_wallet_reserve_deployment_spends(
             || encoded.is_null()
             || encoded_len == 0
             || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
-            || snapshot_out.is_null()
-            || snapshot_len_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *snapshot_out = std::ptr::null_mut();
-            *snapshot_len_out = 0;
         }
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
             .try_into()
@@ -2122,13 +2138,15 @@ pub extern "C" fn onyx_wallet_summary(
     root_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
-        if snapshot.is_null()
-            || snapshot_len == 0
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || balance_out.is_null()
-            || note_count_out.is_null()
-            || root_out.is_null()
-        {
+        if balance_out.is_null() || note_count_out.is_null() || root_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *balance_out = 0;
+            *note_count_out = 0;
+            std::ptr::write_bytes(root_out, 0, 32);
+        }
+        if snapshot.is_null() || snapshot_len == 0 || snapshot_len > MAX_STATE_SNAPSHOT_BYTES {
             return -1;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
@@ -2160,19 +2178,20 @@ pub extern "C" fn onyx_wallet_asset_balance(
     unspent_note_count_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
-        if snapshot.is_null()
-            || snapshot_len == 0
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || program_id.is_null()
-            || asset_id.is_null()
-            || balance_out.is_null()
-            || unspent_note_count_out.is_null()
-        {
+        if balance_out.is_null() || unspent_note_count_out.is_null() {
             return -1;
         }
         unsafe {
             *balance_out = 0;
             *unspent_note_count_out = 0;
+        }
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || program_id.is_null()
+            || asset_id.is_null()
+        {
+            return -1;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(snapshot, snapshot_len)
@@ -2215,11 +2234,7 @@ pub extern "C" fn onyx_wallet_token_program_status(
     metadata_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
-        if snapshot.is_null()
-            || snapshot_len == 0
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || program_id.is_null()
-            || issuer_out.is_null()
+        if issuer_out.is_null()
             || max_supply_out.is_null()
             || issued_supply_out.is_null()
             || next_sequence_out.is_null()
@@ -2241,6 +2256,13 @@ pub extern "C" fn onyx_wallet_token_program_status(
             *active_out = 0;
             *metadata_out = std::ptr::null_mut();
             *metadata_len_out = 0;
+        }
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || program_id.is_null()
+        {
+            return -1;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(snapshot, snapshot_len)
@@ -2319,6 +2341,14 @@ pub extern "C" fn onyx_token_program_descriptor(
     program_id_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
+        if manifest_out.is_null() || manifest_len_out.is_null() || program_id_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *manifest_out = std::ptr::null_mut();
+            *manifest_len_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
         if issuer.is_null()
             || max_supply == 0
             || metadata.is_null()
@@ -2326,16 +2356,8 @@ pub extern "C" fn onyx_token_program_descriptor(
             || metadata_len > 128
             || (deactivation_height != 0 && deactivation_height <= activation_height)
             || !(10..=20).contains(&circuit_k)
-            || manifest_out.is_null()
-            || manifest_len_out.is_null()
-            || program_id_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *manifest_out = std::ptr::null_mut();
-            *manifest_len_out = 0;
-            std::ptr::write_bytes(program_id_out, 0, 32);
         }
         let issuer = unsafe { slice::from_raw_parts(issuer, 32) }
             .try_into()
@@ -2380,21 +2402,22 @@ pub extern "C" fn onyx_wallet_create_bridge(
     ownership_sighash_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
-        if seed.is_null()
-            || recipient.is_null()
-            || legacy_key_image.is_null()
-            || bridge_out.is_null()
-            || bridge_len_out.is_null()
-            || ownership_sighash_out.is_null()
-            || memo_len > types::MAX_MEMO_BYTES
-            || (memo.is_null() && memo_len != 0)
-            || !(10..=20).contains(&circuit_k)
-        {
+        if bridge_out.is_null() || bridge_len_out.is_null() || ownership_sighash_out.is_null() {
             return -1;
         }
         unsafe {
             *bridge_out = std::ptr::null_mut();
             *bridge_len_out = 0;
+            std::ptr::write_bytes(ownership_sighash_out, 0, 32);
+        }
+        if seed.is_null()
+            || recipient.is_null()
+            || legacy_key_image.is_null()
+            || memo_len > types::MAX_MEMO_BYTES
+            || (memo.is_null() && memo_len != 0)
+            || !(10..=20).contains(&circuit_k)
+        {
+            return -1;
         }
         let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
             .try_into()
@@ -2457,10 +2480,15 @@ pub extern "C" fn onyx_wallet_finalize_bridge(
     bridge_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
+        if bridge_out.is_null() || bridge_len_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *bridge_out = std::ptr::null_mut();
+            *bridge_len_out = 0;
+        }
         if unsigned_bridge.is_null()
             || ownership_signature.is_null()
-            || bridge_out.is_null()
-            || bridge_len_out.is_null()
             || unsigned_bridge_len == 0
             || unsigned_bridge_len > MAX_AUTHORIZED_TRANSACTION_BYTES
         {
@@ -2506,6 +2534,14 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
     sequence_out: *mut u64,
 ) -> i32 {
     ffi_i32(|| {
+        if issuance_out.is_null() || issuance_len_out.is_null() || sequence_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *issuance_out = std::ptr::null_mut();
+            *issuance_len_out = 0;
+            *sequence_out = 0;
+        }
         if wallet_snapshot.is_null()
             || wallet_snapshot_len == 0
             || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
@@ -2516,16 +2552,8 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
             || memo_len > types::MAX_MEMO_BYTES
             || (memo.is_null() && memo_len != 0)
             || !(10..=20).contains(&circuit_k)
-            || issuance_out.is_null()
-            || issuance_len_out.is_null()
-            || sequence_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *issuance_out = std::ptr::null_mut();
-            *issuance_len_out = 0;
-            *sequence_out = 0;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
@@ -2655,6 +2683,14 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
     program_id_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
+        if deployment_out.is_null() || deployment_len_out.is_null() || program_id_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *deployment_out = std::ptr::null_mut();
+            *deployment_len_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
         if wallet_snapshot.is_null()
             || wallet_snapshot_len == 0
             || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
@@ -2671,16 +2707,8 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
             || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
             || fee < program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE
             || !(10..=20).contains(&circuit_k)
-            || deployment_out.is_null()
-            || deployment_len_out.is_null()
-            || program_id_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *deployment_out = std::ptr::null_mut();
-            *deployment_len_out = 0;
-            std::ptr::write_bytes(program_id_out, 0, 32);
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
@@ -2761,6 +2789,14 @@ pub extern "C" fn onyx_wallet_create_standard_program_deployment(
     program_id_out: *mut u8,
 ) -> i32 {
     ffi_i32(|| {
+        if deployment_out.is_null() || deployment_len_out.is_null() || program_id_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *deployment_out = std::ptr::null_mut();
+            *deployment_len_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+        }
         let kind = match kind {
             1 => standard_programs::StandardProgramKind::Nft,
             2 => standard_programs::StandardProgramKind::Vesting,
@@ -2780,16 +2816,8 @@ pub extern "C" fn onyx_wallet_create_standard_program_deployment(
             || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
             || fee < program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE
             || !(10..=20).contains(&circuit_k)
-            || deployment_out.is_null()
-            || deployment_len_out.is_null()
-            || program_id_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *deployment_out = std::ptr::null_mut();
-            *deployment_len_out = 0;
-            std::ptr::write_bytes(program_id_out, 0, 32);
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
@@ -2859,6 +2887,13 @@ pub extern "C" fn onyx_wallet_create_standard_program_call(
     transaction_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
+        if transaction_out.is_null() || transaction_len_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *transaction_out = std::ptr::null_mut();
+            *transaction_len_out = 0;
+        }
         if wallet_snapshot.is_null()
             || wallet_snapshot_len == 0
             || wallet_snapshot_len > MAX_STATE_SNAPSHOT_BYTES
@@ -2876,14 +2911,8 @@ pub extern "C" fn onyx_wallet_create_standard_program_call(
             || inclusion_height > expiry_height
             || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
             || !(10..=20).contains(&circuit_k)
-            || transaction_out.is_null()
-            || transaction_len_out.is_null()
         {
             return -1;
-        }
-        unsafe {
-            *transaction_out = std::ptr::null_mut();
-            *transaction_len_out = 0;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(wallet_snapshot, wallet_snapshot_len)
@@ -2982,22 +3011,23 @@ pub extern "C" fn onyx_wallet_create_transfer(
     transaction_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
-        if snapshot.is_null()
-            || snapshot_len == 0
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || seed.is_null()
-            || recipient.is_null()
-            || transaction_out.is_null()
-            || transaction_len_out.is_null()
-            || memo_len > types::MAX_MEMO_BYTES
-            || (memo.is_null() && memo_len != 0)
-            || !(10..=20).contains(&circuit_k)
-        {
+        if transaction_out.is_null() || transaction_len_out.is_null() {
             return -1;
         }
         unsafe {
             *transaction_out = std::ptr::null_mut();
             *transaction_len_out = 0;
+        }
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || seed.is_null()
+            || recipient.is_null()
+            || memo_len > types::MAX_MEMO_BYTES
+            || (memo.is_null() && memo_len != 0)
+            || !(10..=20).contains(&circuit_k)
+        {
+            return -1;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(snapshot, snapshot_len)
@@ -3066,23 +3096,24 @@ pub extern "C" fn onyx_wallet_create_mixed_token_transfer(
     transaction_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
+        if transaction_out.is_null() || transaction_len_out.is_null() {
+            return -1;
+        }
+        unsafe {
+            *transaction_out = std::ptr::null_mut();
+            *transaction_len_out = 0;
+        }
         if snapshot.is_null()
             || snapshot_len == 0
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || seed.is_null()
             || recipient.is_null()
             || program_id.is_null()
-            || transaction_out.is_null()
-            || transaction_len_out.is_null()
             || memo_len > types::MAX_MEMO_BYTES
             || (memo.is_null() && memo_len != 0)
             || !(10..=20).contains(&circuit_k)
         {
             return -1;
-        }
-        unsafe {
-            *transaction_out = std::ptr::null_mut();
-            *transaction_len_out = 0;
         }
         let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(snapshot, snapshot_len)
@@ -3485,6 +3516,122 @@ pub extern "C" fn onyx_free(ptr: *mut u8, len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wallet_ffi_clears_outputs_before_input_validation() {
+        let mut fixed = [0xffu8; 91];
+        assert_eq!(
+            onyx_wallet_address(std::ptr::null(), std::ptr::null(), 0, fixed.as_mut_ptr()),
+            -1
+        );
+        assert_eq!(fixed, [0u8; 91]);
+
+        let mut snapshot_out = 1usize as *mut u8;
+        let mut snapshot_len = usize::MAX;
+        let mut balance = u64::MAX;
+        let mut note_count = usize::MAX;
+        let mut root = [0xffu8; 32];
+        assert_eq!(
+            onyx_wallet_scan(
+                std::ptr::null(),
+                MAX_STATE_SNAPSHOT_BYTES + 1,
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                9,
+                std::ptr::null(),
+                0,
+                &mut snapshot_out,
+                &mut snapshot_len,
+                &mut balance,
+                &mut note_count,
+                root.as_mut_ptr(),
+            ),
+            -1
+        );
+        assert!(snapshot_out.is_null());
+        assert_eq!((snapshot_len, balance, note_count), (0, 0, 0));
+        assert_eq!(root, [0u8; 32]);
+
+        balance = u64::MAX;
+        note_count = usize::MAX;
+        root.fill(0xff);
+        assert_eq!(
+            onyx_wallet_summary(
+                std::ptr::null(),
+                MAX_STATE_SNAPSHOT_BYTES + 1,
+                &mut balance,
+                &mut note_count,
+                root.as_mut_ptr(),
+            ),
+            -1
+        );
+        assert_eq!((balance, note_count), (0, 0));
+        assert_eq!(root, [0u8; 32]);
+
+        let mut encoded_out = 1usize as *mut u8;
+        let mut encoded_len = usize::MAX;
+        assert_eq!(
+            onyx_wallet_finalize_bridge(
+                std::ptr::null(),
+                MAX_AUTHORIZED_TRANSACTION_BYTES + 1,
+                std::ptr::null(),
+                &mut encoded_out,
+                &mut encoded_len,
+            ),
+            -1
+        );
+        assert!(encoded_out.is_null());
+        assert_eq!(encoded_len, 0);
+
+        let mut program_id = [0xffu8; 32];
+        encoded_out = 1usize as *mut u8;
+        encoded_len = usize::MAX;
+        assert_eq!(
+            onyx_wallet_create_standard_program_deployment(
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                9,
+                &mut encoded_out,
+                &mut encoded_len,
+                program_id.as_mut_ptr(),
+            ),
+            -1
+        );
+        assert!(encoded_out.is_null());
+        assert_eq!(encoded_len, 0);
+        assert_eq!(program_id, [0u8; 32]);
+
+        encoded_out = 1usize as *mut u8;
+        encoded_len = usize::MAX;
+        assert_eq!(
+            onyx_wallet_create_transfer(
+                std::ptr::null(),
+                MAX_STATE_SNAPSHOT_BYTES + 1,
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                std::ptr::null(),
+                types::MAX_MEMO_BYTES + 1,
+                9,
+                &mut encoded_out,
+                &mut encoded_len,
+            ),
+            -1
+        );
+        assert!(encoded_out.is_null());
+        assert_eq!(encoded_len, 0);
+    }
 
     #[test]
     fn ffi_standard_state_query_reports_absent_identity() {
