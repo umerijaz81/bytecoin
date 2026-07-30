@@ -72,6 +72,17 @@ class ReleaseToolsTest(unittest.TestCase):
             errors, _ = verify_release_gates.verify(gates, self.config)
         self.assertTrue(any("evidence is not Git-tracked" in error for error in errors), errors)
 
+    def test_frozen_release_revision_must_exist_in_repository_history(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        gates["release_revision"] = "0" * 40
+        governance = next(gate for gate in gates["gates"] if gate["id"] == "governance-approval")
+        governance["status"] = "passed"
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(
+            any("existing commit that is an ancestor of HEAD" in error for error in errors),
+            errors,
+        )
+
     def test_spdx_identifiers_are_unique_and_deterministic(self) -> None:
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         first = generate_spdx.generate(revision, 0)

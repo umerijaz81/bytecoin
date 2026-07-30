@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 
 from release_common import ROOT, tracked_files
@@ -20,6 +21,26 @@ REQUIRED_GATES = {
     "governance-approval",
 }
 ALLOWED_STATUS = {"pending", "implemented", "passed"}
+
+
+def frozen_revision_is_ancestor(revision: str) -> bool:
+    commit = subprocess.run(
+        ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if commit.returncode != 0:
+        return False
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", revision, "HEAD"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return ancestor.returncode == 0
 
 
 def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
@@ -52,6 +73,10 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         or not re.fullmatch(r"[0-9a-f]{40}", release_revision)
     ):
         errors.append("passed external gates require one frozen lowercase 40-character release_revision")
+    elif passed_external and not frozen_revision_is_ancestor(release_revision):
+        errors.append(
+            "frozen release_revision must name an existing commit that is an ancestor of HEAD"
+        )
     for gate_id, gate in by_id.items():
         status = gate.get("status")
         evidence = gate.get("evidence")
