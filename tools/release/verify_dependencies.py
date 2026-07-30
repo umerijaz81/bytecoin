@@ -12,7 +12,17 @@ import sys
 import tempfile
 import urllib.request
 
-from release_common import HEX_40, HEX_64, ROOT, git_blobs, index_entries, git_blob, load_lock, tracked_tree_sha256
+from release_common import (
+    HEX_40,
+    HEX_64,
+    ROOT,
+    git_blob,
+    git_blobs,
+    index_entries,
+    load_lock,
+    strict_json_loads,
+    tracked_tree_sha256,
+)
 
 
 REQUIRED_COMMON = {"name", "version", "kind", "purl"}
@@ -30,7 +40,7 @@ def verify_cargo_vendor(prefix: str) -> list[str]:
     malformed: list[str] = []
     for manifest in manifests:
         try:
-            checksums = json.loads(indexed[manifest])["files"]
+            checksums = strict_json_loads(indexed[manifest])["files"]
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             malformed.append(manifest)
             continue

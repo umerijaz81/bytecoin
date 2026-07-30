@@ -16,6 +16,23 @@ HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 
 
+class DuplicateJsonKey(ValueError):
+    pass
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJsonKey(f"duplicate JSON object key: {key!r}")
+        result[key] = value
+    return result
+
+
+def strict_json_loads(value: str | bytes | bytearray) -> object:
+    return json.loads(value, object_pairs_hook=_unique_json_object)
+
+
 def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -138,8 +155,10 @@ def tracked_tree_sha256(prefix: str) -> str:
 
 
 def load_lock() -> dict:
-    with LOCK_PATH.open("r", encoding="utf-8") as stream:
-        return json.load(stream)
+    value = strict_json_loads(LOCK_PATH.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("dependency lock must contain a JSON object")
+    return value
 
 
 def canonical_json_bytes(value: object) -> bytes:

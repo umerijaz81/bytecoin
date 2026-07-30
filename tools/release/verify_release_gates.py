@@ -21,6 +21,7 @@ from release_common import (
     revision_file_sha256,
     sha256_file,
     source_date_epoch,
+    strict_json_loads,
     tracked_files,
 )
 from qualification_evidence import _repository_file, verify_gate
@@ -119,8 +120,8 @@ def qualification_paths(gates: list[dict], tracked: set[str]) -> set[str]:
             if path is None or relative not in tracked:
                 continue
             try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError):
+                document = strict_json_loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError):
                 continue
             if not isinstance(document, dict) or document.get("gate_id") != gate_id:
                 continue
@@ -168,7 +169,7 @@ def governance_digests_at_revision(revision: str) -> tuple[str, str]:
     compiler_digest = hashlib.sha256(compiler).hexdigest()
     target_digests: set[str] = set()
     for program in STANDARD_PROGRAMS:
-        manifest = json.loads(
+        manifest = strict_json_loads(
             revision_file(
                 revision, f"programs/onyx-standard/{program}/onyx-package.json"
             )
@@ -228,8 +229,8 @@ def governance_order_errors(gates: list[dict], root: Path = ROOT) -> list[str]:
             if path is None:
                 continue
             try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError):
+                document = strict_json_loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError):
                 continue
             value = document.get(field) if isinstance(document, dict) else None
             if (
@@ -466,7 +467,11 @@ def main() -> int:
         )
         return 1
     gate_path = ROOT / "release" / "activation-gates.json"
-    gates_document = json.loads(gate_path.read_text(encoding="utf-8"))
+    try:
+        gates_document = strict_json_loads(gate_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as error:
+        print(f"ERROR: invalid activation-gate JSON: {error}", file=sys.stderr)
+        return 1
     config = (ROOT / "src" / "CryptoNoteConfig.hpp").read_text(encoding="utf-8")
     errors, incomplete = verify(gates_document, config)
     if errors:

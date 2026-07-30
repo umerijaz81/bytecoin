@@ -15,6 +15,7 @@ from release_common import (
     canonical_json_bytes,
     revision_file,
     spdx_id,
+    strict_json_loads,
 )
 
 
@@ -78,7 +79,7 @@ def cargo_packages(revision: str) -> list[dict]:
 
 def generate(revision: str, epoch: int) -> dict:
     lock_bytes = revision_file(revision, "release/dependencies.lock.json")
-    lock = json.loads(lock_bytes)
+    lock = strict_json_loads(lock_bytes)
     root_id = "SPDXRef-Package-bytecoin"
     dependencies = [package_from_lock(item) for item in lock["dependencies"]]
     dependencies.extend(cargo_packages(revision))

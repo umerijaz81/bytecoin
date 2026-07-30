@@ -121,6 +121,9 @@ consensus constant in the activation commit fails the gate.
 The activation schema permits exactly the six declared gates, and each gate's
 `required_for_activation` flag must remain `true`; a manifest edit cannot opt a pending gate out of
 the activation decision.
+Every JSON document in the release boundary is decoded with duplicate object keys forbidden at every
+nesting depth. This includes dependency locks, Cargo checksum manifests, activation gates, typed
+attestations, provenance and SPDX evidence; last-key-wins ambiguity is never accepted.
 
 The enforced minimums are release policy, not claims about the current branch:
 

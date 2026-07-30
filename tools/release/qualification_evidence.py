@@ -10,6 +10,8 @@ import pathlib
 import re
 import urllib.parse
 
+from release_common import strict_json_loads
+
 
 EXTERNAL_GATES = {
     "source-provenance",
@@ -264,9 +266,9 @@ def _source_provenance(
             errors.append(f"{label}:{name}: filename must be {expected_name}")
 
     try:
-        provenance = json.loads(resolved["provenance"].read_text(encoding="utf-8"))
-        sbom = json.loads(resolved["spdx_sbom"].read_text(encoding="utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as error:
+        provenance = strict_json_loads(resolved["provenance"].read_text(encoding="utf-8"))
+        sbom = strict_json_loads(resolved["spdx_sbom"].read_text(encoding="utf-8"))
+    except (UnicodeError, ValueError) as error:
         errors.append(f"{label}: invalid provenance or SPDX JSON: {error}")
         return errors
     if not isinstance(provenance, dict):
@@ -901,8 +903,8 @@ def verify_gate(
             errors.append(f"{gate_id}: invalid repository evidence path {relative!r}")
             continue
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            document = strict_json_loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as error:
             errors.append(f"{gate_id}: invalid JSON evidence {relative}: {error}")
             continue
         if isinstance(document, dict) and document.get("gate_id") == gate_id:

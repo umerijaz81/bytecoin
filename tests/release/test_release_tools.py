@@ -68,6 +68,16 @@ class ReleaseToolsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "stale or unverified artifacts"):
                 build_release_evidence.require_empty_output(output)
 
+    def test_release_json_rejects_duplicate_keys_at_every_depth(self) -> None:
+        with self.assertRaisesRegex(release_common.DuplicateJsonKey, "duplicate JSON object key"):
+            release_common.strict_json_loads(
+                '{"gate_id":"independent-audits","artifact":{"path":"first","path":"second"}}'
+            )
+        self.assertEqual(
+            {"outer": {"left": 1, "right": 2}},
+            release_common.strict_json_loads('{"outer":{"left":1,"right":2}}'),
+        )
+
     def test_activation_height_change_fails_closed(self) -> None:
         changed = self.config.replace(
             "const Height UPGRADE_HEIGHT_V5 = 9000000;", "const Height UPGRADE_HEIGHT_V5 = 42;"
