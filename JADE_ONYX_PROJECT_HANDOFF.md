@@ -3,7 +3,7 @@
 Last reviewed: 2026-07-30  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `5ed59bd` (`Add fixed Onyx qualification network`)
+Last committed revision reviewed: `d1dca30` (`Qualify Onyx three-node reorganization`)
 
 ## 1. Purpose and status vocabulary
 
@@ -522,8 +522,9 @@ Required:
 
 ## 10. Fixed `--net=onyx` qualification network
 
-Status: **Implemented and committed in `5ed59bd`. GitHub-hosted Ubuntu CI had not yet reported when
-this handoff was last updated.**
+Status: **The fixed network was implemented in `5ed59bd`; its three-node local reorganization
+qualification was added in `d1dca30`. GitHub-hosted Ubuntu CI had not yet reported when this handoff
+was last updated.**
 
 Purpose:
 
@@ -562,10 +563,15 @@ Committed implementation:
   - Tests distinct UUID, ports, genesis, no inherited seeds, V7/RandomX at height 1, wallet network
     binding, inert checkpoint keys, and non-ZK refusal.
 - `tests/network/test_onyx_qualification_process.py`
-  - Starts two real qualification daemons, verifies their fixed shared genesis and P2P connection,
-    then proves a testnet daemon cannot cross the network identity/genesis boundary.
+  - Starts three isolated qualification daemons, mines competing two- and three-block RandomX
+    branches, reconnects the topology, and requires a real longer-branch reorganization.
+  - Requires exact final height, block-hash, and supply-audit equality across all three nodes.
+  - Rejects truncated V7 transaction bytes on every node while proving continued liveness.
+  - Proves a testnet daemon cannot cross the network identity/genesis boundary.
+  - Emits a revision-bound per-node JSON report explicitly marked as non-release evidence.
 - `.github/workflows/consensus-integration.yml`
-  - Runs Jade invariants in the existing non-ZK job and adds a ZK-enabled real-process network job.
+  - Runs Jade invariants in the existing non-ZK job and adds a ZK-enabled daemon/miner process job.
+  - Uploads the scoped local qualification report for inspection.
 
 Validation performed before commit:
 
@@ -576,20 +582,20 @@ Validation performed before commit:
 - Non-ZK `bytecoind --net=onyx` and `walletd --net=onyx` both refused before startup.
 - All 61 release-tool unit tests passed after the final code and test changes.
 - The real-process qualification test exposed and then verified the repair for the checkpoint-key
-  database shape. Two Onyx daemons now start with the same fixed genesis and connect; a testnet daemon
-  cannot connect to them. The fixed genesis observed was
+  database shape. The expanded test passed twice locally with three nodes, two divergent RandomX
+  branches, a height-3 reorganization, exact supply-audit convergence, malformed V7 rejection, and
+  testnet isolation. The fixed genesis observed was
   `325a59101b9bcefcc49dfcbcc2367123ed1b0dd6c04568e964cc8ef4e118284c`.
 
 Validation not yet completed:
 
 - Validate the new GitHub Actions job on GitHub's Ubuntu runner.
-- Push `5ed59bd` and this handoff update.
 
 Recommended immediate acceptance criteria:
 
 1. ZK-enabled node and wallet both accept `--net=onyx`.
 2. Non-ZK node and wallet reject it before opening databases or networking.
-3. Two Onyx qualification nodes agree on UUID, genesis, ports, V7 at height 1, and RandomX metadata.
+3. Three Onyx qualification nodes agree on UUID, genesis, ports, V7 at height 1, and RandomX metadata.
 4. Mainnet, testnet, and stagenet behavior remains byte-for-byte or test-for-test unchanged.
 5. Wallet files or portable viewing keys from another network are rejected.
 6. No default mainnet peer or seed is contacted.
@@ -679,28 +685,30 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 
 ### Priority 0 — Finish the qualification network
 
-1. Review the uncommitted diff.
-2. Complete ZK-off refusal tests.
-3. Run release tests and Jade tests.
-4. Add a process-level two-node smoke test if one does not already exist.
-5. Confirm no changes to other network identities or genesis values.
-6. Commit only the listed qualification-network files.
-7. Push and record the new revision in this document.
+Status: **Completed in `5ed59bd` and extended in `d1dca30`, subject to GitHub-hosted CI.**
 
 ### Priority 1 — Qualification topology harness
 
-Build a repeatable three-node harness around `--net=onyx`:
+Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
+and report foundation is implemented in `d1dca30`.**
+
+Implemented:
 
 - Explicit node identities and topology; no implicit seeds.
 - Separate data directories and ports.
-- Miner and wallet processes.
-- Migration transactions, shielded transfers, standard programs, reorgs, malformed bundles, proof
-  denial-of-service load, node restart, wallet recovery, and final supply reconciliation.
+- Real daemon and miner processes.
+- Competing RandomX branches, node restart/reconnection, and longer-chain reorganization.
+- Truncated V7 rejection and post-rejection liveness.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
-Exit criterion: the harness can reproduce a short local rehearsal. It still does not count as the
-14-day public soak.
+Remaining:
+
+- Wallet processes, mined-fund recognition, migration transactions, shielded transfers, and standard
+  program transactions.
+- Valid-proof denial-of-service load rather than only malformed/truncated input.
+- Wallet recovery through an alternate qualification node.
+- A longer local run and the independently operated 14-day public soak.
 
 ### Priority 2 — Migration and incident rehearsal tooling
 
