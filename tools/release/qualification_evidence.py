@@ -10,7 +10,7 @@ import pathlib
 import re
 import urllib.parse
 
-from release_common import strict_json_loads
+from release_common import sha256_file, strict_json_load_file
 
 
 EXTERNAL_GATES = {
@@ -143,7 +143,7 @@ def _artifact(
         errors.append(f"{label}: artifact.path must be a contained repository file")
     elif tracked_paths is not None and relative not in tracked_paths:
         errors.append(f"{label}: artifact is not Git-tracked: {relative}")
-    elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+    elif sha256_file(path) != expected:
         errors.append(f"{label}: artifact digest mismatch: {relative}")
 
 
@@ -266,8 +266,8 @@ def _source_provenance(
             errors.append(f"{label}:{name}: filename must be {expected_name}")
 
     try:
-        provenance = strict_json_loads(resolved["provenance"].read_text(encoding="utf-8"))
-        sbom = strict_json_loads(resolved["spdx_sbom"].read_text(encoding="utf-8"))
+        provenance = strict_json_load_file(resolved["provenance"])
+        sbom = strict_json_load_file(resolved["spdx_sbom"])
     except (UnicodeError, ValueError) as error:
         errors.append(f"{label}: invalid provenance or SPDX JSON: {error}")
         return errors
@@ -903,7 +903,7 @@ def verify_gate(
             errors.append(f"{gate_id}: invalid repository evidence path {relative!r}")
             continue
         try:
-            document = strict_json_loads(path.read_text(encoding="utf-8"))
+            document = strict_json_load_file(path)
         except (OSError, UnicodeError, ValueError) as error:
             errors.append(f"{gate_id}: invalid JSON evidence {relative}: {error}")
             continue

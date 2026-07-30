@@ -93,6 +93,35 @@ class ReleaseToolsTest(unittest.TestCase):
             release_common.strict_json_loads('{"finite":[-1.5,0,2.75]}'),
         )
 
+    def test_release_json_enforces_resource_limits(self) -> None:
+        nested = "[" * (release_common.MAX_RELEASE_JSON_NESTING + 1)
+        nested += "0"
+        nested += "]" * (release_common.MAX_RELEASE_JSON_NESTING + 1)
+        with self.assertRaisesRegex(
+            release_common.ReleaseJsonResourceLimit,
+            "nesting limit",
+        ):
+            release_common.strict_json_loads(nested)
+
+        with mock.patch.object(release_common, "MAX_RELEASE_JSON_BYTES", 32):
+            with self.assertRaisesRegex(
+                release_common.ReleaseJsonResourceLimit,
+                "32-byte limit",
+            ):
+                release_common.strict_json_loads('{"payload":"' + ("x" * 21) + '"}')
+            with tempfile.TemporaryDirectory() as temporary:
+                oversized = pathlib.Path(temporary) / "oversized.json"
+                oversized.write_bytes(b'{"payload":"' + (b"x" * 21) + b'"}')
+                with self.assertRaisesRegex(
+                    release_common.ReleaseJsonResourceLimit,
+                    "32-byte limit",
+                ):
+                    release_common.strict_json_load_file(oversized)
+        self.assertEqual(
+            {"text": "[{\\\"nested-looking\\\":true}]"},
+            release_common.strict_json_loads('{"text":"[{\\\\\\"nested-looking\\\\\\":true}]"}'),
+        )
+
     def test_activation_height_change_fails_closed(self) -> None:
         changed = self.config.replace(
             "const Height UPGRADE_HEIGHT_V5 = 9000000;", "const Height UPGRADE_HEIGHT_V5 = 42;"
@@ -324,7 +353,11 @@ class ReleaseToolsTest(unittest.TestCase):
                 "_repository_file",
                 side_effect=lambda _root, relative: pathlib.Path(ROOT, relative),
             ),
-            mock.patch.object(pathlib.Path, "read_text", return_value=json.dumps(document)),
+            mock.patch.object(
+                verify_release_gates,
+                "strict_json_load_file",
+                return_value=document,
+            ),
         ):
             allowed = verify_release_gates.qualification_paths(
                 gates,
@@ -364,7 +397,11 @@ class ReleaseToolsTest(unittest.TestCase):
                 "_repository_file",
                 side_effect=lambda _root, relative: pathlib.Path(ROOT, relative),
             ),
-            mock.patch.object(pathlib.Path, "read_text", return_value=json.dumps(document)),
+            mock.patch.object(
+                verify_release_gates,
+                "strict_json_load_file",
+                return_value=document,
+            ),
         ):
             allowed = verify_release_gates.qualification_paths(gates, tracked)
         self.assertIn("release/evidence/audit.json", allowed)

@@ -15,6 +15,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOCK_PATH = ROOT / "release" / "dependencies.lock.json"
 HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+MAX_RELEASE_JSON_BYTES = 16 * 1024 * 1024
+MAX_RELEASE_JSON_NESTING = 64
 
 
 class DuplicateJsonKey(ValueError):
@@ -22,6 +24,10 @@ class DuplicateJsonKey(ValueError):
 
 
 class NonFiniteJsonNumber(ValueError):
+    pass
+
+
+class ReleaseJsonResourceLimit(ValueError):
     pass
 
 
@@ -45,13 +51,64 @@ def _strict_json_float(value: str) -> float:
     return result
 
 
+def _check_json_resource_limits(value: str | bytes | bytearray) -> None:
+    if isinstance(value, str):
+        size = len(value.encode("utf-8"))
+        units = value
+        quote = '"'
+        escape = "\\"
+        openings = {"{", "["}
+        closings = {"}", "]"}
+    else:
+        size = len(value)
+        units = value
+        quote = ord('"')
+        escape = ord("\\")
+        openings = {ord("{"), ord("[")}
+        closings = {ord("}"), ord("]")}
+    if size > MAX_RELEASE_JSON_BYTES:
+        raise ReleaseJsonResourceLimit(
+            f"release JSON exceeds {MAX_RELEASE_JSON_BYTES}-byte limit"
+        )
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for unit in units:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif unit == escape:
+                escaped = True
+            elif unit == quote:
+                in_string = False
+            continue
+        if unit == quote:
+            in_string = True
+        elif unit in openings:
+            depth += 1
+            if depth > MAX_RELEASE_JSON_NESTING:
+                raise ReleaseJsonResourceLimit(
+                    f"release JSON exceeds {MAX_RELEASE_JSON_NESTING}-level nesting limit"
+                )
+        elif unit in closings and depth > 0:
+            depth -= 1
+
+
 def strict_json_loads(value: str | bytes | bytearray) -> object:
+    _check_json_resource_limits(value)
     return json.loads(
         value,
         object_pairs_hook=_unique_json_object,
         parse_constant=_reject_json_constant,
         parse_float=_strict_json_float,
     )
+
+
+def strict_json_load_file(path: pathlib.Path) -> object:
+    with path.open("rb") as stream:
+        value = stream.read(MAX_RELEASE_JSON_BYTES + 1)
+    return strict_json_loads(value)
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -176,7 +233,7 @@ def tracked_tree_sha256(prefix: str) -> str:
 
 
 def load_lock() -> dict:
-    value = strict_json_loads(LOCK_PATH.read_text(encoding="utf-8"))
+    value = strict_json_load_file(LOCK_PATH)
     if not isinstance(value, dict):
         raise ValueError("dependency lock must contain a JSON object")
     return value

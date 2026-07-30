@@ -127,6 +127,9 @@ attestations, provenance and SPDX evidence; last-key-wins ambiguity is never acc
 The same decoder rejects the non-standard `NaN`, `Infinity` and `-Infinity` numeric tokens at every
 nesting depth. It also rejects finite-syntax exponent values that overflow the host numeric range,
 so non-finite values cannot bypass thresholds or enter canonical release evidence.
+Release JSON is limited to 16 MiB of UTF-8 and 64 nested object/array containers before decoding.
+These uniform limits cover attestations, provenance, SPDX, activation and dependency evidence and
+prevent repository-controlled evidence from relying on host memory or recursion exhaustion.
 
 The enforced minimums are release policy, not claims about the current branch:
 

@@ -21,6 +21,7 @@ from release_common import (
     revision_file_sha256,
     sha256_file,
     source_date_epoch,
+    strict_json_load_file,
     strict_json_loads,
     tracked_files,
 )
@@ -120,7 +121,7 @@ def qualification_paths(gates: list[dict], tracked: set[str]) -> set[str]:
             if path is None or relative not in tracked:
                 continue
             try:
-                document = strict_json_loads(path.read_text(encoding="utf-8"))
+                document = strict_json_load_file(path)
             except (OSError, UnicodeError, ValueError):
                 continue
             if not isinstance(document, dict) or document.get("gate_id") != gate_id:
@@ -229,7 +230,7 @@ def governance_order_errors(gates: list[dict], root: Path = ROOT) -> list[str]:
             if path is None:
                 continue
             try:
-                document = strict_json_loads(path.read_text(encoding="utf-8"))
+                document = strict_json_load_file(path)
             except (OSError, UnicodeError, ValueError):
                 continue
             value = document.get(field) if isinstance(document, dict) else None
@@ -468,7 +469,7 @@ def main() -> int:
         return 1
     gate_path = ROOT / "release" / "activation-gates.json"
     try:
-        gates_document = strict_json_loads(gate_path.read_text(encoding="utf-8"))
+        gates_document = strict_json_load_file(gate_path)
     except (OSError, UnicodeError, ValueError) as error:
         print(f"ERROR: invalid activation-gate JSON: {error}", file=sys.stderr)
         return 1
