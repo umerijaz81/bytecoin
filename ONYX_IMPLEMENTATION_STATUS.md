@@ -30,7 +30,11 @@ unreachable until the release gates below are independently satisfied.
    cross-platform digests. Fixed arrays have canonical construction and bounded-index IR; records have
    canonical nonrecursive construction and field access; fixed byte strings use exact-length lowercase
    hex literals. Content-addressed libraries are lock/tree-digest verified, namespace isolated,
-   deterministically topologically ordered and embedded for offline reproduction. Remaining:
+   deterministically topologically ordered and embedded for offline reproduction. Bundle publication
+   rejects existing and dangling output paths before compilation, maps backend launch failures/timeouts
+   to stable diagnostics and atomically publishes only a completely staged directory. Standard-program
+   pin rotation has an all-program regenerator that independently verifies every staged bundle before
+   replacing tracked manifests, IR or descriptors. Remaining:
    the Pasta-field/boolean/checked-unsigned-integer language has deterministic Halo2 gates, pinned verifying-key
    descriptor regeneration, real randomized proof creation/verification, IR/profile key binding and
    positive/negative proof vectors. Integer range, overflow/underflow, ordering, Euclidean division/remainder,

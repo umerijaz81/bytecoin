@@ -29,7 +29,12 @@ python tools/onyx/verify_compiler_bundle_v1.py <new-output> \
   --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
 python tools/onyx/verify_standard_program_artifacts_v1.py \
   --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
+python tools/onyx/regenerate_standard_program_artifacts_v1.py \
+  --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
 ```
+
+Regeneration stages and independently verifies all four bundles before replacing any tracked package
+manifest, IR, descriptor, or aggregate manifest. Review the complete resulting diff before commit.
 
 These packages remain non-activated pending consensus deployment/registry plumbing, wallet proving flows, independent
 circuit review, sustained fuzzing, and testnet release gates.

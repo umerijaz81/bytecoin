@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -95,6 +96,30 @@ def create_library(store: pathlib.Path, name: str, version: str, source: bytes) 
 
 
 class CompilerV1Tests(unittest.TestCase):
+    def test_backend_process_failures_have_stable_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            backend = pathlib.Path(temporary) / "backend"
+            backend.write_bytes(b"fixture")
+            for failure, code in (
+                (subprocess.TimeoutExpired("backend", 120), "E_BACKEND_TIMEOUT"),
+                (OSError("launch failed"), "E_BACKEND_EXECUTION"),
+            ):
+                with self.subTest(code=code), mock.patch.object(
+                        compiler_v1.subprocess, "run", side_effect=failure):
+                    with self.assertRaisesRegex(compiler_v1.CompileError, code):
+                        compiler_v1.backend_descriptor(backend, b"canonical-ir", 12, "main")
+
+    def test_existing_output_fails_before_compilation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package = compiler_v1.load_package(create_package(root / "package"))
+            destination = root / "bundle"
+            destination.mkdir()
+            with mock.patch.object(compiler_v1, "compile_sources",
+                                   side_effect=AssertionError("compilation must not run")):
+                with self.assertRaisesRegex(compiler_v1.CompileError, "E_OUTPUT_EXISTS"):
+                    compiler_v1.write_bundle(package, destination)
+
     def test_bundle_is_reproducible_and_independently_verified(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

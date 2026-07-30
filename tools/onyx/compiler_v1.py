@@ -1358,8 +1358,13 @@ def backend_descriptor(executable: pathlib.Path, ir: bytes, circuit_k: int, expo
         raise CompileError("E_BACKEND_EXECUTABLE", "Halo2 backend executable is missing or linked")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", export):
         raise CompileError("E_BACKEND_EXPORT", "Halo2 backend export is not an identifier")
-    process = subprocess.run([str(executable), "descriptor", str(circuit_k), export], input=ir,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
+    try:
+        process = subprocess.run([str(executable), "descriptor", str(circuit_k), export], input=ir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
+    except subprocess.TimeoutExpired as error:
+        raise CompileError("E_BACKEND_TIMEOUT", "Halo2 backend descriptor generation timed out") from error
+    except OSError as error:
+        raise CompileError("E_BACKEND_EXECUTION", "Halo2 backend could not be executed") from error
     if process.returncode != 0:
         message = process.stderr.decode("utf-8", "replace")[:512]
         raise CompileError("E_BACKEND_REJECTED", f"Halo2 backend rejected canonical IR: {message}")
@@ -1378,6 +1383,8 @@ def backend_descriptor(executable: pathlib.Path, ir: bytes, circuit_k: int, expo
 
 def write_bundle(package: SourcePackage, destination: pathlib.Path,
                  backend_executable: pathlib.Path | None = None, circuit_k: int = 12) -> None:
+    if os.path.lexists(destination):
+        raise CompileError("E_OUTPUT_EXISTS", "output path already exists")
     compiled, ir, metadata, schemas = compile_sources(package)
     vectors = evaluate_vectors(package, compiled)
     descriptors = None
@@ -1450,8 +1457,8 @@ def write_bundle(package: SourcePackage, destination: pathlib.Path,
             relative = path.relative_to(temporary).as_posix()
             files.append({"path": relative, "sha256": sha256(path.read_bytes()), "size": path.stat().st_size})
         (temporary / "SHA256MANIFEST.json").write_bytes(canonical_json({"format": 1, "files": files}))
-        if destination.exists():
-            raise CompileError("E_OUTPUT_EXISTS", "output directory already exists")
+        if os.path.lexists(destination):
+            raise CompileError("E_OUTPUT_EXISTS", "output path already exists")
         os.replace(temporary, destination)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
