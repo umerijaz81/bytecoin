@@ -42,6 +42,30 @@ class ReleaseToolsTest(unittest.TestCase):
         errors, _ = verify_release_gates.verify(self.gates, changed)
         self.assertTrue(any("UPGRADE_HEIGHT_V5 changed" in error for error in errors), errors)
 
+    def test_required_gate_cannot_opt_out_of_activation(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        audit = next(gate for gate in gates["gates"] if gate["id"] == "independent-audits")
+        audit["required_for_activation"] = False
+        errors, incomplete = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(
+            any("independent-audits: required_for_activation must be true" in error for error in errors),
+            errors,
+        )
+        self.assertIn("independent-audits", incomplete)
+
+    def test_activation_gate_schema_rejects_unknown_gate(self) -> None:
+        gates = copy.deepcopy(self.gates)
+        gates["gates"].append(
+            {
+                "id": "unreviewed-gate",
+                "required_for_activation": False,
+                "status": "passed",
+                "evidence": ["docs/Release-Readiness.md"],
+            }
+        )
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(any("unknown activation gates" in error for error in errors), errors)
+
     def test_audit_gate_cannot_pass_without_two_reports(self) -> None:
         gates = copy.deepcopy(self.gates)
         audit = next(gate for gate in gates["gates"] if gate["id"] == "independent-audits")

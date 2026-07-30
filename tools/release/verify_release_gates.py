@@ -72,11 +72,18 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     if gates_document.get("schema_version") != 1:
         errors.append("activation gate schema_version must be 1")
     gates = gates_document.get("gates", [])
+    if not isinstance(gates, list):
+        return ["activation gates must be an array"], []
     by_id = {gate.get("id"): gate for gate in gates if isinstance(gate, dict)}
     if len(by_id) != len(gates):
         errors.append("activation gate identifiers must be present and unique")
     if missing := REQUIRED_GATES - by_id.keys():
         errors.append(f"missing activation gates: {sorted(missing)}")
+    if unknown := by_id.keys() - REQUIRED_GATES:
+        errors.append(f"unknown activation gates: {sorted(unknown)}")
+    for gate_id in REQUIRED_GATES & by_id.keys():
+        if by_id[gate_id].get("required_for_activation") is not True:
+            errors.append(f"{gate_id}: required_for_activation must be true")
     passed_external = [
         gate_id
         for gate_id, gate in by_id.items()
@@ -157,8 +164,8 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
 
     incomplete = [
         gate_id
-        for gate_id, gate in by_id.items()
-        if gate.get("required_for_activation") and gate.get("status") != "passed"
+        for gate_id in sorted(REQUIRED_GATES)
+        if by_id.get(gate_id, {}).get("status") != "passed"
     ]
     if incomplete:
         for name, expected in placeholders.items():

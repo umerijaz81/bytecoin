@@ -100,6 +100,9 @@ Before any external gate passes, `release/activation-gates.json` must freeze one
 40-character `release_revision`; every typed attestation must bind that exact revision. It remains
 `null` while qualification is still in progress. Once frozen, it must resolve to an existing commit
 that is an ancestor of the evidence/activation commit.
+The activation schema permits exactly the six declared gates, and each gate's
+`required_for_activation` flag must remain `true`; a manifest edit cannot opt a pending gate out of
+the activation decision.
 
 The enforced minimums are release policy, not claims about the current branch:
 
