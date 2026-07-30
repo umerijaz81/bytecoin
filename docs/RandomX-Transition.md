@@ -1,7 +1,8 @@
 # RandomX v2 proof-of-work transition
 
 The dormant Jade hard fork switches proof of work from CryptoNight to vendored RandomX v2 at
-`RANDOMX_SWITCH_HEIGHT`. Mainnet remains unchanged because the placeholder activation height must not
+`RANDOMX_SWITCH_HEIGHT`, co-scheduled with the V4-to-Onyx consensus jump so its declared and effective
+activation heights cannot differ. Mainnet remains unchanged because the placeholder activation height must not
 be lowered until independent review, public testnet soak and release governance are complete.
 
 ## Consensus contract

@@ -112,6 +112,12 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
 	              currency.onyx_block_version,
 	    "wallet/mempool next-block construction did not jump directly to Onyx");
+	invariant(!currency.uses_randomx(currency.amethyst_block_version,
+	              parameters::UPGRADE_HEIGHT_ONYX - 1),
+	    "RandomX activated before the V4-to-Onyx boundary");
+	invariant(currency.uses_randomx(currency.onyx_block_version,
+	              parameters::UPGRADE_HEIGHT_ONYX),
+	    "RandomX did not activate with Onyx");
 	Currency isolated_jade(config);
 	isolated_jade.upgrade_heights = {1, 1, 1, 100, 200, 300};
 	invariant(isolated_jade.get_next_block_major_version(98) ==

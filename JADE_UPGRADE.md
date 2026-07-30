@@ -6,8 +6,9 @@ for the consensus-critical cryptography still to come (Tier B). See `SECURITY_PR
 the findings these phases address.
 
 Jade / V5 remains an isolated hard-fork test format, but it is not independently activatable:
-`UPGRADE_HEIGHT_V5`, reserved V6 and `UPGRADE_HEIGHT_ONYX` are co-scheduled. Version selection
-therefore jumps from Amethyst/V4 directly to shielded Onyx/V7. This fail-closed policy prevents the
+`UPGRADE_HEIGHT_V5`, `RANDOMX_SWITCH_HEIGHT`, reserved V6 and `UPGRADE_HEIGHT_ONYX` are co-scheduled.
+Version selection therefore jumps from Amethyst/V4 directly to shielded Onyx/V7 and changes PoW at
+that same declared height. This fail-closed policy prevents the
 partially implemented clear-amount Jade format from reaching consensus while retaining its ring-size,
 authorization-registry and serialization tests.
 

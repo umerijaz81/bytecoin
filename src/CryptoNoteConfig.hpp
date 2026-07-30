@@ -46,7 +46,7 @@ const Height UPGRADE_HEIGHT_RESERVED_V6 = 10000000;
 const Height UPGRADE_HEIGHT_ONYX         = 10000000;
 // Block height at which the laptop-friendly, ASIC-resistant PoW (RandomX, Phase 5) takes over
 // from CryptoNight. Kept far in the future until the RandomX integration is reviewed.
-const Height RANDOMX_SWITCH_HEIGHT = 9000000;
+const Height RANDOMX_SWITCH_HEIGHT = 10000000;
 const Height RANDOMX_SEED_EPOCH    = 2048;
 const Height RANDOMX_SEED_LAG      = 64;
 

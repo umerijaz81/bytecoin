@@ -6,8 +6,9 @@ unreachable until the release gates below are independently satisfied.
 
 ## Implemented baseline
 
-The incomplete Jade V5 clear-amount format and reserved V6 are co-scheduled with Onyx V7, so the
-reachable upgrade path jumps directly from Amethyst V4 to shielded Onyx. Jade's isolated tests remain,
+The incomplete Jade V5 clear-amount format, RandomX transition and reserved V6 are co-scheduled with
+Onyx V7, so the reachable upgrade path jumps directly from Amethyst V4 to shielded Onyx while changing
+PoW at that same height. Jade's isolated tests remain,
 but release policy rejects any activation configuration that would create a standalone V5/V6 interval.
 
 | Gate | Implemented evidence | Remaining exit condition |

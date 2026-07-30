@@ -142,7 +142,19 @@ class ReleaseToolsTest(unittest.TestCase):
         errors, _ = verify_release_gates.verify(self.gates, changed)
         self.assertTrue(any("UPGRADE_HEIGHT_V5 changed" in error for error in errors), errors)
         self.assertTrue(
-            any("must co-activate with shielded Onyx V7" in error for error in errors),
+            any("RandomX, reserved V6 and shielded Onyx V7 must co-activate" in error for error in errors),
+            errors,
+        )
+
+    def test_randomx_declared_height_must_match_effective_onyx_switch(self) -> None:
+        changed = self.config.replace(
+            "const Height RANDOMX_SWITCH_HEIGHT = 10000000;",
+            "const Height RANDOMX_SWITCH_HEIGHT = 9999999;",
+        )
+        self.assertNotEqual(changed, self.config)
+        errors, _ = verify_release_gates.verify(self.gates, changed)
+        self.assertTrue(
+            any("Jade V5, RandomX, reserved V6 and shielded Onyx V7 must co-activate" in error for error in errors),
             errors,
         )
 
