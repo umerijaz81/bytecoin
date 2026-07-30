@@ -119,8 +119,15 @@ void test_zk() {
 		    "malformed authorized transfer must fail");
 		invariant(!Halo2ProofSystem::verify_authorized_transfer(malformed, 32, 21),
 		    "unsupported circuit K must fail");
-		BinaryArray next_snapshot;
-		uint64_t fee = 0;
+		Halo2ProofSystem::VerifiedTransferDelta stale_delta;
+		stale_delta.fee = 99;
+		stale_delta.nullifiers.resize(1);
+		invariant(!Halo2ProofSystem::verify_and_extract_transfer(malformed, 32, 20, &stale_delta),
+		    "malformed transfer extraction must fail");
+		invariant(stale_delta.fee == 0 && stale_delta.nullifiers.empty(),
+		    "failed transfer extraction left a stale delta");
+		BinaryArray next_snapshot{0xff};
+		uint64_t fee = 99;
 		std::array<uint8_t, 16> network{};
 		invariant(!Halo2ProofSystem::verify_apply_transfer(BinaryArray{}, 100, malformed, 32, 20,
 		              network, 1, &next_snapshot, &fee),
@@ -134,12 +141,21 @@ void test_zk() {
 		invariant(Halo2ProofSystem::full_viewing_key(seed, network, &viewing_key),
 		    "Onyx full viewing-key derivation failed");
 		Halo2ProofSystem::WalletScanResult scan;
+		scan.balance = 99;
+		scan.note_count = 99;
+		next_snapshot.assign(1, 0xff);
 		invariant(!Halo2ProofSystem::wallet_scan(BinaryArray{}, seed, network, 0, 1, 20, malformed,
 		              &next_snapshot, &scan),
 		    "malformed wallet scan input must fail");
+		invariant(next_snapshot.empty() && scan.balance == 0 && scan.note_count == 0,
+		    "failed wallet scan left stale outputs");
+		scan.balance = 99;
+		next_snapshot.assign(1, 0xff);
 		invariant(!Halo2ProofSystem::wallet_scan_viewing(BinaryArray{},
 		              BinaryArray(viewing_key.begin(), viewing_key.end()), 0, 1, 20, malformed, &next_snapshot, &scan),
 		    "malformed viewing-wallet scan input must fail");
+		invariant(next_snapshot.empty() && scan.balance == 0,
+		    "failed viewing-wallet scan left stale outputs");
 		std::cout << "  [zk] authorized-transfer boundary rejects malformed input" << std::endl;
 	}
 
@@ -231,6 +247,11 @@ void test_zk() {
 		invariant(Halo2ProofSystem::wallet_finalize_bridge(
 		              unsigned_bridge, ownership_signature, &bridge),
 		    "bridge finalization failed through C++ adapter");
+		BinaryArray aliased_bridge = unsigned_bridge;
+		invariant(Halo2ProofSystem::wallet_finalize_bridge(
+		              aliased_bridge, ownership_signature, &aliased_bridge),
+		    "in-place bridge finalization failed through C++ adapter");
+		invariant(aliased_bridge == bridge, "in-place bridge finalization changed canonical bytes");
 
 		Halo2ProofSystem::VerifiedBridgeDelta verified;
 		invariant(Halo2ProofSystem::verify_bridge(bridge, 13, &verified),
