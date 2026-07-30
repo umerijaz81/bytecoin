@@ -8,6 +8,7 @@ import hashlib
 import json
 import pathlib
 import re
+import unicodedata
 import urllib.parse
 
 from release_common import sha256_file, strict_json_load_file
@@ -34,6 +35,11 @@ REQUIRED_AUDIT_SCOPES = {
     "migration-and-supply-invariants",
     "compiler-and-reproducibility",
 }
+
+
+def _normalize_identity(value: str) -> str:
+    compatible = unicodedata.normalize("NFKC", value)
+    return " ".join(compatible.split()).casefold()
 
 
 def _repository_file(root: pathlib.Path, relative: object) -> pathlib.Path | None:
@@ -87,7 +93,7 @@ def _distinct_identities(
         if not isinstance(identity, str) or not identity.strip():
             errors.append(f"{label}: {identities_key} contains an invalid identity")
             continue
-        normalized.append(" ".join(identity.split()).casefold())
+        normalized.append(_normalize_identity(identity))
     if len(normalized) != count or len(set(normalized)) != count:
         errors.append(
             f"{label}: {identities_key} must contain exactly {count} distinct normalized identities"
@@ -219,7 +225,7 @@ def _source_provenance(
             if not isinstance(builder_id, str) or not builder_id.strip():
                 errors.append(f"{label}: source builder_id is invalid")
             else:
-                builder_records.append(" ".join(builder_id.split()).casefold())
+                builder_records.append(_normalize_identity(builder_id))
             environment_digest = builder.get("environment_sha256")
             if not isinstance(environment_digest, str) or not HEX_32.fullmatch(
                 environment_digest
@@ -418,7 +424,7 @@ def _audit(
     elif findings["critical"] != 0 or findings["high"] != 0:
         errors.append(f"{label}: unresolved critical and high findings must both be zero")
     _artifact(document, root, errors, label, tracked_paths)
-    normalized = " ".join(organization.split()).casefold() if organization else None
+    normalized = _normalize_identity(organization) if organization else None
     return errors, normalized, scopes
 
 
@@ -508,7 +514,7 @@ def _testnet(
             if not isinstance(node_id, str) or not node_id.strip():
                 errors.append(f"{label}: node result has an invalid node_id")
             else:
-                result_ids.append(" ".join(node_id.split()).casefold())
+                result_ids.append(_normalize_identity(node_id))
             if result.get("revision") != document.get("revision"):
                 errors.append(f"{label}: node result revision must equal the attested revision")
             if result.get("final_height") != end_height:
@@ -584,7 +590,7 @@ def _reproducibility(
                     if not isinstance(builder_id, str) or not builder_id.strip():
                         errors.append(f"{label}:{name}: builder_id is invalid")
                     else:
-                        builder_records.append(" ".join(builder_id.split()).casefold())
+                        builder_records.append(_normalize_identity(builder_id))
                     environment_digest = builder.get("environment_sha256")
                     if not isinstance(environment_digest, str) or not HEX_32.fullmatch(
                         environment_digest
@@ -675,7 +681,7 @@ def _reproducibility(
                     if not isinstance(builder_id, str) or not builder_id.strip():
                         errors.append(f"{label}:{name}:{program}: build builder_id is invalid")
                     else:
-                        build_ids.append(" ".join(builder_id.split()).casefold())
+                        build_ids.append(_normalize_identity(builder_id))
                     for key, expected in expected_hashes.items():
                         if build.get(key) != expected:
                             errors.append(

@@ -178,7 +178,9 @@ The enforced minimums are release policy, not claims about the current branch:
 
 Every independent-node, builder, drill-participant, and governance-approval count must be accompanied
 by an equally sized list of distinct normalized identities. Numeric counts alone cannot satisfy a
-gate. Governance compiler and target-profile digests are recomputed from the frozen revision: the
+gate. Identity comparison applies Unicode NFKC compatibility normalization before collapsing
+whitespace and case, so full-width or compatibility spellings cannot inflate independence counts.
+Governance compiler and target-profile digests are recomputed from the frozen revision: the
 compiler digest is the LF-canonicalized `tools/onyx/compiler_v1.py` hash, and all four approved
 standard-program manifests must bind that compiler and one identical target-profile digest.
 

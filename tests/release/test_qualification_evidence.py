@@ -988,6 +988,40 @@ class QualificationEvidenceTest(unittest.TestCase):
             )
             self.assertTrue(any("distinct organizations" in error for error in errors), errors)
 
+    def test_identity_normalization_prevents_unicode_compatibility_bypass(self) -> None:
+        errors: list[str] = []
+        identities = qualification_evidence._distinct_identities(
+            {
+                "independent_builders": 2,
+                "builder_ids": ["Builder One", "Ｂuilder One"],
+            },
+            "independent_builders",
+            "builder_ids",
+            2,
+            errors,
+            "source-provenance",
+        )
+        self.assertIsNone(identities)
+        self.assertTrue(any("distinct normalized identities" in error for error in errors), errors)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first = self.write_document(root, "audit-a.json", self.audit(root, "A Labs", "a.txt"))
+            second = self.write_document(
+                root,
+                "audit-b.json",
+                self.audit(root, "Ａ Labs", "b.txt"),
+            )
+            audit_errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+            )
+            self.assertTrue(
+                any("distinct organizations" in error for error in audit_errors),
+                audit_errors,
+            )
+
     def test_future_dated_attestation_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
