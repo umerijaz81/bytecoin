@@ -106,18 +106,26 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	Currency currency(config);
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;
-	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_V5 - 2) ==
-	              currency.amethyst_block_version,
-	    "wallet/mempool next-block version switched to Jade too early");
-	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_V5 - 1) ==
-	              currency.jade_block_version,
-	    "wallet/mempool next-block version did not switch at the Jade boundary");
 	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 2) ==
-	              currency.jade_block_version,
-	    "wallet next-block construction enabled Onyx too early");
+	              currency.amethyst_block_version,
+	    "wallet/mempool next-block version left Amethyst before the co-activation boundary");
 	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
 	              currency.onyx_block_version,
-	    "wallet/mempool next-block construction did not switch at the Onyx boundary");
+	    "wallet/mempool next-block construction did not jump directly to Onyx");
+	Currency isolated_jade(config);
+	isolated_jade.upgrade_heights = {1, 1, 1, 100, 200, 300};
+	invariant(isolated_jade.get_next_block_major_version(98) ==
+	              isolated_jade.amethyst_block_version,
+	    "isolated Jade boundary switched too early");
+	invariant(isolated_jade.get_next_block_major_version(99) ==
+	              isolated_jade.jade_block_version,
+	    "isolated Jade boundary coverage did not activate V5");
+	invariant(isolated_jade.get_next_block_major_version(298) ==
+	              6,
+	    "wallet next-block construction enabled Onyx too early");
+	invariant(isolated_jade.get_next_block_major_version(299) ==
+	              isolated_jade.onyx_block_version,
+	    "isolated Onyx boundary did not activate V7");
 	bool maximum_height_rejected = false;
 	try {
 		(void)currency.get_next_block_major_version(std::numeric_limits<Height>::max());
@@ -442,8 +450,8 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		              decoded.onyx_envelope == tx.onyx_envelope,
 		    "Onyx token issuance envelope did not round-trip");
 		invariant(currency.get_block_major_version_for_height(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
-		        currency.jade_block_version,
-		    "pre-Onyx block version changed");
+		        currency.amethyst_block_version,
+		    "incomplete Jade became reachable before Onyx");
 		invariant(currency.get_block_major_version_for_height(parameters::UPGRADE_HEIGHT_ONYX) ==
 		        currency.onyx_block_version,
 		    "Onyx activation did not skip reserved block version 6");

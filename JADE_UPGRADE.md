@@ -5,9 +5,11 @@ coin. It records what is **implemented now** (Tier A) and the **exact seams + ve
 for the consensus-critical cryptography still to come (Tier B). See `SECURITY_PRIVACY_AUDIT.md` for
 the findings these phases address.
 
-All consensus-breaking changes activate under a single new hard-fork version, **Jade / V5**, gated
-at `UPGRADE_HEIGHT_V5` (`src/CryptoNoteConfig.hpp`). The mainnet height is intentionally far in the
-future so current Amethyst/V4 consensus is unchanged until a fork is scheduled and reviewed.
+Jade / V5 remains an isolated hard-fork test format, but it is not independently activatable:
+`UPGRADE_HEIGHT_V5`, reserved V6 and `UPGRADE_HEIGHT_ONYX` are co-scheduled. Version selection
+therefore jumps from Amethyst/V4 directly to shielded Onyx/V7. This fail-closed policy prevents the
+partially implemented clear-amount Jade format from reaching consensus while retaining its ring-size,
+authorization-registry and serialization tests.
 
 > **Non-negotiable rule:** consensus-critical crypto (range proofs, membership proofs, PQ
 > signatures) is integrated from **peer-reviewed, vendored libraries**, never hand-rolled, and each
@@ -35,6 +37,10 @@ The headline result, from `build/artifacts/bin/tests --jade`:
 ```
 
 ## Tier B — vendored crypto, testnet-first, needs review
+
+Phases 3 and 4 below are not implemented. Onyx V7 supersedes them for activation with a vendored
+Halo2 shielded-note system. Jade V5 must remain co-scheduled with Onyx unless both phases receive
+reviewed backends, complete vectors and an explicit release-policy change.
 
 Each phase below is consensus-critical and ships only after review. The seams are already in place
 (version dispatch + dormant scaffolding), so the cryptographic cores can be dropped in without

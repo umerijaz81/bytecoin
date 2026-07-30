@@ -6,6 +6,10 @@ unreachable until the release gates below are independently satisfied.
 
 ## Implemented baseline
 
+The incomplete Jade V5 clear-amount format and reserved V6 are co-scheduled with Onyx V7, so the
+reachable upgrade path jumps directly from Amethyst V4 to shielded Onyx. Jade's isolated tests remain,
+but release policy rejects any activation configuration that would create a standalone V5/V6 interval.
+
 | Gate | Implemented evidence | Remaining exit condition |
 |---|---|---|
 | O0 proof foundation | Exact-pinned vendored Halo2/Pasta crate, active fail-closed proof-system seam, bounded panic-contained C ABI, CMake integration, locked offline three-platform workflow, primitive vectors, malformed-input/batch-shape tests, and an automated ASan/UBSan/libFuzzer gate with deterministic C++ parser/Onyx envelope seeds. CMake recursively tracks every first-party Rust module plus the toolchain and offline-source configuration, so nested prover/compiler edits cannot silently reuse a stale static library. Every build tree owns an isolated runtime/archive artifact root, preventing ZK, non-ZK, sanitizer or release configurations from silently overwriting and cross-linking one another; release packaging must opt into an explicit already-isolated output root. Structured consensus verification/extraction and deterministic key/hash/toy-prover entry points clear fixed caller outputs, allocation pairs and element counts before every post-validation failure; hash input/output aliasing is explicitly supported. | External dependency/proof-boundary review, sustained independently reviewed fuzz campaigns over valid proof envelopes and reproducible release artifacts. |

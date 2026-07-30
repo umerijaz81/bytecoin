@@ -305,6 +305,15 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         current[name] = int(match.group(1))
         if not isinstance(expected, int) or isinstance(expected, bool) or expected <= 0:
             errors.append(f"invalid placeholder height for {name}")
+    skipped_incomplete_versions = {
+        current.get("UPGRADE_HEIGHT_V5"),
+        current.get("UPGRADE_HEIGHT_RESERVED_V6"),
+        current.get("UPGRADE_HEIGHT_ONYX"),
+    }
+    if None not in skipped_incomplete_versions and len(skipped_incomplete_versions) != 1:
+        errors.append(
+            "incomplete Jade V5 and reserved V6 must co-activate with shielded Onyx V7"
+        )
     passed_external = [
         gate_id
         for gate_id, gate in by_id.items()

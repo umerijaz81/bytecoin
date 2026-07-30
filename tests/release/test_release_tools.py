@@ -136,11 +136,15 @@ class ReleaseToolsTest(unittest.TestCase):
 
     def test_activation_height_change_fails_closed(self) -> None:
         changed = self.config.replace(
-            "const Height UPGRADE_HEIGHT_V5 = 9000000;", "const Height UPGRADE_HEIGHT_V5 = 42;"
+            "const Height UPGRADE_HEIGHT_V5 = 10000000;", "const Height UPGRADE_HEIGHT_V5 = 42;"
         )
         self.assertNotEqual(changed, self.config)
         errors, _ = verify_release_gates.verify(self.gates, changed)
         self.assertTrue(any("UPGRADE_HEIGHT_V5 changed" in error for error in errors), errors)
+        self.assertTrue(
+            any("must co-activate with shielded Onyx V7" in error for error in errors),
+            errors,
+        )
 
     def test_placeholder_manifest_requires_exact_activation_height_set(self) -> None:
         gates = copy.deepcopy(self.gates)

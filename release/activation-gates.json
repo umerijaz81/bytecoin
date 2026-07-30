@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_revision": null,
   "placeholder_heights": {
-    "UPGRADE_HEIGHT_V5": 9000000,
+    "UPGRADE_HEIGHT_V5": 10000000,
     "RANDOMX_SWITCH_HEIGHT": 9000000,
     "UPGRADE_HEIGHT_RESERVED_V6": 10000000,
     "UPGRADE_HEIGHT_ONYX": 10000000

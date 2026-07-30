@@ -35,7 +35,10 @@ const Height KEY_IMAGE_SUBGROUP_CHECKING_HEIGHT = 1267000;
 // membership proofs, RandomX PoW and PQ-agility in later phases). The mainnet activation height
 // is intentionally far in the future so current (Amethyst/V4) consensus is unchanged until a
 // concrete fork height is scheduled. Test/stage nets can lower it for end-to-end testing.
-const Height UPGRADE_HEIGHT_V5 = 9000000;
+// Jade V5 still contains clear amounts and the Amethyst membership proof. Until independently
+// reviewed confidential-amount and large-anonymity backends exist, V5 and reserved V6 must share
+// Onyx's activation height so version selection jumps directly from V4 to shielded V7.
+const Height UPGRADE_HEIGHT_V5 = 10000000;
 // Block major version 6 is already reserved by collective-mining builds. Two simultaneous upgrade
 // entries skip it deterministically; Onyx protocol/transaction V6 therefore activates under block
 // major version 7. Both heights remain unreachable placeholders until review and testnet soak.
