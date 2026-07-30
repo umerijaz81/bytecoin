@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include "Core/Archive.hpp"
 #include "Core/BlockChainState.hpp"
@@ -103,6 +104,22 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	Currency currency(config);
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;
+	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_V5 - 2) ==
+	              currency.amethyst_block_version,
+	    "wallet/mempool next-block version switched to Jade too early");
+	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_V5 - 1) ==
+	              currency.jade_block_version,
+	    "wallet/mempool next-block version did not switch at the Jade boundary");
+	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 1) ==
+	              currency.onyx_block_version,
+	    "wallet/mempool next-block version did not switch at the Onyx boundary");
+	bool maximum_height_rejected = false;
+	try {
+		(void)currency.get_next_block_major_version(std::numeric_limits<Height>::max());
+	} catch (const std::exception &) {
+		maximum_height_rejected = true;
+	}
+	invariant(maximum_height_rejected, "next-block version wrapped at maximum height");
 
 	// Portable-storage is reachable through both RPC and Levin/P2P. Reject ambiguous encodings and
 	// attacker-selected allocation/work factors before materializing the intermediate JSON tree.

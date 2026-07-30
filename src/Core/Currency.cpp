@@ -240,6 +240,12 @@ uint8_t Currency::get_block_major_version_for_height(Height height) const {
 	return static_cast<uint8_t>(upgrade_heights.size() + 1);
 }
 
+uint8_t Currency::get_next_block_major_version(Height current_height) const {
+	invariant(current_height != std::numeric_limits<Height>::max(),
+	    "Cannot derive next block version after maximum height");
+	return get_block_major_version_for_height(current_height + 1);
+}
+
 Difficulty Currency::get_minimum_difficulty(uint8_t block_major_version) const {
 	if (block_major_version == 1 || net == "test")
 		return MINIMUM_DIFFICULTY_V1;

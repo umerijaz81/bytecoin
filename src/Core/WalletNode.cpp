@@ -855,11 +855,17 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 	if (request.transaction.anonymity > 100)  // Arbitrary value
 		throw json_rpc::Error(api::walletd::CreateTransaction::TOO_MUCH_ANONYMITY,
 		    "Wallet will not create transactions with anonymity > 100 because large anonymity values actually reduce anonymity due to tiny number of similar transactions");
-	const auto min_anonymity  = m_currency.minimum_anonymity(get_wallet_state().get_tip().major_version);
+	const uint8_t construction_block_version =
+	    m_currency.get_next_block_major_version(get_wallet_state().get_tip_height());
+	if (construction_block_version >= m_currency.onyx_block_version)
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST,
+		    "Legacy transaction construction is unavailable for the next Onyx block; "
+		    "use create_onyx_transfer or create_onyx_bridge");
+	const auto min_anonymity  = m_currency.minimum_anonymity(construction_block_version);
 	const auto good_anonymity = std::max(min_anonymity, request.transaction.anonymity);
 	Height confirmed_height   = api::ErrorWrongHeight::fix_height_or_depth(
         request.confirmed_height_or_depth, get_wallet_state().get_tip_height(), true, false);
-	const bool is_jade = get_wallet_state().get_tip().major_version >= m_currency.jade_block_version;
+	const bool is_jade = construction_block_version >= m_currency.jade_block_version;
 	bool is_amethyst   = is_jade;
 	{
 		api::BlockHeader confirmed_header;

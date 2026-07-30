@@ -807,9 +807,10 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	const size_t my_size = binary_tx.size();
 	// Validate against the block miners can build next before using the fee for pool ordering. Onyx
 	// fees live in the opaque authorized envelope and cannot be recovered by legacy get_tx_fee().
-	const Height next_block_height = get_tip_height() + 1;
+	const Height tip_height = get_tip_height();
 	const uint8_t next_block_major_version =
-	    m_currency.get_block_major_version_for_height(next_block_height);
+	    m_currency.get_next_block_major_version(tip_height);
+	const Height next_block_height = tip_height + 1;  // Safe after the checked helper above.
 	const Amount my_fee = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
 	    m_config.paranoid_checks || check_sigs, true);
 	const Amount my_fee_per_byte = my_fee / my_size;

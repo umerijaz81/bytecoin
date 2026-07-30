@@ -36,6 +36,9 @@ thereafter. The remote server can still observe synchronization progress. Wallet
 the identifying sparse chain. This mode does not solve decoy/broadcast correlation. Walletd deliberately omits transaction construction,
 requested amounts, returned decoys, transaction hashes and raw transaction bodies from its logs.
 Onyx shielded transfers do not use the legacy amount-specific ring-decoy flow.
+`create_transaction` is a legacy V1/V4/V5 constructor. At the block immediately preceding Onyx
+activation it fails closed instead of creating a Jade transaction that the next block cannot accept;
+use `create_onyx_transfer` for shielded funds or `create_onyx_bridge` for the one-way legacy migration.
 Privacy sync also omits wallet-local `known_hashes` from `sync_mempool`; it requests the node's full
 current pool and reconciles removals locally. This costs additional bandwidth but prevents the
 request from fingerprinting the wallet's exact transaction-awareness set.

@@ -65,6 +65,7 @@ public:
 	std::vector<Height> upgrade_heights;  // Height of first V2 bloc, first V3 block, etc
 	Height key_image_subgroup_checking_height;
 	uint8_t get_block_major_version_for_height(Height) const;
+	uint8_t get_next_block_major_version(Height current_height) const;
 	uint8_t amethyst_block_version;
 	uint8_t amethyst_transaction_version;
 	uint8_t jade_block_version;
