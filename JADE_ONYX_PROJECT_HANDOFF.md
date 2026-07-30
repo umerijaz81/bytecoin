@@ -1,0 +1,779 @@
+# Jade/Onyx Project Progress and Implementation Handoff
+
+Last reviewed: 2026-07-30  
+Repository: `https://github.com/umerijaz81/bytecoin.git`  
+Working branch: `kimiK3/jade-onyx-hardening`  
+Last committed revision reviewed: `5ed59bd` (`Add fixed Onyx qualification network`)
+
+## 1. Purpose and status vocabulary
+
+This is the detailed engineering handoff for continuing the Bytecoin Jade/Onyx work with another
+developer or AI tool. It records what is implemented, what is only present as uncommitted work, what
+has been tested, and what still requires implementation or independent evidence.
+
+The words below have precise meanings:
+
+- **Implemented and committed** means the code is in the branch history at or before `8671803`.
+- **In progress** means code exists only in the current working tree and must not be treated as
+  finished, reviewed, or published.
+- **Repository-complete** means the planned code and automated tests exist. It does not imply that
+  cryptography or consensus is secure.
+- **Release-complete** requires independent audits, public qualification, reproducible binaries,
+  an incident drill, provenance, and governance approval. Those external gates are still incomplete.
+- **Verified in the current work session** means the stated command was run against the current
+  checkout. Historical claims in other status documents should be independently rerun before release.
+
+No cryptocurrency implementation can honestly be described as "foolproof", "unbreakable", or
+perfectly trustless. This branch materially hardens the code and implements a shielded protocol, but
+its safety depends on correct code, frozen parameters, independent review, operational discipline,
+and the release gates described below.
+
+## 2. Important workspace instructions
+
+Before changing anything, inspect the worktree:
+
+```powershell
+git status --short
+git branch --show-current
+git log --oneline -20
+```
+
+At the time this document was created, the worktree contained:
+
+```text
+A  Bytecoin_Onyx_Security_Review.md
+ M docs/Bytecoin-Node-Daemon-JSON-RPC-API.md
+ M docs/Bytecoin-Wallet-Daemon-JSON-RPC-API.md
+ M src/Core/Config.cpp
+ M src/Core/Currency.cpp
+ M src/Core/Wallet.cpp
+ M src/main_bytecoind.cpp
+ M src/main_walletd.cpp
+ M tests/blockchain/test_jade_consensus.cpp
+?? docs/Onyx-Qualification-Network.md
+```
+
+`Bytecoin_Onyx_Security_Review.md` was already staged by the user. It is not part of the current
+qualification-network implementation and must not be edited, unstaged, deleted, or accidentally
+included in another commit. When committing other files, use an explicit path list or:
+
+```powershell
+git commit --only <paths...> -m "Commit message"
+```
+
+Do not use destructive cleanup commands, `git reset --hard`, or broad staging such as `git add -A`.
+Preserve unrelated user changes.
+
+## 3. Authoritative documents and precedence
+
+Use these documents together:
+
+1. `ONYX_PROTOCOL_SPEC.md` — consensus and protocol requirements; highest-level technical authority.
+2. `ONYX_ARCHITECTURE.md` — component boundaries and architecture.
+3. `ONYX_IMPLEMENTATION_STATUS.md` — detailed reconciliation between roadmap and code.
+4. `SECURITY_PRIVACY_AUDIT.md` — threat findings and mitigations already applied.
+5. `JADE_UPGRADE.md` — Jade-specific design and compatibility information.
+6. `ONYX_MIGRATION.md` — legacy-to-Onyx bridge and supply rules.
+7. `ONYX_PROGRAMS.md` — standard-program registry and state model.
+8. `docs/Release-Readiness.md` — enforced release evidence and external exit gates.
+9. This file — operational handoff and current worktree state.
+
+If prose disagrees with consensus code or tests, stop and reconcile it. Never silently choose the
+more permissive interpretation.
+
+## 4. Consensus version and activation model
+
+The production configuration currently uses these four equal placeholder heights:
+
+```cpp
+UPGRADE_HEIGHT_V5          = 10000000;
+RANDOMX_SWITCH_HEIGHT      = 10000000;
+UPGRADE_HEIGHT_RESERVED_V6 = 10000000;
+UPGRADE_HEIGHT_ONYX        = 10000000;
+```
+
+`src/CryptoNoteConfig.hpp` contains a compile-time assertion requiring those values to remain
+co-scheduled. The release verifier independently parses the constants and requires both equality and
+the compile-time assertion.
+
+The intended reachable production path is:
+
+```text
+legacy V1–V3 -> Amethyst V4 -> Onyx V7
+```
+
+The version selector jumps directly from V4 to V7 at the common activation height. It deliberately
+does not expose a production V5 or V6 interval:
+
+- **V5/Jade** remains isolated for compatibility and targeted tests. Its confidential-amount and
+  large-membership roadmap was not completed, so it must not become independently reachable.
+- **V6** is reserved.
+- **V7/Onyx** is the shielded transaction/state protocol.
+- **RandomX** switches at the same boundary as Onyx so there is no unintended separate fork interval.
+
+Relevant commits:
+
+- `f332647` — skip incomplete Jade consensus versions.
+- `13f2d54` — align RandomX with Onyx activation.
+- `8671803` — enforce activation co-scheduling at compile time.
+
+Do not change one height by itself. A real activation proposal must update the complete schedule,
+tests, release evidence, reference block, and governance record together.
+
+## 5. Phase-by-phase implementation status
+
+### O0 — Proof-system foundation
+
+Status: **Repository implementation substantially complete; external review and sustained fuzzing
+remain.**
+
+Implemented:
+
+- Exact-pinned, vendored Rust proof dependencies based on Halo2/Pasta.
+- Offline Cargo configuration and committed vendor tree.
+- A bounded, panic-contained C ABI between C++ consensus/wallet code and Rust.
+- `cn::zk::IProofSystem` and the active `Halo2ProofSystem` adapter.
+- Fail-closed behavior when ZK support is absent or malformed inputs are supplied.
+- ABI versioning, deterministic hash/key entry points, typed proof extraction and verification.
+- Fixed caller outputs, allocation pairs, and element counts are cleared on post-validation failure.
+- Supported hash input/output aliasing is explicitly tested.
+- Batch-shape validation and null verifying-key protections.
+- CMake integration with recursive first-party Rust input tracking.
+- Separate artifacts for ZK, non-ZK, sanitizer, and release build directories.
+- Known-answer, malformed-input, sanitizer, and fuzz scaffolding.
+- Deterministic seeds for the C++ parser and Onyx envelope fuzz targets.
+
+Primary locations:
+
+- `src/Core/zk/`
+- `vendor/onyx-zk/`
+- `tests/zk/`
+- `docs/Onyx-Fuzzing.md`
+- CMake files referencing `ONYX_ZK`
+
+Still required:
+
+- Independent cryptographic dependency and FFI-boundary review.
+- Sustained coverage-guided fuzzing over valid and malformed proof envelopes.
+- Reproducible release artifacts on all required platforms.
+- Published proof-generation and verification benchmarks at frozen parameters.
+
+### O1 — Canonical Onyx state
+
+Status: **Repository implementation substantially complete; independent consensus audit and long
+campaigns remain.**
+
+Implemented:
+
+- Canonical notes and versioned Onyx envelopes.
+- Note encryption and network/domain binding.
+- Commitment tree, retained anchors, nullifier set, and bounded snapshots.
+- Atomic state application and rollback.
+- Replay, duplicate-nullifier, stale-anchor, reorganization, and persistence coverage.
+- Snapshot rejection for impossible or noncanonical state.
+- Token issuance ledger validation: sorted unique entries, positive sequence/supply, registered
+  mintable programs, and cap enforcement.
+- Supply-audit and standard-state query paths that clear caller-visible outputs on failure.
+- Tip-hash keyed supply-audit caching that recomputes on same-height reorganization.
+
+Primary locations:
+
+- `src/Core/Onyx*`
+- `src/Core/zk/`
+- `tests/zk/`
+- `ONYX_PROTOCOL_SPEC.md`
+- `ONYX_PROGRAMS.md`
+
+Still required:
+
+- Independent consensus-state audit.
+- Long randomized differential apply/undo/reorg campaigns.
+- Crash-recovery campaigns against real database interruption points.
+
+### O2 — Private transfers and authorization
+
+Status: **Core implementation complete in repository; independent circuit audit and frozen benchmarks
+remain.**
+
+Implemented:
+
+- Shape-bound Halo2 transfer circuits.
+- Spend authorization and binding authorization.
+- Note commitment, nullifier, ciphertext, fee, network, and expiry bindings.
+- Value conservation.
+- Native asset and program-asset handling.
+- Negative mutation tests for public inputs, proof data, signatures, commitments, and authorization.
+- Consensus resource and cost limits.
+- Toy O0 verifier kept away from production consensus paths.
+
+Primary locations:
+
+- `vendor/onyx-zk/src/`
+- `src/Core/zk/`
+- `tests/zk/`
+- `ONYX_PROTOCOL_SPEC.md`
+
+Still required:
+
+- Two-party or equivalent independent circuit review as part of the audit gate.
+- Public benchmark report on representative release hardware.
+- Longer malformed-proof and proof-denial-of-service campaigns.
+
+### O3 — Wallet, scanning, recovery, and RPC
+
+Status: **Core repository implementation complete; hardware-wallet and operator acceptance remain.**
+
+Implemented:
+
+- Seed/key hierarchy, addresses, full viewing keys, scanning, witnesses, proving, and recovery.
+- Native and token balances.
+- Historical witness retention and Onyx-history synchronization.
+- Pending note/nullifier/bridge reservations.
+- Network-bound portable view-only format.
+- Encrypted wallet persistence and portable/browser wallet migration.
+- View-only scanning without seed or spend authority.
+- Backup, password rotation, alternate-node recovery, address/balance preservation, and recovered
+  spending in process-level qualification.
+- Transaction construction aligned to the expected next-block version.
+- Construction fails closed before Onyx and becomes available one block before activation for
+  next-block admission.
+- Overflow-safe expiry and fee arithmetic.
+- RPC methods for transfers, bridge operations, programs, state, and supply queries.
+- Remote-decoy anonymity downgrade rejection and full-width decoy-index arithmetic.
+- Wallet logs avoid construction requests, amounts, decoys, hashes, and raw transaction bodies.
+
+Primary locations:
+
+- `src/Core/Wallet.cpp`
+- wallet implementation and RPC files under `src/`
+- `docs/Bytecoin-Wallet-Daemon-JSON-RPC-API.md`
+- browser wallet sources and tests
+- `tests/`
+
+Still required:
+
+- Hardware-wallet testing with a real supported device or independently maintained implementation.
+- Operator acceptance runbook and signed results.
+- Multi-operator recovery rehearsal on the frozen qualification revision.
+
+### O4 — Legacy-to-Onyx migration and supply invariants
+
+Status: **Core repository implementation complete; operational rehearsal and independent supply audit
+remain.**
+
+Implemented:
+
+- One-way legacy-output shielding into Onyx.
+- Legacy ownership authorization.
+- Legacy key-image replay prevention plus a domain-separated Onyx bridge replay marker.
+- Atomic supply accounting and rollback.
+- Supply-audit RPC.
+- Pending-wallet bridge replay prevention.
+- State apply, exact supply reconciliation, replay rejection, and fail-closed output tests.
+- Snapshot and supply decoder fuzz targets.
+
+Primary locations:
+
+- `ONYX_MIGRATION.md`
+- bridge/state code under `src/Core/`
+- ZK bridge implementation under `vendor/onyx-zk/`
+- migration and wallet tests under `tests/`
+
+Still required:
+
+- Multi-node operational migration rehearsal.
+- Incident rollback drill using realistic snapshots.
+- Independent supply-invariant audit.
+- Public qualification evidence binding start/end supply snapshots and block hashes.
+
+### O5 — Standard programs, compiler, and SDKs
+
+Status: **Substantial implementation exists. Standard programs and the frozen compiler profile are
+implemented; independent review and public qualification remain.**
+
+Implemented:
+
+- Canonical program registry with activation/deactivation and resource accounting.
+- Funded capped-token deployment, private issuance, and token/native-fee transfers.
+- Stateful NFT, vesting, multisignature custody, and swap profiles.
+- Canonical application data, contexts, ordered-call bundles, and state conflict handling.
+- Atomic program state application and rollback.
+- Wallet construction, proof generation, RPC state queries, and mempool conflict eviction.
+- Pinned source packages and reproducible export-bound descriptors.
+- Deterministic Halo2 gates for the frozen scalar/array/record/fixed-byte language.
+- Checked unsigned arithmetic, field/boolean operations, comparisons, division/remainder, shifts,
+  guarded execution, bounded indexing, function inlining, and multi-export identity binding.
+- Versioned Poseidon, Merkle-node, and nullifier intrinsics.
+- Strict parser, type checker, canonical IR, resource analysis, package locking, independent decoder,
+  deterministic bundles, and atomic publication.
+- Dependency-free Python, TypeScript/JavaScript, and Rust SDK profiles.
+- Golden cross-language request/response and canonical byte compatibility.
+- Rust SDK network-bound portable keys and typed transport-independent JSON.
+- Structured compiler campaign and real proof vectors for supported standard programs.
+
+Primary locations:
+
+- `ONYX_PROGRAMS.md`
+- `docs/Onyx-Compiler-Specification.md`
+- `docs/Onyx-Compiler-Frontend.md`
+- `tools/onyx/compiler_v1.py`
+- `programs/onyx-standard/`
+- `tests/onyx_compiler/`
+- `sdk/onyx/python/`
+- `sdk/onyx/typescript/`
+- `sdk/onyx/rust/`
+
+Still required:
+
+- Independent review of compiler lowering, circuit generation, canonical encodings, and consensus
+  integration.
+- Sustained compiler/parser/backend fuzzing.
+- Public testnet qualification of all standard programs and rollback paths.
+- Extra language bindings only when an identified maintainer can satisfy the same compatibility bar.
+- Unknown or user-supplied circuits must continue to fail closed until explicitly reviewed and
+  activated. Do not generalize the compiler boundary casually.
+
+### O6 — Network privacy, scaling, PoW transition, and releases
+
+Status: **Major repository components implemented; public operation, hardware measurements, audits,
+and release ceremony remain.**
+
+Implemented:
+
+- Negotiated Dandelion++ relay with epoch rotation, stem selection, loop prevention, hop limits,
+  randomized embargo/fluff recovery, disconnect recovery, delivery scoring, and v4 fallback.
+- Deterministic adversarial simulation and four-process daemon/miner/wallet topology tests.
+- Fail-closed SOCKS5 outbound transport with no local hidden-service DNS lookup.
+- Canonical onion/I2P peer identity framing and peer-database persistence.
+- Untrusted anonymity-referral bounds, graylisting, validation, and poisoning resistance.
+- Linux adversarial SOCKS5 process test and DNS tripwire.
+- Vendored RandomX v2.0.1 with delayed branch-derived seed epochs.
+- Node/miner template negotiation, malformed-template failure, architecture KATs, full-memory policy,
+  reorganization/reopen campaigns, and real daemon/miner process qualification.
+- Release archive, checksum, SBOM, dependency lock, provenance, and evidence verification tooling.
+- Strict evidence JSON parsing and resource bounds.
+
+Still required:
+
+- Historical released-v4 binary compatibility matrix.
+- Real Tor and I2P multi-node service tests.
+- Cross-platform packet capture proving no proxy bypass or DNS leakage.
+- Longer public Dandelion, long-sync, RandomX epoch, and reorganization soak.
+- Published RandomX throughput, memory, and power measurements on native release hardware.
+- Independent network privacy, DoS, RandomX integration, and release-process review.
+- All external release gates in section 9.
+- Proof aggregation/recursion must not be added unless profiling proves a need and the construction is
+  independently reviewed.
+
+## 6. Jade-specific status
+
+Implemented Jade hardening includes:
+
+- Explicit authorization-scheme identifier bound into the signed prefix.
+- Unknown or inactive scheme rejection.
+- Jade-aware wallet construction at its isolated boundary.
+- Correct V5 transaction-size estimation and fee calculation.
+- Overflow-safe amount-plus-fee and rounding arithmetic.
+- Jade sendproof version and scheme preservation.
+- Existing V1–V4 and Onyx encodings remain unchanged.
+
+Not implemented:
+
+- The original standalone Jade confidential-amount phase.
+- The original large-membership anonymity phase.
+- A production hybrid post-quantum signature scheme.
+
+These omissions are why the production selector skips V5/V6 and activates V7 directly. The reserved
+hybrid-PQ registry value is only a reservation. Algorithm choice, dependency review, key migration,
+address commitments, downgrade rules, sizes, vectors, and audits are all still required before use.
+
+## 7. Cross-cutting security hardening already implemented
+
+The branch also includes security work outside the phase labels:
+
+- HTTP header limit, request-body limit, connection cap, header/body deadlines, and accept recovery.
+- Conflicting `Content-Length` rejection.
+- JSON depth limit and duplicate decoded-key rejection, including escape-equivalent names.
+- Strict UTF-8 and surrogate handling.
+- Generic external errors instead of internal exception leakage.
+- Constant-behavior credential comparison and protected credential-file loading.
+- Rejection of insecure wallet password process arguments.
+- Hardware-wallet emulator excluded from release artifacts and blocked in normal runtime.
+- Zero-fee standard-program mempool cap checked before expensive proof verification.
+- Peer-address log redaction by default.
+- Archive source-IP attribution off by default.
+- Browser-wallet encrypted persistence, authenticated migration, wrong-password rejection, and durable
+  password rotation.
+- Remote decoy count enforcement: insufficient decoys cause `NOT_ENOUGH_ANONYMITY`, never a silently
+  smaller ring.
+
+These controls reduce identifiable threats. They do not replace TLS termination, trusted deployment,
+rate limiting at the network edge, audit, or operator monitoring.
+
+## 8. Release tooling and evidence hardening
+
+The release verifier is designed to distrust repository evidence until it passes strict checks.
+Implemented defenses include:
+
+- Duplicate JSON key rejection.
+- Non-finite number rejection.
+- Numeric overflow rejection.
+- JSON byte, nesting, string, list, and object member bounds.
+- Symlink, alias, path traversal, and non-regular-file rejection.
+- Exact Git-tracked evidence path checks.
+- Evidence replay/count inflation prevention.
+- Unicode NFKC identity normalization, whitespace collapse, and case normalization.
+- Canonical UTC timestamps only.
+- Strict public endpoint syntax.
+- Gate ordering: governance cannot precede qualification.
+- Activation-height map binding to the exact activation commit.
+- Compiler and target-profile digest recomputation.
+- Source archive/SBOM regeneration and comparison.
+- Dependency and vendored-tree locks.
+
+Recent hardening commits:
+
+```text
+c0274b9 Reject duplicate keys in release JSON
+1d1b4a4 Reject non-finite release JSON numbers
+7d372db Reject overflowing release JSON numbers
+d5a1d25 Bound release JSON resource usage
+2ccc3e9 Reject aliased release evidence paths
+a91869c Prevent release evidence count replay
+3bc17e8 Normalize release gate identities
+1c0e0e0 Canonicalize release gate time and endpoints
+```
+
+## 9. External release gates — all still incomplete
+
+The clean-clone release verifier currently reports six incomplete gates. This is expected and honest.
+Do not replace real evidence with placeholders or weaken the verifier.
+
+### 9.1 Source provenance
+
+Required:
+
+- Two distinct independent builders.
+- Distinct digest-bound build environments.
+- Exact frozen revision and dependency lock.
+- Byte-identical source archive and SPDX SBOM hashes.
+- Named archive/SBOM tools.
+- Committed typed attestations and bound checksum/provenance artifacts.
+
+### 9.2 Independent audits
+
+Required:
+
+- Two distinct normalized audit organizations.
+- Audits start after the frozen revision exists.
+- Distinct report digests.
+- Methodology and verified remediation.
+- Zero unresolved critical or high findings.
+- Combined coverage of ZK cryptography, consensus/state, wallet/privacy, network/DoS,
+  migration/supply, compiler, and reproducibility.
+
+### 9.3 Public testnet soak
+
+Required:
+
+- At least 14 elapsed days.
+- At least three independently operated nodes.
+- At least 10,000 observed blocks.
+- One exact frozen revision and genesis/network identity.
+- Reorg, malformed-bundle, and denial-of-service scenarios.
+- Final converged height/block hash and supply-audit result on every node.
+- Successful migration/supply reconciliation.
+- Zero unresolved consensus divergence.
+- A public credential-free HTTPS evidence endpoint satisfying verifier syntax.
+
+### 9.4 Reproducible platform binaries
+
+Required platforms:
+
+- Linux x86-64.
+- macOS ARM64.
+- Windows x86-64.
+
+For each platform, two independent builders must reproduce `bytecoind`, `walletd`, and `minerd`,
+including exact binary, debug-symbol, and per-binary SBOM hashes. Compiler, SDK, linker, revision,
+dependency lock, and environment identity must be bound.
+
+### 9.5 Incident-response drill
+
+Required:
+
+- At least two participants and an independent observer.
+- Named decision authority and recorded communications.
+- Consensus-stall, reorg, and proof-DoS scenarios exactly once each.
+- Ordered detection, triage, and recovery timestamps.
+- Preserved artifacts, clean-room reproduction, verified recovery.
+- Migration/supply reconciliation and an unresolved-action list.
+
+### 9.6 Governance approval
+
+Required:
+
+- Approval of the exact revision, compiler digest, target profile, and all four activation heights.
+- Vote begins only after all prerequisite qualification gates complete.
+- Eligible-electorate list, threshold, distinct approvals, recomputed quorum, objection record, and
+  zero unresolved blocking objections.
+- Reference mainnet height/hash.
+- Activation at least 5,040 blocks after the reference height.
+
+## 10. Fixed `--net=onyx` qualification network
+
+Status: **Implemented and committed in `5ed59bd`. GitHub-hosted Ubuntu CI had not yet reported when
+this handoff was last updated.**
+
+Purpose:
+
+`--net=onyx` provides a fixed public qualification network. It is not a runtime override for mainnet,
+stagenet, or testnet and must never allow production activation heights to be bypassed.
+
+Committed implementation:
+
+- `src/Core/Config.cpp`
+  - Accepts `--net=onyx`.
+  - Refuses the network when built with `ONYX_ZK=OFF`.
+  - Uses a distinct network UUID.
+  - Uses default ports offset by 3000.
+  - Uses 30 payment confirmations.
+  - Does not inherit mainnet seed nodes.
+- `src/Core/Currency.cpp`
+  - Sets all upgrade heights and RandomX switch to height 1 for this fixed network.
+  - Uses a distinct genesis nonce.
+  - Uses low qualification difficulty.
+- `src/CryptoNoteConfig.hpp`
+  - Preserves the seven-slot checkpoint-difficulty database format with seven inert zero public keys.
+  - Does not inherit checkpoint signing authority from mainnet, stagenet, or testnet.
+- `src/Core/BlockChain.cpp`
+  - Rejects empty checkpoint public keys before curve signature verification, covering both the
+    qualification network's inert slots and out-of-range checkpoint identifiers.
+- `src/Core/Wallet.cpp`
+  - Binds Onyx wallet identity to the distinct qualification-network UUID.
+- `src/main_bytecoind.cpp` and `src/main_walletd.cpp`
+  - List `onyx` in network-selection help.
+- Node and wallet RPC documentation
+  - List the fixed network.
+- `docs/Onyx-Qualification-Network.md`
+  - Explains identity, height-1 direct V4-to-V7 transition, ZK requirement, lack of compiled seed
+    nodes, and the fact that a local run does not satisfy public release evidence.
+- `tests/blockchain/test_jade_consensus.cpp`
+  - Tests distinct UUID, ports, genesis, no inherited seeds, V7/RandomX at height 1, wallet network
+    binding, inert checkpoint keys, and non-ZK refusal.
+- `tests/network/test_onyx_qualification_process.py`
+  - Starts two real qualification daemons, verifies their fixed shared genesis and P2P connection,
+    then proves a testnet daemon cannot cross the network identity/genesis boundary.
+- `.github/workflows/consensus-integration.yml`
+  - Runs Jade invariants in the existing non-ZK job and adds a ZK-enabled real-process network job.
+
+Validation performed before commit:
+
+- ZK-enabled `tests`, `bytecoind`, `walletd`, and `minerd` targets built successfully.
+- ZK-enabled `tests` and `bytecoind` were rebuilt after the checkpoint database correction.
+- ZK-enabled and non-ZK `tests.exe --jade` both passed after the final correction.
+- Non-ZK `tests`, `bytecoind`, `walletd`, and `minerd` targets built successfully.
+- Non-ZK `bytecoind --net=onyx` and `walletd --net=onyx` both refused before startup.
+- All 61 release-tool unit tests passed after the final code and test changes.
+- The real-process qualification test exposed and then verified the repair for the checkpoint-key
+  database shape. Two Onyx daemons now start with the same fixed genesis and connect; a testnet daemon
+  cannot connect to them. The fixed genesis observed was
+  `325a59101b9bcefcc49dfcbcc2367123ed1b0dd6c04568e964cc8ef4e118284c`.
+
+Validation not yet completed:
+
+- Validate the new GitHub Actions job on GitHub's Ubuntu runner.
+- Push `5ed59bd` and this handoff update.
+
+Recommended immediate acceptance criteria:
+
+1. ZK-enabled node and wallet both accept `--net=onyx`.
+2. Non-ZK node and wallet reject it before opening databases or networking.
+3. Two Onyx qualification nodes agree on UUID, genesis, ports, V7 at height 1, and RandomX metadata.
+4. Mainnet, testnet, and stagenet behavior remains byte-for-byte or test-for-test unchanged.
+5. Wallet files or portable viewing keys from another network are rejected.
+6. No default mainnet peer or seed is contacted.
+7. `tests.exe --jade` and the release tests pass.
+
+## 11. Known CI issues identified but not yet applied
+
+Two CI-specific fixes were previously identified. Treat them as proposed work and inspect current CI
+before applying:
+
+- Linux consensus process qualification may need an explicit wallet-height synchronization wait
+  before assertions that depend on freshly mined blocks.
+- Windows fixtures may need `.gitattributes` rules forcing LF for Onyx canonical/golden artifacts to
+  avoid checkout newline mutation.
+
+Do not apply either blindly. Reproduce the failure, make the smallest change, and verify that the
+test still detects the intended protocol failure rather than merely becoming less strict.
+
+## 12. Validation commands
+
+Adapt generator and paths for the host. Keep ZK and non-ZK build directories separate.
+
+### Release tooling
+
+```powershell
+python -m unittest discover -s tests/release -p "test_*.py"
+python tools/release/verify_dependencies.py
+python tools/release/verify_release_gates.py
+```
+
+The final command is expected to fail/report incomplete until external evidence exists. It must fail
+for missing gates, not crash or accept placeholders.
+
+### C++ with ZK
+
+```powershell
+cmake -S . -B build-onyx -DONYX_ZK=ON
+cmake --build build-onyx --config Release --target tests bytecoind walletd minerd
+.\build-onyx\Release\tests.exe --jade
+.\build-onyx\Release\tests.exe --zk
+```
+
+The full `--zk` suite can be long. Do not report it as passed unless it reaches its final success
+status. In the most recent session, only the ZK build and Jade suite were fully completed; an earlier
+long ZK run was interrupted after initial ABI/KAT/toy/batch/malformed-boundary sections.
+
+### C++ without ZK
+
+```powershell
+cmake -S . -B build-nozk -DONYX_ZK=OFF
+cmake --build build-nozk --config Release --target tests bytecoind walletd minerd
+.\build-nozk\Release\tests.exe --jade
+.\build-nozk\Release\bytecoind.exe --net=onyx
+```
+
+The last command must refuse to start the qualification network.
+
+### Compiler and SDKs
+
+Consult the README in each directory, then run at minimum:
+
+```powershell
+python -m unittest discover -s tests/onyx_compiler -p "test_*.py"
+python -m unittest discover -s sdk/onyx/python -p "test_*.py"
+```
+
+Run the TypeScript package's locked test command from `sdk/onyx/typescript/`. Run Rust offline:
+
+```powershell
+cargo test --manifest-path sdk/onyx/rust/Cargo.toml --offline
+```
+
+Use the repository's pinned/offline Rust configuration for proof-backend tests. Do not download or
+silently upgrade cryptographic dependencies.
+
+### Fuzzing and sanitizers
+
+Follow `docs/Onyx-Fuzzing.md` exactly:
+
+```text
+cmake -S . -B build-fuzz -DSANITIZE=fuzzer,address,undefined -DONYX_ZK=ON
+```
+
+Record compiler identity, seed corpus digest, duration, crashes, minimized reproducers, and revision.
+
+## 13. Recommended next implementation sequence
+
+### Priority 0 — Finish the qualification network
+
+1. Review the uncommitted diff.
+2. Complete ZK-off refusal tests.
+3. Run release tests and Jade tests.
+4. Add a process-level two-node smoke test if one does not already exist.
+5. Confirm no changes to other network identities or genesis values.
+6. Commit only the listed qualification-network files.
+7. Push and record the new revision in this document.
+
+### Priority 1 — Qualification topology harness
+
+Build a repeatable three-node harness around `--net=onyx`:
+
+- Explicit node identities and topology; no implicit seeds.
+- Separate data directories and ports.
+- Miner and wallet processes.
+- Migration transactions, shielded transfers, standard programs, reorgs, malformed bundles, proof
+  denial-of-service load, node restart, wallet recovery, and final supply reconciliation.
+- Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
+- No credentials or secret keys in logs.
+
+Exit criterion: the harness can reproduce a short local rehearsal. It still does not count as the
+14-day public soak.
+
+### Priority 2 — Migration and incident rehearsal tooling
+
+- Automate pre-migration snapshot and supply checks.
+- Exercise controlled reorg and rollback.
+- Preserve artifacts and chronological event records.
+- Provide an evidence template matching `tools/release/qualification_evidence.py`.
+- Test clean-room reproduction.
+
+Exit criterion: a local dry run validates structurally, while the real drill remains externally
+performed and signed.
+
+### Priority 3 — Real Tor/I2P integration
+
+- Run real Tor and I2P services, not only a SOCKS emulator.
+- Use multiple nodes and proxy-only identities.
+- Capture traffic on Linux, Windows, and macOS.
+- Prove no local hidden-service lookup and no direct fallback.
+- Test referral poisoning, proxy restart, disconnect, and peer-database recovery.
+
+Exit criterion: reproducible tests and packet-capture review with no identity leakage or bypass.
+
+### Priority 4 — Compatibility, fuzz, and hardware qualification
+
+- Historical released-v4 binary matrix against current v4 negotiation.
+- Long Dandelion and consensus fuzz campaigns.
+- Native RandomX x86-64 and ARM64 throughput/power measurements.
+- Hardware-wallet and recovery acceptance with independent operators.
+
+### Priority 5 — Freeze and external release ceremony
+
+Only after repository tasks pass:
+
+1. Select and tag one frozen revision.
+2. Generate source archive, SBOM, locks, and checksums.
+3. Obtain two independent audits and remediate findings.
+4. Run the public 14-day/10,000-block/three-node qualification.
+5. Reproduce all platform binaries with two independent builders.
+6. Execute the incident drill.
+7. Hold governance approval last.
+8. Set real co-scheduled activation heights with the required notice window.
+
+## 14. Work that must not be "implemented" by weakening controls
+
+Another AI must not:
+
+- Mark evidence gates passed with fabricated JSON.
+- Lower node, builder, audit, duration, block, platform, or governance minimums.
+- Re-enable standalone Jade V5/V6 activation.
+- Move RandomX away from the Onyx activation boundary.
+- Enable Onyx when `ONYX_ZK=OFF`.
+- Replace Halo2 verification with the toy O0 verifier.
+- Introduce runtime consensus activation overrides.
+- Accept unknown/user circuits before review and activation.
+- Download floating cryptographic dependencies.
+- Remove canonical decoding, bounds, domain separation, network binding, or fail-closed checks to make
+  tests pass.
+- Claim an interrupted suite passed.
+- Include user-owned staged files in unrelated commits.
+
+## 15. Definition of done
+
+The project is not finished merely because O0–O6 code exists. Completion requires all of the
+following:
+
+- Every repository-controlled phase requirement is implemented and passes clean-clone CI on Linux,
+  macOS, and Windows.
+- ZK and non-ZK configurations behave as specified.
+- Consensus, wallet, compiler, SDK, network, process, sanitizer, fuzz, and reproducibility suites pass.
+- No unresolved critical/high audit finding exists.
+- All six external release gates validate from committed, independently attributable evidence.
+- Governance approves the exact frozen revision and co-scheduled activation values.
+- Operators have rehearsed migration, recovery, rollback, and incident response.
+
+Until then, describe the branch as a security-focused implementation and qualification candidate,
+not a production-ready or foolproof cryptocurrency release.
