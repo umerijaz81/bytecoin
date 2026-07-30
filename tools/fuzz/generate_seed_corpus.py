@@ -8,7 +8,10 @@ import hashlib
 from pathlib import Path
 
 
-SELECTORS = tuple(range(17)) + tuple(range(128, 138)) + tuple(range(200, 207))
+SELECTORS = tuple(range(17)) + tuple(range(128, 139)) + tuple(range(200, 207))
+
+
+KV_HEADER = bytes.fromhex("011101010101020101")
 
 
 def seeds() -> list[bytes]:
@@ -23,6 +26,14 @@ def seeds() -> list[bytes]:
             b"\xc8[]",
             b"\xc8{\"jsonrpc\":\"2.0\",\"id\":1}",
             b"\xc9invalid-address",
+            b"\x8a\x00",  # canonical empty compact-binary vector
+            b"\x8a\x80\x80\x40",  # compact vector count 1,048,576 in a truncated input
+            b"\x00" + KV_HEADER + b"\x00",  # canonical empty KV root, typed request is incomplete
+            b"\x00" + KV_HEADER + b"\x01\x00",  # non-minimal word encoding of empty KV root
+            b"\x00" + KV_HEADER
+            + b"\x08\x01a\x08\x01\x01a\x08\x02",  # duplicate KV object key
+            b"\x00" + KV_HEADER
+            + b"\x04\x01s\x0a\x06\x00\x00\x10",  # declared 64 MiB + 1 KV string
             b"\xca\x01",  # malformed Onyx envelopes retain their version byte
             b"\xcb\x01",
             b"\xcc\x01",

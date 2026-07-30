@@ -6,6 +6,7 @@
 #include <iostream>
 #include <seria/BinaryInputStream.hpp>
 #include <string>
+#include <vector>
 #include "common/Base58.hpp"
 #include "p2p/LevinProtocol.hpp"
 #include "p2p/P2pProtocolDefinitions.hpp"
@@ -193,6 +194,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 		break;
 	case 137:
 		binary_parse<cn::SendproofAmethyst>(msg);
+		break;
+	case 138:
+		binary_parse<std::vector<uint64_t>>(msg);
 		break;
 	case 202:
 #ifdef onyx_USE_ZK

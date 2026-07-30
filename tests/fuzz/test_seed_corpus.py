@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import pathlib
+import re
 import tempfile
 import unittest
 
@@ -22,8 +23,14 @@ class SeedCorpusTest(unittest.TestCase):
     def test_all_harness_selectors_have_a_seed(self) -> None:
         seeds = GENERATOR.seeds()
         selectors = {seed[0] for seed in seeds}
-        self.assertEqual(set(GENERATOR.SELECTORS), selectors)
+        harness = (ROOT / "src" / "main_fuzzer.cpp").read_text(encoding="utf-8")
+        harness_selectors = {int(value) for value in re.findall(r"\bcase\s+(\d+)\s*:", harness)}
+        self.assertEqual(harness_selectors, set(GENERATOR.SELECTORS))
+        self.assertEqual(harness_selectors, selectors)
         self.assertTrue(all(seeds))
+        self.assertIn(b"\x8a\x80\x80\x40", seeds)
+        self.assertTrue(any(seed.startswith(b"\x00" + GENERATOR.KV_HEADER) for seed in seeds))
+        self.assertTrue(any(b"\x01a\x08\x01\x01a\x08\x02" in seed for seed in seeds))
 
     def test_generation_is_deterministic_and_preserves_findings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
