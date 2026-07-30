@@ -249,6 +249,8 @@ def governance_order_errors(gates: list[dict], root: Path = ROOT) -> list[str]:
 
 
 def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
+    if not isinstance(gates_document, dict):
+        return ["activation gates document must be an object"], []
     errors: list[str] = []
     tracked = set(tracked_files())
     if gates_document.get("schema_version") != 1:
@@ -256,7 +258,11 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     gates = gates_document.get("gates", [])
     if not isinstance(gates, list):
         return ["activation gates must be an array"], []
-    by_id = {gate.get("id"): gate for gate in gates if isinstance(gate, dict)}
+    by_id = {
+        gate.get("id"): gate
+        for gate in gates
+        if isinstance(gate, dict) and isinstance(gate.get("id"), str)
+    }
     if len(by_id) != len(gates):
         errors.append("activation gate identifiers must be present and unique")
     if missing := REQUIRED_GATES - by_id.keys():
@@ -372,7 +378,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     for gate_id, gate in by_id.items():
         status = gate.get("status")
         evidence = gate.get("evidence")
-        if status not in ALLOWED_STATUS:
+        if not isinstance(status, str) or status not in ALLOWED_STATUS:
             errors.append(f"{gate_id}: invalid status {status}")
         if not isinstance(evidence, list):
             errors.append(f"{gate_id}: evidence must be an array")
@@ -401,8 +407,17 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                 )
             )
     audit_gate = by_id.get("independent-audits", {})
-    if audit_gate.get("status") == "passed" and len(audit_gate.get("evidence", [])) < int(
-        audit_gate.get("minimum_independent_reports", 2)
+    minimum_reports = audit_gate.get("minimum_independent_reports", 2)
+    if (
+        not isinstance(minimum_reports, int)
+        or isinstance(minimum_reports, bool)
+        or minimum_reports != 2
+    ):
+        errors.append("independent-audits: minimum_independent_reports must equal 2")
+    elif (
+        audit_gate.get("status") == "passed"
+        and isinstance(audit_gate.get("evidence"), list)
+        and len(audit_gate["evidence"]) < minimum_reports
     ):
         errors.append("independent-audits: passed status requires two distinct report paths")
     errors.extend(governance_order_errors(gates))

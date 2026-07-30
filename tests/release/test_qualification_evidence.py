@@ -806,6 +806,18 @@ class QualificationEvidenceTest(unittest.TestCase):
                 any("every builder binary_sha256 must match" in error for error in errors),
                 errors,
             )
+            platforms[0]["name"] = ["unhashable-platform"]
+            evidence = self.write_document(root, "reproducibility.json", document)
+            errors = qualification_evidence.verify_gate(
+                "reproducible-platform-binaries",
+                [evidence],
+                root,
+                dependencies_lock_digest=DIGEST,
+            )
+            self.assertTrue(
+                any("platforms must contain each required platform" in error for error in errors),
+                errors,
+            )
 
     def test_attestation_and_artifact_paths_cannot_escape_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

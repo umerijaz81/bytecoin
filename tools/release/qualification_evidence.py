@@ -536,7 +536,11 @@ def _reproducibility(
     if not isinstance(platforms, list):
         errors.append(f"{label}: platforms must be an array")
     else:
-        listed_names = [item.get("name") for item in platforms if isinstance(item, dict)]
+        listed_names = [
+            item.get("name")
+            for item in platforms
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
         names = set(listed_names)
         if names != REQUIRED_PLATFORMS or len(listed_names) != len(REQUIRED_PLATFORMS):
             errors.append(

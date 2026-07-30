@@ -130,6 +130,22 @@ class ReleaseToolsTest(unittest.TestCase):
         errors, _ = verify_release_gates.verify(gates, self.config)
         self.assertTrue(any("unknown activation gates" in error for error in errors), errors)
 
+    def test_activation_manifest_type_confusion_fails_without_exception(self) -> None:
+        errors, _ = verify_release_gates.verify([], self.config)
+        self.assertEqual(["activation gates document must be an object"], errors)
+
+        gates = copy.deepcopy(self.gates)
+        gates["gates"][0]["id"] = ["unhashable-id"]
+        gates["gates"][1]["status"] = ["unhashable-status"]
+        audit = next(
+            gate for gate in gates["gates"] if gate.get("id") == "independent-audits"
+        )
+        audit["minimum_independent_reports"] = ["not-an-integer"]
+        errors, _ = verify_release_gates.verify(gates, self.config)
+        self.assertTrue(any("identifiers must be present and unique" in error for error in errors))
+        self.assertTrue(any("invalid status" in error for error in errors))
+        self.assertTrue(any("minimum_independent_reports must equal 2" in error for error in errors))
+
     def test_audit_gate_cannot_pass_without_two_reports(self) -> None:
         gates = copy.deepcopy(self.gates)
         audit = next(gate for gate in gates["gates"] if gate["id"] == "independent-audits")
