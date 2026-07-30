@@ -224,7 +224,11 @@ def _incident(
 
 
 def _governance(
-    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+    document: dict,
+    root: pathlib.Path,
+    label: str,
+    tracked_paths: set[str] | None,
+    authoritative_digests: tuple[str, str] | None,
 ) -> list[str]:
     errors = _common(document, "governance-approval", label)
     if document.get("approved_revision") != document.get("revision"):
@@ -233,6 +237,12 @@ def _governance(
         value = document.get(key)
         if not isinstance(value, str) or not HEX_32.fullmatch(value):
             errors.append(f"{label}: {key} must be lowercase SHA-256")
+    if authoritative_digests is not None:
+        compiler_digest, target_profile_digest = authoritative_digests
+        if document.get("compiler_digest") != compiler_digest:
+            errors.append(f"{label}: compiler_digest does not match frozen release revision")
+        if document.get("target_profile_digest") != target_profile_digest:
+            errors.append(f"{label}: target_profile_digest does not match frozen release revision")
     if document.get("quorum_met") is not True:
         errors.append(f"{label}: quorum_met must be true")
     _distinct_identities(
@@ -248,6 +258,7 @@ def verify_gate(
     root: pathlib.Path,
     expected_revision: str | None = None,
     tracked_paths: set[str] | None = None,
+    governance_digests: tuple[str, str] | None = None,
 ) -> list[str]:
     """Validate JSON attestations for one gate already marked passed."""
     if gate_id not in EXTERNAL_GATES:
@@ -290,7 +301,15 @@ def verify_gate(
         elif gate_id == "incident-response-drill":
             errors.extend(_incident(document, root, label, tracked_paths))
         elif gate_id == "governance-approval":
-            errors.extend(_governance(document, root, label, tracked_paths))
+            errors.extend(
+                _governance(
+                    document,
+                    root,
+                    label,
+                    tracked_paths,
+                    governance_digests,
+                )
+            )
     if gate_id == "independent-audits" and len(set(organizations)) < 2:
         errors.append("independent-audits: reports must come from distinct organizations")
     return errors

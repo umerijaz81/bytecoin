@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
 import sys
 
-from release_common import ROOT, tracked_files
+from release_common import ROOT, revision_file, tracked_files
 from qualification_evidence import _repository_file, verify_gate
 
 
@@ -21,6 +22,7 @@ REQUIRED_GATES = {
     "governance-approval",
 }
 ALLOWED_STATUS = {"pending", "implemented", "passed"}
+STANDARD_PROGRAMS = ("nft", "vesting", "multisig", "swap")
 
 
 def frozen_revision_is_ancestor(revision: str) -> bool:
@@ -41,6 +43,27 @@ def frozen_revision_is_ancestor(revision: str) -> bool:
         check=False,
     )
     return ancestor.returncode == 0
+
+
+def governance_digests_at_revision(revision: str) -> tuple[str, str]:
+    compiler = revision_file(revision, "tools/onyx/compiler_v1.py").replace(b"\r\n", b"\n")
+    compiler_digest = hashlib.sha256(compiler).hexdigest()
+    target_digests: set[str] = set()
+    for program in STANDARD_PROGRAMS:
+        manifest = json.loads(
+            revision_file(
+                revision, f"programs/onyx-standard/{program}/onyx-package.json"
+            )
+        )
+        if manifest.get("compiler_build_digest") != compiler_digest:
+            raise ValueError(f"{program} compiler digest does not match compiler source")
+        target_digest = manifest.get("target_profile_digest")
+        if not isinstance(target_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", target_digest):
+            raise ValueError(f"{program} target profile digest is invalid")
+        target_digests.add(target_digest)
+    if len(target_digests) != 1:
+        raise ValueError("standard programs do not share one target profile digest")
+    return compiler_digest, next(iter(target_digests))
 
 
 def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
@@ -77,6 +100,17 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         errors.append(
             "frozen release_revision must name an existing commit that is an ancestor of HEAD"
         )
+    governance_digests = None
+    if (
+        by_id.get("governance-approval", {}).get("status") == "passed"
+        and isinstance(release_revision, str)
+        and re.fullmatch(r"[0-9a-f]{40}", release_revision)
+        and frozen_revision_is_ancestor(release_revision)
+    ):
+        try:
+            governance_digests = governance_digests_at_revision(release_revision)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
+            errors.append(f"cannot derive frozen governance digests: {error}")
     for gate_id, gate in by_id.items():
         status = gate.get("status")
         evidence = gate.get("evidence")
@@ -101,6 +135,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
                     ROOT,
                     release_revision if isinstance(release_revision, str) else None,
                     tracked,
+                    governance_digests,
                 )
             )
     audit_gate = by_id.get("independent-audits", {})

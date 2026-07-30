@@ -144,8 +144,21 @@ class QualificationEvidenceTest(unittest.TestCase):
             }
             evidence = self.write_document(root, "governance.json", document)
             self.assertEqual(
-                [], qualification_evidence.verify_gate("governance-approval", [evidence], root)
+                [],
+                qualification_evidence.verify_gate(
+                    "governance-approval",
+                    [evidence],
+                    root,
+                    governance_digests=(DIGEST, DIGEST),
+                ),
             )
+            errors = qualification_evidence.verify_gate(
+                "governance-approval",
+                [evidence],
+                root,
+                governance_digests=("3" * 64, "4" * 64),
+            )
+            self.assertTrue(any("does not match frozen release revision" in error for error in errors))
             document["approved_revision"] = "3" * 40
             evidence = self.write_document(root, "governance.json", document)
             errors = qualification_evidence.verify_gate("governance-approval", [evidence], root)

@@ -83,6 +83,19 @@ class ReleaseToolsTest(unittest.TestCase):
             errors,
         )
 
+    def test_governance_digests_are_derived_from_frozen_revision(self) -> None:
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+        compiler_digest, target_profile_digest = (
+            verify_release_gates.governance_digests_at_revision(revision)
+        )
+        self.assertRegex(compiler_digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            "5338ec6c1581e05bb9eb0026d8b25c69a4aa542dc603a1cc19e74bc8968ded3c",
+            target_profile_digest,
+        )
+
     def test_spdx_identifiers_are_unique_and_deterministic(self) -> None:
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         first = generate_spdx.generate(revision, 0)
