@@ -96,7 +96,6 @@ void cn::decompose_amount(Amount amount, Amount dust_threshold, std::vector<Amou
 const size_t KEY_IMAGE_SIZE                    = sizeof(KeyImage);
 const size_t OUTPUT_KEY_SIZE                   = sizeof(PublicKey);
 const size_t OUTPUT_SECRET_SIZE                = sizeof(PublicKey);
-const size_t OUTPUT_AMOUNT_COMMITMENT_SIZE     = sizeof(PublicKey);
 const size_t AMOUNT_SIZE                       = sizeof(uint64_t) + 2;  // varint
 const size_t IO_COUNT_SIZE                     = 3;                     // varint
 const size_t GLOBAL_INDEXES_VECTOR_SIZE_SIZE   = 1;                     // varint
@@ -105,17 +104,17 @@ const size_t GLOBAL_INDEXES_DIFFERENCE_SIZE    = sizeof(size_t);        // varin
 const size_t INPUT_TAG_SIZE                    = 1;
 const size_t OUTPUT_TAG_SIZE                   = 1;
 const size_t TRANSACTION_VERSION_SIZE          = 1;
+const size_t TRANSACTION_SIGNATURE_SCHEME_SIZE = 1;
 const size_t TRANSACTION_UNLOCK_TIME_SIZE      = sizeof(uint64_t) + 2;  // varint
-const size_t TRANSACTION_FEE_SIZE              = sizeof(uint64_t) + 2;  // varint
 const size_t AMETHYST_SIGNATURE_C0_SIZE        = sizeof(SecretKey);
 const size_t AMETHYST_SIGNATURE_PER_INPUT_SIZE = 2 * sizeof(SecretKey) + sizeof(PublicKey);
 const size_t AMETHYST_SIGNATURE_PER_MIXIN_SIZE = sizeof(SecretKey);
 
 const size_t tx_fixed_size_amethyst =
     TRANSACTION_VERSION_SIZE + TRANSACTION_UNLOCK_TIME_SIZE + 3 * IO_COUNT_SIZE + AMETHYST_SIGNATURE_C0_SIZE;
-const size_t tx_fixed_size_jade      = tx_fixed_size_amethyst + TRANSACTION_FEE_SIZE;
+const size_t tx_fixed_size_jade = tx_fixed_size_amethyst + TRANSACTION_SIGNATURE_SCHEME_SIZE;
 const size_t tx_output_size_amethyst = OUTPUT_TAG_SIZE + 1 + OUTPUT_KEY_SIZE + OUTPUT_SECRET_SIZE + AMOUNT_SIZE;
-const size_t tx_output_size_jade     = tx_output_size_amethyst + OUTPUT_AMOUNT_COMMITMENT_SIZE;
+const size_t tx_output_size_jade     = tx_output_size_amethyst;
 
 static size_t get_maximum_tx_input_size_amethyst(size_t anonymity) {
 	const size_t fixed_part = INPUT_TAG_SIZE + AMOUNT_SIZE + KEY_IMAGE_SIZE + GLOBAL_INDEXES_VECTOR_SIZE_SIZE +
@@ -123,7 +122,8 @@ static size_t get_maximum_tx_input_size_amethyst(size_t anonymity) {
 	return fixed_part + (anonymity + 1) * (GLOBAL_INDEXES_DIFFERENCE_SIZE + AMETHYST_SIGNATURE_PER_MIXIN_SIZE);
 }
 static size_t get_maximum_tx_input_size_jade(size_t anonymity) {
-	// TODO - modify for jade
+	// Jade retains the Amethyst linkable-ring signature shape. Its only wire-size delta is the
+	// one-byte authorization-scheme identifier in the transaction prefix.
 	return get_maximum_tx_input_size_amethyst(anonymity);
 }
 size_t cn::get_maximum_tx_size_amethyst(size_t input_count, size_t output_count, size_t anonymity) {

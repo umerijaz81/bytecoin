@@ -380,8 +380,8 @@ constexpr size_t TWO_THRESHOLD                   = 10;
 // if any of 2 coin stacks is larger, we will use 2 coins to cover single digit (e.g. 7 + 9 for 6)
 
 void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t anonymity, size_t min_anonymity,
-    Amount total_amount, size_t total_outputs, Amount fee_per_byte, std::string optimization_level, Amount *change,
-    Amount *receiver_fee) {
+    Amount total_amount, size_t total_outputs, Amount fee_per_byte, std::string optimization_level, bool is_jade,
+    Amount *change, Amount *receiver_fee) {
 	PrettyCoins pretty_coins;
 	size_t max_digits;
 	NonPrettyCoins non_pretty_coins;
@@ -406,9 +406,10 @@ void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t
 			        m_currency.format_amount(total_amount + (receiver_fee ? 0 : fee)) +
 			        " is required to send transaction");
 		Amount change_dust_fee = (m_used_total - total_amount - (receiver_fee ? 0 : fee)) % dust_threshold;
-		size_t tx_size =
-		    get_maximum_tx_size_amethyst(m_inputs_count, total_outputs + m_currency.get_max_amount_outputs(),
-		        anonymity);  // Expected max change outputs
+		const size_t expected_outputs = total_outputs + m_currency.get_max_amount_outputs();
+		const size_t tx_size = is_jade
+		    ? get_maximum_tx_size_jade(m_inputs_count, expected_outputs, anonymity)
+		    : get_maximum_tx_size_amethyst(m_inputs_count, expected_outputs, anonymity);
 		if (tx_size > optimization_median && (optimizations > 0 || small_optimizations)) {
 			return_coins_to_index(&pretty_coins, &non_pretty_coins, &dust_coins);
 			if (optimizations == 0)
@@ -426,14 +427,17 @@ void UnspentSelector::select_optimal_outputs(size_t max_transaction_size, size_t
 		if (tx_size > max_transaction_size) {
 			fee = ((size_fee + dust_threshold - 1) / dust_threshold) * dust_threshold;
 			return_coins_to_index(&pretty_coins, &non_pretty_coins, &dust_coins);
-			auto max_inputs_count = get_maximum_tx_input_count_amethyst(
-			    max_transaction_size, total_outputs + 2 * m_currency.get_max_amount_outputs(), anonymity);
+			const size_t maximum_outputs = total_outputs + 2 * m_currency.get_max_amount_outputs();
+			auto max_inputs_count = is_jade
+			    ? get_maximum_tx_input_count_jade(max_transaction_size, maximum_outputs, anonymity)
+			    : get_maximum_tx_input_count_amethyst(max_transaction_size, maximum_outputs, anonymity);
 			select_max_outputs(&pretty_coins, &non_pretty_coins, &dust_coins, std::numeric_limits<Amount>::max(),
 			    anonymity, max_inputs_count);
 			auto total_anon = m_used_total - fee;
 			return_coins_to_index(&pretty_coins, &non_pretty_coins, &dust_coins);
-			max_inputs_count = get_maximum_tx_input_count_amethyst(
-			    max_transaction_size, total_outputs + 2 * m_currency.get_max_amount_outputs(), min_anonymity);
+			max_inputs_count = is_jade
+			    ? get_maximum_tx_input_count_jade(max_transaction_size, maximum_outputs, min_anonymity)
+			    : get_maximum_tx_input_count_amethyst(max_transaction_size, maximum_outputs, min_anonymity);
 			select_max_outputs(
 			    &pretty_coins, &non_pretty_coins, &dust_coins, std::numeric_limits<Amount>::max(), 0, max_inputs_count);
 			auto total_zero_anon = m_used_total - fee;

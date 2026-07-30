@@ -15,6 +15,7 @@
 #include "Core/WalletSync.hpp"
 #include "CryptoNote.hpp"
 #include "CryptoNoteConfig.hpp"
+#include "Core/CryptoNoteTools.hpp"
 #include "common/Invariant.hpp"
 #include "common/CommandLine.hpp"
 #include "crypto/crypto.hpp"
@@ -124,6 +125,26 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		maximum_height_rejected = true;
 	}
 	invariant(maximum_height_rejected, "next-block version wrapped at maximum height");
+	{
+		constexpr size_t inputs = 3;
+		constexpr size_t outputs = 5;
+		constexpr size_t anonymity = 15;
+		const size_t amethyst_size = get_maximum_tx_size_amethyst(inputs, outputs, anonymity);
+		const size_t jade_size = get_maximum_tx_size_jade(inputs, outputs, anonymity);
+		invariant(jade_size == amethyst_size + 1,
+		    "Jade size estimator does not model its one-byte signature-scheme field");
+		TransactionPrefix amethyst_prefix;
+		amethyst_prefix.version = currency.amethyst_transaction_version;
+		TransactionPrefix jade_prefix = amethyst_prefix;
+		jade_prefix.version = currency.jade_transaction_version;
+		jade_prefix.signature_scheme =
+		    static_cast<uint8_t>(TransactionSignatureScheme::AMETHYST_LINKABLE_RING);
+		invariant(seria::to_binary(jade_prefix).size() == seria::to_binary(amethyst_prefix).size() + 1,
+		    "Jade transaction-prefix wire delta is not one byte");
+		invariant(get_maximum_tx_input_count_jade(jade_size, outputs, anonymity) ==
+		              get_maximum_tx_input_count_amethyst(amethyst_size, outputs, anonymity),
+		    "Jade maximum-input estimator is not the inverse of its wire-size delta");
+	}
 	{
 		OnyxConstructionWindow window;
 		const Height tip = parameters::UPGRADE_HEIGHT_ONYX - 1;

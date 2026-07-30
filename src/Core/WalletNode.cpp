@@ -940,7 +940,7 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 	// First we select just outputs with sum = 2x requires sum
 	try {
 		selector.select_optimal_outputs(max_transaction_size, good_anonymity, min_anonymity, sum_positive_transfers,
-		    total_outputs, request.fee_per_byte.get(), optimization, &change,
+		    total_outputs, request.fee_per_byte.get(), optimization, is_jade, &change,
 		    request.subtract_fee_from_amount ? &receiver_fee : nullptr);
 	} catch (const std::exception &) {
 		// If selected outputs do not fit in recommended_max_transaction_size, we try all outputs
@@ -954,7 +954,7 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 			get_wallet_state().api_add_unspent(&unspents, &total_unspents, std::string{}, confirmed_height);
 		selector.reset(std::move(unspents));
 		selector.select_optimal_outputs(max_transaction_size, good_anonymity, min_anonymity, sum_positive_transfers,
-		    total_outputs, request.fee_per_byte.get(), optimization, &change,
+		    total_outputs, request.fee_per_byte.get(), optimization, is_jade, &change,
 		    request.subtract_fee_from_amount ? &receiver_fee : nullptr);
 	}
 	if (receiver_fee != 0) {
