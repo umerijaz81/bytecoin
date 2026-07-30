@@ -150,6 +150,8 @@ logging but cannot make an untrusted remote operator cryptographically trustwort
 Attacker-controlled decoy stack indexes are compared at full `size_t` width, including opposite
 numeric extremes, so a remote node cannot trigger signed narrowing or subtraction overflow while the
 wallet removes a duplicate candidate before inserting its real output.
+After deduplication, the wallet fails closed with `NOT_ENOUGH_ANONYMITY` whenever an untrusted node
+provides fewer matching decoys than the caller requested; it never signs a silently downgraded ring.
 The experimental Emscripten wallet no longer stores mnemonic-bearing JSON in plaintext. Its IndexedDB
 record is a size-bounded, password-derived ChaCha20 envelope with a keyed authentication tag; empty
 passwords, wrong passwords, malformed fields and modified ciphertext fail closed. Existing plaintext

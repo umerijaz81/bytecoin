@@ -59,6 +59,10 @@ inline size_t absolute_index_distance(size_t left, size_t right) {
 	return left >= right ? left - right : right - left;
 }
 
+inline bool has_requested_anonymity(size_t actual, size_t requested) {
+	return actual >= requested;
+}
+
 bool get_tx_fee(const TransactionPrefix &tx, Amount *fee);
 Amount get_tx_fee(const TransactionPrefix &tx);
 

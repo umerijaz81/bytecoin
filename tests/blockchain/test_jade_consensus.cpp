@@ -160,6 +160,9 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		              absolute_index_distance(std::numeric_limits<size_t>::max() - 1,
 		                  std::numeric_limits<size_t>::max()) == 1,
 		    "wallet decoy stack-index distance narrowed or overflowed");
+		invariant(has_requested_anonymity(16, 16) && has_requested_anonymity(17, 16) &&
+		              !has_requested_anonymity(15, 16),
+		    "wallet anonymity policy does not fail closed below the requested ring privacy");
 	}
 	{
 		OnyxConstructionWindow window;

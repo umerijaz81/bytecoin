@@ -1543,6 +1543,8 @@ If you leave `spend_addresses` empty, you should also set `any_spend_address` to
 Usually it is impossible to find set of outputs to transfer exact sum you specify, so `change_address` is required.
 
 `confirmed_height_or_depth` should be set to the same value you use for your `get_balance` and `get_transfers` call. walletd selects random outputs to mix in with your outputs, and should select them from the same finality window, otherwise you risk either losing anonymity (if you set it to low) or making transaction invalid (if you set it too high and blockchain reorganization happens).
+If the connected node returns fewer distinct matching outputs than the requested `anonymity`, walletd
+returns `NOT_ENOUGH_ANONYMITY` and does not sign a silently downgraded transaction.
 
 Setting `fee_per_byte` to 0 is the same as setting it to the value returned by `get_status`. You can use larger or smaller value to increase or decrease chance of speedy inclusion in the blockchain.
 

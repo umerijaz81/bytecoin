@@ -26,7 +26,7 @@ def unused_port():
     return port
 
 
-def rpc_call(port, method, params=None, authorization=None, timeout=10):
+def rpc_response(port, method, params=None, authorization=None, timeout=10):
     body = json.dumps(
         {"jsonrpc": "2.0", "id": method, "method": method, "params": params or {}},
         separators=(",", ":"),
@@ -42,7 +42,11 @@ def rpc_call(port, method, params=None, authorization=None, timeout=10):
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        decoded = json.loads(response.read().decode("utf-8"))
+        return json.loads(response.read().decode("utf-8"))
+
+
+def rpc_call(port, method, params=None, authorization=None, timeout=10):
+    decoded = rpc_response(port, method, params, authorization, timeout)
     if "error" in decoded:
         raise RuntimeError(f"{method} failed: {decoded['error']}")
     return decoded["result"]
@@ -299,6 +303,31 @@ def create_transaction(wallet_port, recipient, change_address):
     return result["transaction"]["hash"], result["binary_transaction"]
 
 
+def assert_anonymity_downgrade_rejected(wallet_port, recipient, change_address):
+    response = rpc_response(
+        wallet_port,
+        "create_transaction",
+        {
+            "transaction": {
+                "anonymity": 100,
+                "payment_id": "",
+                "transfers": [{"address": recipient, "amount": 100000}],
+            },
+            "any_spend_address": True,
+            "change_address": change_address,
+            "confirmed_height_or_depth": -1,
+            "fee_per_byte": 1,
+            "optimization": "minimal",
+        },
+        authorization=WALLET_AUTH,
+    )
+    error = response.get("error", {})
+    if error.get("code") != -303:
+        raise RuntimeError(
+            f"wallet did not reject a node-provided anonymity downgrade: {response}"
+        )
+
+
 def send_from_wallet(wallet_port, binary_transaction):
     result = rpc_call(
         wallet_port,
@@ -480,6 +509,11 @@ def run(args):
                 RECOVERY_PASSWORD,
             )
             processes.append(wallet)
+
+            assert_anonymity_downgrade_rejected(
+                ports["wallet_rpc"], addresses[1], addresses[0]
+            )
+            print("remote-node anonymity downgrade rejected before signing")
 
             tx1_hash, tx1_binary = create_transaction(ports["wallet_rpc"], addresses[1], addresses[0])
             assert_pool_absent("node C", ports["c_rpc"], tx1_hash)

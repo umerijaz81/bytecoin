@@ -1014,12 +1014,18 @@ bool WalletNode::on_create_transaction(http::Client *who, http::RequestBody &&ra
 			        "got JSON error as response on get_random_outputs");
 		    api::walletd::CreateTransaction::Response last_response;
 		    const auto actual_anonymity = selector.add_mixed_inputs(&builder, good_anonymity, std::move(ra_response));
-		    if (actual_anonymity < request.transaction.anonymity) {
+		    if (!has_requested_anonymity(actual_anonymity, request.transaction.anonymity)) {
 			    m_log(logging::TRACE) << "Transaction anonymity is " << actual_anonymity << "/"
 			                          << request.transaction.anonymity;
-			    //				throw json_rpc::Error(api::walletd::CreateTransaction::NOT_ENOUGH_ANONYMITY,
-			    //									  "Requested anonymity too high, please reduce anonymity for this
-			    // transaction.");
+			    http::ResponseBody insufficient_response(wc.original_request.r);
+			    insufficient_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
+			    insufficient_response.r.status = 200;
+			    insufficient_response.set_body(json_rpc::create_error_response_body(
+			        json_rpc::Error(api::walletd::CreateTransaction::NOT_ENOUGH_ANONYMITY,
+			            "Node returned too few distinct outputs for the requested anonymity"),
+			        wc.original_json_request));
+			    http::Server::write(wc.original_who, std::move(insufficient_response));
+			    return;
 		    }
 		    tx                               = builder.sign(get_wallet_state(), &get_wallet_state().get_wallet(),
                 request.any_spend_address ? nullptr : &only_records);
