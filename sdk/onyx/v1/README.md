@@ -12,6 +12,8 @@ This profile freezes the developer-facing contract independently from consensus 
   `../python/` (`bytecoin-onyx-sdk==1.1.0`).
 - Semantically versioned dependency-free JavaScript/TypeScript package and offline RPC codec:
   `../typescript/` (`@bytecoin/onyx-sdk@1.1.0`).
+- Semantically versioned dependency-free Rust crate with typed offline RPC values, canonical JSON and
+  standard-program builders: `../rust/` (`bytecoin-onyx-sdk==1.1.0`).
 
 ABI v1 callers must release every successful returned buffer with `onyx_free`. A future incompatible
 signature, ownership, encoding, or error-contract change requires a new ABI number and compatibility

@@ -49,6 +49,12 @@ jobs:
         if: matrix.shard == 'core'
         shell: bash
         run: node sdk/onyx/typescript/test.mjs
+      - name: Test dependency-free Rust SDK binding
+        if: matrix.shard == 'core'
+        shell: bash
+        run: |
+          cargo fmt --manifest-path sdk/onyx/rust/Cargo.toml -- --check
+          cargo test --locked --offline --manifest-path sdk/onyx/rust/Cargo.toml
       - name: Build deterministic Onyx compiler Halo2 backend
         if: matrix.shard == 'core'
         env:
@@ -85,6 +91,14 @@ jobs:
           npm pack ./sdk/onyx/typescript --ignore-scripts --pack-destination build/onyx-ts-package
           npm pack ./sdk/onyx/typescript --ignore-scripts --pack-destination build/onyx-ts-package-rebuild
           python sdk/onyx/typescript/verify_package.py build/onyx-ts-package build/onyx-ts-package-rebuild
+      - name: Build and verify reproducible Rust SDK crates
+        if: matrix.shard == 'core'
+        shell: bash
+        run: |
+          CARGO_TARGET_DIR=build/onyx-rust-package cargo package --locked --offline --no-verify --manifest-path sdk/onyx/rust/Cargo.toml
+          CARGO_TARGET_DIR=build/onyx-rust-package-rebuild cargo package --locked --offline --no-verify --manifest-path sdk/onyx/rust/Cargo.toml
+          python sdk/onyx/rust/verify_package.py \
+            build/onyx-rust-package/package build/onyx-rust-package-rebuild/package
       - name: Test optimized proof shard without network access
         env:
           CARGO_INCREMENTAL: "0"

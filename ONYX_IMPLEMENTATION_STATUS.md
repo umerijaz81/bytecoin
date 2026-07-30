@@ -13,16 +13,18 @@ unreachable until the release gates below are independently satisfied.
 | O2 private transfer | Shape-bound Halo2 transfer circuits, spend and binding authorization, value conservation, expiry/network binding, negative mutation tests and cost limits. | Independent circuit audit and published laptop benchmarks at frozen release parameters. |
 | O3 wallet | Seed/key hierarchy, Onyx addresses, full viewing keys, scanning, historical witnesses, proving, recovery snapshots, pending reservations, native/token balances and wallet RPC. Native HD view-only exports persist the network-bound Onyx full viewing key in encrypted wallet storage and dispatch block scanning through the viewing-only backend path without retaining seed or spend authority. Portable view-only strings use a distinct backward-compatible v2 Base58 type that carries the exact 16-byte network identifier and 177-byte Onyx viewing key; encrypted browser-wallet persistence requires and validates the same pair without changing legacy payload interpretation. Encrypted native backup/password rotation and view-only recovery preserve keys, address count, labels and queued payments under automated qualification. A real four-daemon process test now backs up the SQLite wallet/cache, rotates its password, rejects the superseded password, reconnects through an alternate synchronized node, preserves addresses and balance, and spends from the recovered wallet. Legacy construction uses the overflow-checked next-block version, emits Jade at the exact boundary and fails closed one block before Onyx instead of producing a V5 transaction that V7 consensus rejects. Every transaction-producing Onyx RPC uses the same next-block boundary, rejecting premature construction and enabling it one block before activation for next-block admission. A shared overflow-safe wallet policy measures every explicit expiry from that expected inclusion height and matches consensus at both inclusive endpoints. | Hardware-wallet and operator acceptance tests. |
 | O4 migration | One-way legacy-to-Onyx shield, legacy ownership signature, layered key-image replay prevention, atomic supply accounting, undo and supply-audit RPC. The Onyx snapshot now stores a domain-separated bridge replay marker in addition to the legacy consensus key-image database, so direct state replay cannot double-count bridged supply; rollback removes the marker. Wallet construction also rejects a second bridge for a legacy key image already present in its pending queue. Production C ABI/C++ qualification covers wallet proving, finalization, field preservation, state apply, exact supply reconciliation, replay rejection and fail-closed output clearing. The ASan/UBSan/libFuzzer campaign directly mutates the versioned state/supply-audit decoder from deterministic malformed v7 seeds. | Multi-node operational migration rehearsal, incident rollback drill and independent supply-invariant audit. |
-| O5 standard programs | Canonical registry, activation/deactivation, cost accounting, funded capped-token deployment, private issuance, mixed token/native-fee transfers, and stateful NFT/vesting/multisig/swap calls. Type-4 calls compose native authorization with a pinned standard proof, apply atomically, reserve pending nullifiers/state keys, expose wallet construction and daemon state queries, and are represented in the versioned Python and JavaScript/TypeScript RPC profiles. | Additional native-language bindings, completion/audit of the arbitrary-program compiler pipeline, independent circuit/consensus review, and public testnet qualification. |
+| O5 standard programs | Canonical registry, activation/deactivation, cost accounting, funded capped-token deployment, private issuance, mixed token/native-fee transfers, and stateful NFT/vesting/multisig/swap calls. Type-4 calls compose native authorization with a pinned standard proof, apply atomically, reserve pending nullifiers/state keys, expose wallet construction and daemon state queries, and are represented in the versioned dependency-free Python, JavaScript/TypeScript and native Rust RPC profiles. | Maintained bindings for additional ecosystems, completion/audit of the arbitrary-program compiler pipeline, independent circuit/consensus review, and public testnet qualification. |
 
 ## Remaining implementation work
 
 ### O5 developer platform
 
-1. Extend the frozen v1 SDK profile beyond the dependency-free Python and JavaScript/TypeScript
-   packages where another native language has an identified maintainer. Both packages, golden
-   request/response fixtures, compatibility policy, semantic versioning and byte-for-byte
-   three-platform package reproduction are CI-gated.
+1. The frozen v1 SDK profile now includes dependency-free Python, JavaScript/TypeScript and native
+   Rust packages. All three expose the exact wallet-RPC method contract and canonical standard-program
+   application bytes; Rust additionally provides typed transport-independent JSON values and
+   fail-closed canonical serialization without a runtime dependency. Golden request/response
+   conformance, compatibility policy, semantic versioning and byte-for-byte package reproduction are
+   CI-gated. Additional bindings require an identified maintainer and the same qualification bar.
 2. The arbitrary-private-program boundary is frozen in `docs/Onyx-Compiler-Specification.md`. A
    non-registrable alpha frontend now implements strict source-package loading, a bounded typed parser,
    static loop/conditional lowering, acyclic direct calls, guarded canonical binary IR, conservative
@@ -66,7 +68,7 @@ unreachable until the release gates below are independently satisfied.
    independent review remains. The production depth-32 Rust C ABI/C++ adapter is positively qualified with a
    Rust-pinned deterministic wallet fixture that creates and verifies a funded NFT deployment and creates and
    authenticates a serial-bound NFT state transition; rejected proving requests must clear all caller-visible outputs.
-   Python and TypeScript SDK 1.1.0 expose byte-identical canonical application-data builders and frozen schema hashes
+   Python, TypeScript and Rust SDK 1.1.0 expose byte-identical canonical application-data builders and frozen schema hashes
    with strict uint64, identifier, threshold, boolean and Pasta-field validation. Canonical IR/descriptor artifacts
    are digest-pinned, reproducibly regenerated, embedded in Rust and used by a caller-artifact-free standard verifier
    and activation-bound registry-entry builder.
