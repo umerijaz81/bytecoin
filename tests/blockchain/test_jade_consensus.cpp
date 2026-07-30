@@ -11,6 +11,7 @@
 #include "Core/BlockChainState.hpp"
 #include "Core/Config.hpp"
 #include "Core/Currency.hpp"
+#include "Core/OnyxWalletPolicy.hpp"
 #include "Core/WalletSync.hpp"
 #include "CryptoNote.hpp"
 #include "CryptoNoteConfig.hpp"
@@ -123,6 +124,27 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		maximum_height_rejected = true;
 	}
 	invariant(maximum_height_rejected, "next-block version wrapped at maximum height");
+	{
+		OnyxConstructionWindow window;
+		const Height tip = parameters::UPGRADE_HEIGHT_ONYX - 1;
+		invariant(!resolve_onyx_construction_window(tip, tip, &window),
+		    "wallet accepted an Onyx transaction expiring before next-block inclusion");
+		invariant(resolve_onyx_construction_window(tip, tip + 1, &window) &&
+		              window.inclusion_height == tip + 1 && window.expiry_height == tip + 1,
+		    "wallet rejected the inclusive Onyx expiry lower bound");
+		invariant(resolve_onyx_construction_window(
+		              tip, tip + 1 + parameters::ONYX_MAX_EXPIRY_DISTANCE, &window),
+		    "wallet rejected the inclusive Onyx expiry upper bound");
+		invariant(!resolve_onyx_construction_window(
+		              tip, tip + 2 + parameters::ONYX_MAX_EXPIRY_DISTANCE, &window),
+		    "wallet accepted an Onyx expiry beyond the consensus window");
+		invariant(resolve_onyx_construction_window(tip, 0, &window) &&
+		              window.expiry_height == tip + 20,
+		    "wallet changed the default Onyx expiry distance");
+		invariant(!resolve_onyx_construction_window(
+		              std::numeric_limits<Height>::max(), 0, &window),
+		    "wallet wrapped the next Onyx inclusion height");
+	}
 
 	// Portable-storage is reachable through both RPC and Levin/P2P. Reject ambiguous encodings and
 	// attacker-selected allocation/work factors before materializing the intermediate JSON tree.

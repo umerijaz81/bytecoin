@@ -177,7 +177,7 @@ height (`wallet tip + 1`). An unknown program returns an invalid-parameters erro
 | `address` | `string` | Yes | - | Recipient's canonical 91-byte hex Onyx address. |
 | `amount` | `uint64` | Yes | - | Nonzero native-asset amount. |
 | `fee` | `uint64` | Yes | - | Fee committed inside the shielded proof. |
-| `expiry_height` | `uint64` | No | `0` | Zero selects current wallet tip plus 20; otherwise it must be inside the consensus expiry window. |
+| `expiry_height` | `uint64` | No | `0` | Zero selects current wallet tip plus 20. A nonzero value must be between the next expected inclusion height and that height plus the consensus maximum, inclusive. |
 | `memo` | `string` | No | empty | Encrypted recipient memo. |
 
 The response contains `binary_transaction` and `transaction_hash`. Inspect or persist these fields,
@@ -243,7 +243,8 @@ bytes. The fee must be at least `100000` atomic native units. Zero `activation_h
 blocks after the expected inclusion, keeping it valid throughout the default expiry window; a
 nonzero activation must be 1-100,000 blocks after that expected inclusion. Zero
 `deactivation_height` means no scheduled deactivation. Zero
-`expiry_height` selects the wallet tip plus 20.
+`expiry_height` selects the wallet tip plus 20. Explicit expiry bounds are measured from the next
+expected inclusion height, using the same inclusive window as consensus.
 
 The response returns `binary_transaction`, `transaction_hash`, and the manifest-derived `program_id`.
 Submit the binary transaction through `send_transaction`. Pending transfers and deployments reserve

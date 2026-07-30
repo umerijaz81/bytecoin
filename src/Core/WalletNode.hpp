@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "OnyxWalletPolicy.hpp"
 #include "WalletSync.hpp"
 
 namespace http {
@@ -144,6 +145,7 @@ protected:
 
 	void check_wallet_open();
 	void check_onyx_construction_available() const;
+	OnyxConstructionWindow get_onyx_construction_window(Height requested_expiry) const;
 };
 
 }  // namespace cn

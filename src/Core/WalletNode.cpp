@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "WalletNode.hpp"
+#include "OnyxWalletPolicy.hpp"
 #include <algorithm>
 #include <limits>
 #include "Config.hpp"
@@ -452,15 +453,7 @@ bool WalletNode::on_create_onyx_transaction(http::Client *, http::RequestBody &&
 	std::array<uint8_t, 91> recipient{};
 	if (!common::from_hex(request.address, recipient.data(), recipient.size()))
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (get_wallet_state().get_tip_height() > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = get_wallet_state().get_tip_height() + 20;
-	}
-	if (expiry < get_wallet_state().get_tip_height() ||
-	    expiry - get_wallet_state().get_tip_height() > parameters::ONYX_MAX_EXPIRY_DISTANCE)
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	const Height expiry = get_onyx_construction_window(request.expiry_height).expiry_height;
 	BinaryArray envelope;
 	if (!get_wallet_state().create_onyx_transfer(recipient, request.amount, request.fee, expiry,
 	        common::as_binary_array(request.memo), &envelope))
@@ -487,15 +480,7 @@ bool WalletNode::on_create_onyx_token_transaction(http::Client *, http::RequestB
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
 	if (!common::from_hex(request.program_id, program_id.data(), program_id.size()))
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx Program ID encoding");
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (get_wallet_state().get_tip_height() > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = get_wallet_state().get_tip_height() + 20;
-	}
-	if (expiry < get_wallet_state().get_tip_height() ||
-	    expiry - get_wallet_state().get_tip_height() > parameters::ONYX_MAX_EXPIRY_DISTANCE)
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	const Height expiry = get_onyx_construction_window(request.expiry_height).expiry_height;
 	BinaryArray envelope;
 	if (!get_wallet_state().create_onyx_token_transfer(recipient, program_id, request.amount, request.fee,
 	        expiry, common::as_binary_array(request.memo), &envelope))
@@ -522,10 +507,8 @@ bool WalletNode::on_create_onyx_program_deployment(http::Client *, http::Request
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid capped-token supply or metadata");
 	if (request.fee < parameters::ONYX_MIN_PROGRAM_DEPLOYMENT_FEE)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program deployment fee is below consensus minimum");
-	const Height tip = get_wallet_state().get_tip_height();
-	if (tip == std::numeric_limits<Height>::max())
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx inclusion height overflow");
-	const Height inclusion = tip + 1;
+	const OnyxConstructionWindow window = get_onyx_construction_window(request.expiry_height);
+	const Height inclusion              = window.inclusion_height;
 	Height activation = request.activation_height;
 	if (activation == 0) {
 		if (inclusion > std::numeric_limits<Height>::max() - 20)
@@ -538,14 +521,7 @@ bool WalletNode::on_create_onyx_program_deployment(http::Client *, http::Request
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program activation outside consensus window");
 	if (request.deactivation_height != 0 && request.deactivation_height <= activation)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program deactivation must follow activation");
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (tip > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = tip + 20;
-	}
-	if (expiry < inclusion || expiry - inclusion > parameters::ONYX_MAX_EXPIRY_DISTANCE)
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	const Height expiry = window.expiry_height;
 	BinaryArray envelope;
 	std::array<uint8_t, 32> program_id{};
 	if (!get_wallet_state().create_onyx_program_deployment(request.max_supply,
@@ -583,10 +559,8 @@ bool WalletNode::on_create_onyx_standard_program_deployment(http::Client *, http
 		    "Standard program kind must be nft, vesting, multisig, or swap");
 	if (request.fee < parameters::ONYX_MIN_PROGRAM_DEPLOYMENT_FEE)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program deployment fee is below consensus minimum");
-	const Height tip = get_wallet_state().get_tip_height();
-	if (tip == std::numeric_limits<Height>::max())
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx inclusion height overflow");
-	const Height inclusion = tip + 1;
+	const OnyxConstructionWindow window = get_onyx_construction_window(request.expiry_height);
+	const Height inclusion              = window.inclusion_height;
 	Height activation = request.activation_height;
 	if (activation == 0) {
 		if (inclusion > std::numeric_limits<Height>::max() - 20)
@@ -598,14 +572,7 @@ bool WalletNode::on_create_onyx_standard_program_deployment(http::Client *, http
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program activation outside consensus window");
 	if (request.deactivation_height != 0 && request.deactivation_height <= activation)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Program deactivation must follow activation");
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (tip > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = tip + 20;
-	}
-	if (expiry < inclusion || expiry - inclusion > parameters::ONYX_MAX_EXPIRY_DISTANCE)
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	const Height expiry = window.expiry_height;
 	BinaryArray envelope;
 	std::array<uint8_t, 32> program_id{};
 	if (!get_wallet_state().create_onyx_standard_program_deployment(kind, inclusion, activation,
@@ -643,18 +610,11 @@ bool WalletNode::on_create_onyx_standard_program_call(http::Client *, http::Requ
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program application encoding");
 	if (!common::from_hex(request.witness, &witness) || witness.empty() || witness.size() % 32 != 0)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid standard program witness encoding");
-	const Height tip = get_wallet_state().get_tip_height();
-	if (tip == std::numeric_limits<Height>::max())
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx inclusion height overflow");
-	const Height inclusion = tip + 1;
+	const OnyxConstructionWindow window = get_onyx_construction_window(request.expiry_height);
+	const Height inclusion              = window.inclusion_height;
 	const Height valid_from = request.valid_from_height == 0 ? inclusion : request.valid_from_height;
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (tip > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = tip + 20;
-	}
-	if (valid_from > inclusion || inclusion > expiry || expiry - inclusion > parameters::ONYX_MAX_EXPIRY_DISTANCE)
+	const Height expiry = window.expiry_height;
+	if (valid_from > inclusion)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Standard program validity outside consensus window");
 	BinaryArray envelope;
 	if (!get_wallet_state().create_onyx_standard_program_call(program_id, inclusion, valid_from, expiry,
@@ -682,18 +642,9 @@ bool WalletNode::on_create_onyx_token_issuance(http::Client *, http::RequestBody
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
 	if (!common::from_hex(request.program_id, program_id.data(), program_id.size()) || request.amount == 0)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx Program ID or issuance amount");
-	const Height tip = get_wallet_state().get_tip_height();
-	if (tip == std::numeric_limits<Height>::max())
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx inclusion height overflow");
-	const Height inclusion = tip + 1;
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (tip > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = tip + 20;
-	}
-	if (expiry < inclusion || expiry - inclusion > parameters::ONYX_MAX_EXPIRY_DISTANCE)
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	const OnyxConstructionWindow window = get_onyx_construction_window(request.expiry_height);
+	const Height inclusion              = window.inclusion_height;
+	const Height expiry                 = window.expiry_height;
 	BinaryArray envelope;
 	if (!get_wallet_state().create_onyx_token_issuance(recipient, program_id, request.amount,
 	        inclusion, expiry, common::as_binary_array(request.memo), &envelope, &response.sequence))
@@ -720,15 +671,7 @@ bool WalletNode::on_create_onyx_bridge(http::Client *, http::RequestBody &&, jso
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
 	if (!common::from_hex(request.legacy_key_image, key_image.data(), key_image.size()))
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid legacy key image encoding");
-	Height expiry = request.expiry_height;
-	if (expiry == 0) {
-		if (get_wallet_state().get_tip_height() > std::numeric_limits<Height>::max() - 20)
-			throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry height overflow");
-		expiry = get_wallet_state().get_tip_height() + 20;
-	}
-	if (expiry < get_wallet_state().get_tip_height() ||
-	    expiry - get_wallet_state().get_tip_height() > parameters::ONYX_MAX_EXPIRY_DISTANCE)
-		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside consensus window");
+	const Height expiry = get_onyx_construction_window(request.expiry_height).expiry_height;
 	std::array<uint8_t, 32> sighash{};
 	if (!get_wallet_state().create_onyx_bridge(recipient, request.legacy_amount, request.fee,
 	        request.legacy_stack_index, key_image, expiry, common::as_binary_array(request.memo),
@@ -1357,4 +1300,12 @@ void WalletNode::check_onyx_construction_available() const {
 	if (construction_block_version < m_currency.onyx_block_version)
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST,
 		    "Onyx transaction construction is unavailable before the activation boundary");
+}
+
+OnyxConstructionWindow WalletNode::get_onyx_construction_window(Height requested_expiry) const {
+	OnyxConstructionWindow window;
+	if (!resolve_onyx_construction_window(
+	        get_wallet_state().get_tip_height(), requested_expiry, &window))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Onyx expiry outside next-block consensus window");
+	return window;
 }
