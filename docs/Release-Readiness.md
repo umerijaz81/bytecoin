@@ -81,7 +81,8 @@ two independent operators/environments have not reproduced and signed the artifa
    results, migration/supply reconciliation, and the completed incident drill to repository paths in
    `release/activation-gates.json`.
 6. Obtain recorded governance approval. Only a dedicated reviewed commit may change activation
-   heights and mark all required gates `passed`; the verifier rejects doing those out of order.
+   heights and mark all required gates `passed`; the governance vote may begin only after every
+   prerequisite gate's evidence has completed, and the verifier rejects doing those out of order.
 7. Create a draft release, have a second operator verify checksums/attestations, sign the final
    manifest with the offline release keys, and only then publish it. Release signing keys must never be
    stored in the repository or general-purpose CI secrets.

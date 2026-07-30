@@ -7,6 +7,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -62,6 +63,59 @@ class ReleaseToolsTest(unittest.TestCase):
             errors,
         )
         self.assertIn("independent-audits", incomplete)
+
+    def test_governance_cannot_pre_authorize_incomplete_qualification(self) -> None:
+        gates = copy.deepcopy(self.gates["gates"])
+        governance = next(gate for gate in gates if gate["id"] == "governance-approval")
+        governance["status"] = "passed"
+        errors = verify_release_gates.governance_order_errors(gates)
+        self.assertTrue(any("cannot pass before prerequisite gates" in error for error in errors))
+
+    def test_governance_vote_must_follow_qualification_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            gates = []
+            for gate_id in sorted(
+                verify_release_gates.REQUIRED_GATES - {"governance-approval"}
+            ):
+                relative = f"{gate_id}.json"
+                (root / relative).write_text(
+                    json.dumps(
+                        {
+                            "gate_id": gate_id,
+                            "completed_at": "2026-07-20T00:00:00Z",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                gates.append(
+                    {
+                        "id": gate_id,
+                        "status": "passed",
+                        "evidence": [relative],
+                    }
+                )
+            (root / "governance.json").write_text(
+                json.dumps(
+                    {
+                        "gate_id": "governance-approval",
+                        "started_at": "2026-07-19T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            gates.append(
+                {
+                    "id": "governance-approval",
+                    "status": "passed",
+                    "evidence": ["governance.json"],
+                }
+            )
+            errors = verify_release_gates.governance_order_errors(gates, root)
+            self.assertTrue(
+                any("vote must start after all prerequisite" in error for error in errors),
+                errors,
+            )
 
     def test_activation_gate_schema_rejects_unknown_gate(self) -> None:
         gates = copy.deepcopy(self.gates)

@@ -180,6 +180,74 @@ def source_digests_at_revision(revision: str) -> tuple[str, str]:
     return archive_digest, sbom_digest
 
 
+def governance_order_errors(gates: list[dict], root: Path = ROOT) -> list[str]:
+    by_id = {
+        gate.get("id"): gate
+        for gate in gates
+        if isinstance(gate, dict) and isinstance(gate.get("id"), str)
+    }
+    governance = by_id.get("governance-approval")
+    if not isinstance(governance, dict) or governance.get("status") != "passed":
+        return []
+    prerequisites = REQUIRED_GATES - {"governance-approval"}
+    incomplete = sorted(
+        gate_id
+        for gate_id in prerequisites
+        if by_id.get(gate_id, {}).get("status") != "passed"
+    )
+    errors = []
+    if incomplete:
+        errors.append(
+            "governance-approval: vote cannot pass before prerequisite gates: "
+            f"{incomplete}"
+        )
+        return errors
+
+    def timestamps(gate: dict, field: str) -> list[datetime]:
+        values = []
+        for relative in gate.get("evidence", []):
+            if not isinstance(relative, str) or not relative.endswith(".json"):
+                continue
+            path = _repository_file(root, relative)
+            if path is None:
+                continue
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            value = document.get(field) if isinstance(document, dict) else None
+            if (
+                not isinstance(document, dict)
+                or document.get("gate_id") != gate.get("id")
+                or not isinstance(value, str)
+                or not value.endswith("Z")
+            ):
+                continue
+            try:
+                values.append(
+                    datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
+                )
+            except ValueError:
+                continue
+        return values
+
+    prerequisite_completions = [
+        completed
+        for gate_id in prerequisites
+        for completed in timestamps(by_id[gate_id], "completed_at")
+    ]
+    governance_starts = timestamps(governance, "started_at")
+    if (
+        prerequisite_completions
+        and governance_starts
+        and min(governance_starts) < max(prerequisite_completions)
+    ):
+        errors.append(
+            "governance-approval: vote must start after all prerequisite qualification completes"
+        )
+    return errors
+
+
 def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     tracked = set(tracked_files())
@@ -337,6 +405,7 @@ def verify(gates_document: dict, config: str) -> tuple[list[str], list[str]]:
         audit_gate.get("minimum_independent_reports", 2)
     ):
         errors.append("independent-audits: passed status requires two distinct report paths")
+    errors.extend(governance_order_errors(gates))
 
     incomplete = [
         gate_id
