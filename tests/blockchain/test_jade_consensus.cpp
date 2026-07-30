@@ -52,6 +52,16 @@ static bool rejects_malformed_kv(const common::BinaryArray &wire) {
 	}
 }
 
+template<typename T>
+static bool rejects_truncated_binary(T &value, const common::BinaryArray &wire) {
+	try {
+		seria::from_binary(value, wire);
+		return false;
+	} catch (const std::exception &) {
+		return true;
+	}
+}
+
 // Minimal semantically-valid (under check_keys=false) 1-in/1-out transaction with the given
 // transaction version and ring size (number of output indexes on the single input).
 static Transaction build_tx(uint8_t version, size_t ring_size) {
@@ -141,6 +151,26 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		invalid_empty_array.push_back(0);
 		invariant(rejects_malformed_kv(invalid_empty_array), "invalid empty KV array type was accepted");
 		std::cout << "  [jade] bounded canonical KV-binary parser checks ok" << std::endl;
+	}
+
+	// Compact binary vectors, maps and strings must not trust a declared count larger than the
+	// entire remaining buffer. This rejects work/allocation amplification before mutating containers.
+	{
+		common::VectorStream encoded;
+		encoded.write_varint(1024 * 1024);
+		const common::BinaryArray declared_large = encoded.buffer();
+
+		std::vector<uint64_t> values{7};
+		invariant(rejects_truncated_binary(values, declared_large),
+		    "truncated compact-binary array count was accepted");
+		invariant(values == std::vector<uint64_t>{7},
+		    "rejected compact-binary array mutated its destination");
+
+		std::string text = "unchanged";
+		invariant(rejects_truncated_binary(text, declared_large),
+		    "truncated compact-binary string size was accepted");
+		invariant(text == "unchanged", "rejected compact-binary string mutated its destination");
+		std::cout << "  [jade] remaining-input compact-binary bounds ok" << std::endl;
 	}
 
 	// Privacy-sensitive attribution is opt-in at both the top-level config and the lower-level

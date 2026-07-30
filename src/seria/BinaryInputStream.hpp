@@ -11,7 +11,10 @@ namespace seria {
 
 class BinaryInputStream : public ISeria {
 public:
-	explicit BinaryInputStream(common::IInputStream &strm) : ISeria(true, false), stream(strm) {}
+	explicit BinaryInputStream(common::IInputStream &strm)
+	    : ISeria(true, false), stream(strm), memory_stream(nullptr) {}
+	explicit BinaryInputStream(common::MemoryInputStream &strm)
+	    : ISeria(true, false), stream(strm), memory_stream(&strm) {}
 
 	bool begin_object() override { return true; }
 	void object_key(common::StringView, bool optional) override {}
@@ -33,7 +36,9 @@ public:
 	bool binary(void *value, size_t size) override;
 
 private:
+	void check_sized_value(size_t size, const char *kind) const;
 	common::IInputStream &stream;
+	const common::MemoryInputStream *memory_stream;
 };
 
 template<typename T, typename... Context>

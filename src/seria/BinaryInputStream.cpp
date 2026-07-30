@@ -14,14 +14,22 @@ using namespace common;
 
 using namespace seria;
 
+void BinaryInputStream::check_sized_value(size_t size, const char *kind) const {
+	if (memory_stream != nullptr && size > memory_stream->size())
+		throw std::runtime_error(std::string("BinaryInputStream ") + kind + " size exceeds remaining input");
+}
+
 bool BinaryInputStream::begin_array(size_t &size, bool fixed_size) {
-	if (!fixed_size)
+	if (!fixed_size) {
 		size = stream.read_varint<size_t>();
+		check_sized_value(size, "array");
+	}
 	return true;
 }
 
 bool BinaryInputStream::begin_map(size_t &size) {
 	size = stream.read_varint<size_t>();
+	check_sized_value(size, "map");
 	return true;
 }
 
@@ -44,12 +52,14 @@ bool BinaryInputStream::seria_v(bool &value) {
 
 bool BinaryInputStream::seria_v(BinaryArray &value) {
 	auto size = stream.read_varint<size_t>();
+	check_sized_value(size, "binary");
 	stream.read(value, size);
 	return true;
 }
 
 bool BinaryInputStream::seria_v(std::string &value) {
 	auto size = stream.read_varint<size_t>();
+	check_sized_value(size, "string");
 	stream.read(value, size);
 	return true;
 }
