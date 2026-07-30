@@ -265,6 +265,18 @@ class QualificationEvidenceTest(unittest.TestCase):
             )
             self.assertTrue(any("distinct organizations" in error for error in errors), errors)
 
+    def test_future_dated_attestation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first_document = self.audit(root, "A Labs", "a.txt")
+            first_document["completed_at"] = "2999-01-01T00:00:00Z"
+            first = self.write_document(root, "audit-a.json", first_document)
+            second = self.write_document(root, "audit-b.json", self.audit(root, "B Labs", "b.txt"))
+            errors = qualification_evidence.verify_gate(
+                "independent-audits", [first, second], root
+            )
+            self.assertTrue(any("completed_at cannot be in the future" in error for error in errors), errors)
+
 
 if __name__ == "__main__":
     unittest.main()

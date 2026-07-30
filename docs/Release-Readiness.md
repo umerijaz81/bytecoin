@@ -91,6 +91,8 @@ two independent operators/environments have not reproduced and signed the artifa
 `tools/release/verify_release_gates.py` fails closed when an external gate is marked `passed` without
 gate-specific JSON attestations. Every attestation binds a 40-character Git revision, a UTC completion
 time, and a repository-relative artifact whose lowercase SHA-256 is recomputed by the verifier. The
+completion time cannot be more than five minutes in the future, allowing limited clock skew without
+letting evidence pre-authorize work that has not occurred. The
 attestation and its referenced artifact must both be committed before the activation-gate change.
 The verifier requires canonical contained paths, rejects path and symlink escapes, and requires every
 listed evidence file to be present in the Git index.

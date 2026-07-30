@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import pathlib
@@ -95,7 +95,9 @@ def _common(document: dict, gate_id: str, label: str) -> list[str]:
         errors.append(f"{label}: gate_id must be {gate_id}")
     if not isinstance(document.get("revision"), str) or not REVISION.fullmatch(document["revision"]):
         errors.append(f"{label}: revision must be a lowercase 40-character Git object id")
-    _utc(document.get("completed_at"), "completed_at", errors, label)
+    completed = _utc(document.get("completed_at"), "completed_at", errors, label)
+    if completed and completed > datetime.now(timezone.utc) + timedelta(minutes=5):
+        errors.append(f"{label}: completed_at cannot be in the future")
     return errors
 
 
