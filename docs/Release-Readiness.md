@@ -155,6 +155,8 @@ The enforced minimums are release policy, not claims about the current branch:
   recomputed from those counts rather than trusted as a boolean. Approval also binds the exact
   positive integer values of all four canonical activation heights; the verifier compares that map
   with the activation commit's `CryptoNoteConfig.hpp`, so one schedule cannot authorize another.
+  Governance records a reference mainnet height and block hash, and every activation must be at least
+  5,040 blocks later—the protocol's existing seven-day `UPGRADE_WINDOW` at the 120-second target;
 
 Every independent-node, builder, drill-participant, and governance-approval count must be accompanied
 by an equally sized list of distinct normalized identities. Numeric counts alone cannot satisfy a

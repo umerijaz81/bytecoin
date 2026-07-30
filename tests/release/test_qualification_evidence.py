@@ -589,6 +589,8 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "approver_ids": ["alice", "bob"],
                 "unresolved_blocking_objections": 0,
                 "objections": [],
+                "reference_height": 10_000,
+                "reference_block_hash": "9" * 64,
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)
@@ -602,6 +604,21 @@ class QualificationEvidenceTest(unittest.TestCase):
                     governance_activation_heights=ACTIVATION_HEIGHTS,
                 ),
             )
+            document["reference_height"] = (
+                ACTIVATION_HEIGHTS["UPGRADE_HEIGHT_V5"]
+                - qualification_evidence.MINIMUM_ACTIVATION_LEAD_BLOCKS
+                + 1
+            )
+            evidence = self.write_document(root, "governance.json", document)
+            errors = qualification_evidence.verify_gate(
+                "governance-approval",
+                [evidence],
+                root,
+                governance_digests=(DIGEST, DIGEST),
+                governance_activation_heights=ACTIVATION_HEIGHTS,
+            )
+            self.assertTrue(any("blocks of activation notice" in error for error in errors), errors)
+            document["reference_height"] = 10_000
             errors = qualification_evidence.verify_gate(
                 "governance-approval",
                 [evidence],
@@ -655,6 +672,8 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "approver_ids": ["Alice", "  alice  "],
                 "unresolved_blocking_objections": 0,
                 "objections": [],
+                "reference_height": 10_000,
+                "reference_block_hash": "9" * 64,
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)
@@ -688,6 +707,8 @@ class QualificationEvidenceTest(unittest.TestCase):
                 "approver_ids": ["alice", "bob"],
                 "unresolved_blocking_objections": 0,
                 "objections": [],
+                "reference_height": 10_000,
+                "reference_block_hash": "9" * 64,
                 "artifact": self.write_artifact(root),
             }
             evidence = self.write_document(root, "governance.json", document)

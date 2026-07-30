@@ -23,6 +23,7 @@ HEX_32 = re.compile(r"^[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_PLATFORMS = {"linux-x86_64", "macos-arm64", "windows-x86_64"}
 REQUIRED_RELEASE_PROGRAMS = {"bytecoind", "walletd", "minerd"}
+MINIMUM_ACTIVATION_LEAD_BLOCKS = 5_040
 REQUIRED_AUDIT_SCOPES = {
     "zk-circuits-and-cryptography",
     "consensus-and-state-transition",
@@ -824,6 +825,10 @@ def _governance(
         not isinstance(objection, str) or not objection.strip() for objection in objections
     ):
         errors.append(f"{label}: objections must be an array of non-empty descriptions")
+    reference_height = _integer(document, "reference_height", 0, errors, label)
+    reference_hash = document.get("reference_block_hash")
+    if not isinstance(reference_hash, str) or not HEX_32.fullmatch(reference_hash):
+        errors.append(f"{label}: reference_block_hash must be a lowercase 32-byte hash")
     activation_heights = document.get("activation_heights")
     if (
         not isinstance(activation_heights, dict)
@@ -842,6 +847,18 @@ def _governance(
         and activation_heights != authoritative_activation_heights
     ):
         errors.append(f"{label}: activation_heights do not match activation configuration")
+    if isinstance(activation_heights, dict):
+        earliest_allowed = reference_height + MINIMUM_ACTIVATION_LEAD_BLOCKS
+        for name, height in activation_heights.items():
+            if (
+                isinstance(height, int)
+                and not isinstance(height, bool)
+                and height < earliest_allowed
+            ):
+                errors.append(
+                    f"{label}: {name} must provide at least "
+                    f"{MINIMUM_ACTIVATION_LEAD_BLOCKS} blocks of activation notice"
+                )
     approval_ids = _distinct_identities(
         document, "approvals", "approver_ids", 2, errors, label
     )
