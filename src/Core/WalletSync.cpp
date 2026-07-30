@@ -239,8 +239,10 @@ void WalletSync::send_get_blocks() {
 		api::cnd::SyncBlocks::Request msg;
 		if (m_config.wallet_sync_privacy) {
 			// Privacy: do not reveal wallet age or our view of the chain to a possibly untrusted
-			// node. The node will start us from genesis; first sync is slower in exchange.
+			// node. A single zero hash is the protocol's canonical "node genesis" placeholder;
+			// an empty sparse chain is malformed and would make privacy-mode bootstrap fail.
 			msg.first_block_timestamp = 0;
+			msg.sparse_chain.push_back(Hash{});
 		} else {
 			msg.first_block_timestamp =
 			    (m_wallet_state.get_wallet().get_oldest_timestamp() / m_config.wallet_sync_timestamp_granularity) *
@@ -267,6 +269,11 @@ void WalletSync::send_get_blocks() {
 			    return;
 		    }
 		    if (response.r.status == 404 && is_static) {
+			    if (m_config.wallet_sync_privacy) {
+				    m_log(logging::INFO) << "Privacy-preserving static SyncBlocks unavailable";
+				    set_sync_error("PRIVACY_SYNC_UNAVAILABLE");
+				    return;
+			    }
 			    m_log(logging::DEBUGGING) << "Static sync_block request returned 404, switching to rpc request";
 			    last_static_sync_blocks_failed = true;
 			    advance_sync();
@@ -283,6 +290,11 @@ void WalletSync::send_get_blocks() {
 		    Height redirect_height = 0;
 		    if (is_static && api::cnd::SyncBlocks::is_static_redirect(response.body, &redirect_height)) {
 			    if (next_static_block && redirect_height >= next_static_block.get()) {
+				    if (m_config.wallet_sync_privacy) {
+					    m_log(logging::INFO) << "Privacy-preserving static SyncBlocks returned an invalid redirect";
+					    set_sync_error("PRIVACY_SYNC_UNAVAILABLE");
+					    return;
+				    }
 				    m_log(logging::INFO) << "Static sync_blocks forward redirect forbidden " << redirect_height;
 				    last_static_sync_blocks_failed = true;
 			    } else {
@@ -293,6 +305,11 @@ void WalletSync::send_get_blocks() {
 			    return;
 		    }
 		    if (!json_rpc::parse_binary_response(response.body, resp, error)) {
+			    if (is_static && m_config.wallet_sync_privacy) {
+				    m_log(logging::INFO) << "Privacy-preserving static SyncBlocks response was invalid";
+				    set_sync_error("PRIVACY_SYNC_UNAVAILABLE");
+				    return;
+			    }
 			    if (!next_sparse_chain.empty()) {
 				    m_log(logging::INFO) << "SyncBlocks speculative SyncBlocks guess wrong, recovering";
 				    next_sparse_chain.clear();

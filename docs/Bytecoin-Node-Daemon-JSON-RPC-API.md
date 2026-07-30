@@ -966,6 +966,9 @@ has to be assembled and sent. Returns missing blocks, `start_height` and regular
 
 `*` `sparse_chain` is a sequence of blocks hashes from the last known block to genesis block. \
 It goes backward into blockchain like this: last ten blocks, then block in 2 blocks, block in 4 blocks, block in 8 blocks, ..., genesis block.
+An empty array is malformed. A one-element all-zero hash is the canonical privacy-preserving
+placeholder asking the node to substitute its own genesis hash; it does not disclose a wallet-local
+chain fingerprint.
 
 #### Output
 

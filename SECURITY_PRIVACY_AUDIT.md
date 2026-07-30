@@ -42,6 +42,7 @@ layers (`src/Core/Node*.cpp`, `WalletSync.cpp`, `Archive.cpp`, `Config.cpp`).
 | Opt-in peer attribution | `src/Core/Config.*`, `Node*.cpp`, `Archive.cpp`, `PeerDB.cpp` | Archive source IPs and log-visible peer addresses are both off by default and require explicit privacy-sensitive options; the v3-to-v4 PeerDB reset is announced as rediscovery rather than an unexplained wipe. |
 | Bounded anonymity referrals | `src/p2p/PeerDB.*`, `P2P.*`, `P2PProtocolBasic.cpp` | Anonymity peer advertisements stay gray until a validated outbound handshake, are capped at 16 unresolved entries per source, and eight consecutive target failures ban the source and delete sole-source poison. Local proxy negotiation failures are not attributed to the destination. |
 | Periodically reseeded CSPRNG | `src/crypto/random.*`, `crypto.cpp`, `tests/crypto/test_crypto.cpp` | Fresh operating-system entropy is mixed into the Keccak state before output crosses each 1 MiB boundary, including within one oversized request. The public C++ entry serializes concurrent callers; tests cover exact boundaries, zero-length state neutrality and parallel requests. |
+| Privacy-minimized wallet sync | `src/Core/WalletSync.cpp`, wallet/node RPC docs | `--wallet-sync-privacy` bootstraps with the canonical zero/genesis placeholder and then uses height-addressed static pages, avoiding wallet creation timestamps and sparse-chain fingerprints. It fails closed if valid static pages are unavailable rather than degrading to identifying RPC requests. |
 | Multicast disabled on mainnet | `src/Core/Config.cpp:63` | Prevents LAN peer-enumeration deanonymization. |
 
 No coin-forging, signature-forging, or double-spend vector was found. **All findings below
@@ -134,9 +135,13 @@ cross-platform packet capture and independent review remain release requirements
 - `src/Core/Archive.cpp:49-69`, `src/Core/BlockChainState.cpp:699-702` — a persistent
   transaction→source-IP map, retrievable via the `GetArchive` RPC.
 
-#### M-2. Wallet leaks creation timestamp and sparse chain on sync
-- `src/Core/WalletSync.cpp:239-246` — `first_block_timestamp` (narrows wallet age) and
-  `sparse_chain` (fingerprints client / infers visibility) are sent to the node.
+#### M-2. Wallet creation timestamp and sparse-chain sync metadata — remediated mode
+Legacy synchronization still sends a month-rounded creation timestamp and the wallet's sparse chain.
+With `--wallet-sync-privacy`, the first RPC request instead sends timestamp zero and the protocol's
+one-element zero/genesis placeholder. Subsequent pages use the static height-addressed path. The
+server can observe synchronization progress, but not the wallet creation time or branch-specific
+sparse-chain fingerprint. If valid static pages are unavailable, walletd reports
+`PRIVACY_SYNC_UNAVAILABLE` rather than silently weakening the selected privacy mode.
 
 #### L-1. Long-lived CSPRNG state — remediated
 The global Keccak sponge now mixes 32 fresh operating-system bytes before emitting output beyond
@@ -162,7 +167,7 @@ stable.
 | C-4 | Critical | Remote-node mode collapses the ring |
 | C-5 | Critical, partially remediated | Dandelion++ implemented; transport anonymity and adversarial validation remain |
 | M-1 | Medium | Archive stores source IP per transaction |
-| M-2 | Medium | Wallet leaks creation timestamp + sparse chain |
+| M-2 | Remediated mode | Privacy sync hides creation timestamp and sparse-chain fingerprint |
 | L-1 | Remediated | CSPRNG periodically reseeded at exact byte boundaries |
 | L-2 | Low | Verbose peer-IP logging |
 | Q-1 | Critical (industry-wide) | Not quantum-resistant — CRQC breaks supply integrity and privacy |

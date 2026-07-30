@@ -28,7 +28,10 @@ keep walletd on localhost or place it behind an authenticated TLS-terminating re
 An untrusted remote bytecoind can correlate legacy decoy requests with the transaction later sent
 through it and infer the real ring member. Prefer a locally operated bytecoind. If remote operation is
 unavoidable, enable `--wallet-sync-privacy` to hide wallet age and sparse-chain fingerprints; this
-does not solve decoy/broadcast correlation. Walletd deliberately omits transaction construction,
+uses the canonical genesis placeholder for the first RPC page and height-addressed static sync pages
+thereafter. The remote server can still observe synchronization progress. Walletd fails closed with
+`PRIVACY_SYNC_UNAVAILABLE` if the node cannot provide valid static pages instead of silently sending
+the identifying sparse chain. This mode does not solve decoy/broadcast correlation. Walletd deliberately omits transaction construction,
 requested amounts, returned decoys, transaction hashes and raw transaction bodies from its logs.
 Onyx shielded transfers do not use the legacy amount-specific ring-decoy flow.
 where:

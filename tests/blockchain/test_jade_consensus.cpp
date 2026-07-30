@@ -223,6 +223,7 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	// versioned binary method and the serialized flag covered together so either side cannot drift.
 	{
 		api::cnd::SyncBlocks::Request request;
+		request.sparse_chain.push_back(Hash{});
 		request.need_redundant_data = false;
 		request.need_onyx_history = true;
 		const common::BinaryArray encoded = seria::to_binary_kv(request);
@@ -230,8 +231,10 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		seria::from_binary_kv(decoded, encoded);
 		invariant(api::cnd::SyncBlocks::bin_method() == "sync_blocks_v3.4.4",
 		    "Onyx sync request method version changed unexpectedly");
-		invariant(!decoded.need_redundant_data && decoded.need_onyx_history,
-		    "Onyx sync history flag did not round-trip");
+		invariant(!decoded.need_redundant_data && decoded.need_onyx_history &&
+		              decoded.first_block_timestamp == 0 && decoded.sparse_chain.size() == 1 &&
+		              decoded.sparse_chain.front() == Hash{},
+		    "privacy-preserving Onyx sync request did not round-trip");
 		std::cout << "  [onyx] global commitment-history sync request round-trip ok" << std::endl;
 	}
 
