@@ -43,9 +43,14 @@ class QualificationEvidenceTest(unittest.TestCase):
             "schema_version": 1,
             "gate_id": "independent-audits",
             "revision": REVISION,
+            "started_at": "2026-07-10T00:00:00Z",
             "completed_at": "2026-07-17T00:00:00Z",
             "auditor": {"organization": organization},
-            "unresolved_findings": {"critical": 0, "high": 0},
+            "independence_statement": True,
+            "methodology": "manual review, adversarial tests and independent reproduction",
+            "remediation_verified": True,
+            "scope": sorted(qualification_evidence.REQUIRED_AUDIT_SCOPES),
+            "unresolved_findings": {"critical": 0, "high": 0, "medium": 0, "low": 0},
             "artifact": self.write_artifact(root, report),
         }
 
@@ -246,6 +251,42 @@ class QualificationEvidenceTest(unittest.TestCase):
             )
             self.assertTrue(any("distinct organizations" in error for error in errors), errors)
             self.assertTrue(any("critical and high" in error for error in errors), errors)
+
+    def test_audits_must_collectively_cover_full_security_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            scopes = sorted(qualification_evidence.REQUIRED_AUDIT_SCOPES)
+            first_document = self.audit(root, "A Labs", "a.txt")
+            second_document = self.audit(root, "B Labs", "b.txt")
+            first_document["scope"] = scopes[:2]
+            second_document["scope"] = scopes[2:-1]
+            second_document["independence_statement"] = False
+            first = self.write_document(root, "audit-a.json", first_document)
+            second = self.write_document(root, "audit-b.json", second_document)
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+            )
+            self.assertTrue(any("collectively cover every required audit scope" in error for error in errors))
+            self.assertTrue(any("independence_statement must be true" in error for error in errors))
+
+    def test_audit_cannot_start_before_frozen_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first = self.write_document(root, "audit-a.json", self.audit(root, "A Labs", "a.txt"))
+            second = self.write_document(root, "audit-b.json", self.audit(root, "B Labs", "b.txt"))
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                [first, second],
+                root,
+                revision_committed_at=datetime(2026, 7, 11, tzinfo=timezone.utc),
+            )
+            self.assertEqual(
+                2,
+                sum("audit started before the frozen release revision" in error for error in errors),
+                errors,
+            )
 
     def test_short_testnet_soak_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

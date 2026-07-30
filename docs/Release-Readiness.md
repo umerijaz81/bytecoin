@@ -124,7 +124,11 @@ The enforced minimums are release policy, not claims about the current branch:
   cross-checks canonical filenames, the provenance schema/revision/materials/reproduction result, the
   SPDX root package revision, and every canonical `SHA256SUMS` entry;
 - independent audits require two attestations from distinct normalized organization identities, each
-  binding its report and declaring zero unresolved critical or high findings;
+  started after the frozen revision exists, binding its report, affirming independence, recording a
+  non-empty methodology, verifying remediation, and declaring typed non-negative finding counts with
+  zero unresolved critical or high findings. Together the reports must cover ZK cryptography,
+  consensus/state transition, wallet key management/privacy, network/DoS, migration/supply
+  invariants, and compiler/reproducibility;
 - public testnet requires at least 14 elapsed days, three independent nodes, 10,000 observed blocks,
   and recorded reorg, malformed-bundle, and denial-of-service scenarios at a credential-free public
   HTTPS endpoint with a valid host and optional valid port. Evidence binds the network and genesis,

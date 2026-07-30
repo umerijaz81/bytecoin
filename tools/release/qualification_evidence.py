@@ -22,6 +22,14 @@ EXTERNAL_GATES = {
 HEX_32 = re.compile(r"^[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_PLATFORMS = {"linux-x86_64", "macos-arm64", "windows-x86_64"}
+REQUIRED_AUDIT_SCOPES = {
+    "zk-circuits-and-cryptography",
+    "consensus-and-state-transition",
+    "wallet-key-management-and-privacy",
+    "network-and-denial-of-service",
+    "migration-and-supply-invariants",
+    "compiler-and-reproducibility",
+}
 
 
 def _repository_file(root: pathlib.Path, relative: object) -> pathlib.Path | None:
@@ -299,19 +307,56 @@ def _source_provenance(
 
 def _audit(
     document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
-) -> tuple[list[str], str | None]:
+) -> tuple[list[str], str | None, set[str]]:
     errors = _common(document, "independent-audits", label)
+    started = _utc(document.get("started_at"), "started_at", errors, label)
+    completed = _utc(document.get("completed_at"), "completed_at", errors, label)
+    if started is not None and completed is not None and started > completed:
+        errors.append(f"{label}: started_at must not follow completed_at")
     auditor = document.get("auditor")
     organization = auditor.get("organization") if isinstance(auditor, dict) else None
     if not isinstance(organization, str) or not organization.strip():
         errors.append(f"{label}: auditor.organization is required")
         organization = None
+    if document.get("independence_statement") is not True:
+        errors.append(f"{label}: independence_statement must be true")
+    methodology = document.get("methodology")
+    if not isinstance(methodology, str) or not methodology.strip():
+        errors.append(f"{label}: methodology is required")
+    if document.get("remediation_verified") is not True:
+        errors.append(f"{label}: remediation_verified must be true")
+
+    scope = document.get("scope")
+    scopes: set[str] = set()
+    if (
+        not isinstance(scope, list)
+        or any(not isinstance(item, str) for item in scope)
+        or len(scope) != len(set(scope))
+        or not scope
+    ):
+        errors.append(f"{label}: scope must be a non-empty array of unique domains")
+    else:
+        scopes = set(scope)
+        unknown = scopes - REQUIRED_AUDIT_SCOPES
+        if unknown:
+            errors.append(f"{label}: unknown audit scope domains: {sorted(unknown)}")
+
     findings = document.get("unresolved_findings")
-    if not isinstance(findings, dict) or findings.get("critical") != 0 or findings.get("high") != 0:
+    finding_levels = {"critical", "high", "medium", "low"}
+    if not isinstance(findings, dict) or set(findings) != finding_levels:
+        errors.append(f"{label}: unresolved_findings must contain exactly {sorted(finding_levels)}")
+    elif any(
+        not isinstance(findings[level], int)
+        or isinstance(findings[level], bool)
+        or findings[level] < 0
+        for level in finding_levels
+    ):
+        errors.append(f"{label}: unresolved finding counts must be non-negative integers")
+    elif findings["critical"] != 0 or findings["high"] != 0:
         errors.append(f"{label}: unresolved critical and high findings must both be zero")
     _artifact(document, root, errors, label, tracked_paths)
     normalized = " ".join(organization.split()).casefold() if organization else None
-    return errors, normalized
+    return errors, normalized, scopes
 
 
 def _testnet(
@@ -661,6 +706,7 @@ def verify_gate(
         return errors
 
     organizations: list[str] = []
+    audited_scopes: set[str] = set()
     for path, document in documents:
         label = path.relative_to(root.resolve()).as_posix()
         if expected_revision is not None and document.get("revision") != expected_revision:
@@ -669,14 +715,18 @@ def verify_gate(
             completed = _valid_utc(document.get("completed_at"))
             if completed is not None and completed < revision_committed_at:
                 errors.append(f"{label}: completed_at predates the frozen release revision")
-            if gate_id in {"public-testnet-soak", "incident-response-drill"}:
+            if gate_id in {
+                "public-testnet-soak",
+                "incident-response-drill",
+                "independent-audits",
+            }:
                 started = _valid_utc(document.get("started_at"))
                 if started is not None and started < revision_committed_at:
-                    activity = (
-                        "public testnet soak"
-                        if gate_id == "public-testnet-soak"
-                        else "incident-response drill"
-                    )
+                    activity = {
+                        "public-testnet-soak": "public testnet soak",
+                        "incident-response-drill": "incident-response drill",
+                        "independent-audits": "independent audit",
+                    }[gate_id]
                     errors.append(f"{label}: {activity} started before the frozen release revision")
         if gate_id == "source-provenance":
             errors.extend(
@@ -689,10 +739,13 @@ def verify_gate(
                 )
             )
         elif gate_id == "independent-audits":
-            document_errors, organization = _audit(document, root, label, tracked_paths)
+            document_errors, organization, scopes = _audit(
+                document, root, label, tracked_paths
+            )
             errors.extend(document_errors)
             if organization:
                 organizations.append(organization)
+            audited_scopes.update(scopes)
         elif gate_id == "public-testnet-soak":
             errors.extend(_testnet(document, root, label, tracked_paths))
         elif gate_id == "reproducible-platform-binaries":
@@ -712,4 +765,8 @@ def verify_gate(
             )
     if gate_id == "independent-audits" and len(set(organizations)) < 2:
         errors.append("independent-audits: reports must come from distinct organizations")
+    if gate_id == "independent-audits" and audited_scopes != REQUIRED_AUDIT_SCOPES:
+        errors.append(
+            "independent-audits: reports must collectively cover every required audit scope"
+        )
     return errors
