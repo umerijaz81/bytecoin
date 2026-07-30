@@ -79,11 +79,11 @@ class ReleaseToolsTest(unittest.TestCase):
         )
 
     def test_release_json_rejects_non_finite_numbers(self) -> None:
-        for value in ("NaN", "Infinity", "-Infinity"):
+        for value in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(
                     release_common.NonFiniteJsonNumber,
-                    "non-finite JSON number",
+                    "non-finite JSON number|exceeds finite range",
                 ):
                     release_common.strict_json_loads(
                         f'{{"gate_id":"public-testnet-soak","measurement":{{"value":{value}}}}}'

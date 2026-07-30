@@ -282,6 +282,26 @@ class QualificationEvidenceTest(unittest.TestCase):
                 errors,
             )
 
+    def test_typed_attestation_rejects_exponent_overflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            document = self.audit(root, "A Labs", "a.txt")
+            raw = json.dumps(document)
+            raw = raw[:-1] + ', "measurement": {"failure_rate": 1e999}}'
+            (root / "audit-a.json").write_text(raw, encoding="utf-8")
+            second = self.write_document(root, "audit-b.json", self.audit(root, "B Labs", "b.txt"))
+            errors = qualification_evidence.verify_gate(
+                "independent-audits",
+                ["audit-a.json", second],
+                root,
+                tracked_paths={"audit-a.json", second, "a.txt", "b.txt"},
+            )
+            self.assertTrue(any("exceeds finite range" in error for error in errors), errors)
+            self.assertTrue(
+                any("passed status requires 2 typed JSON attestation" in error for error in errors),
+                errors,
+            )
+
     def test_two_distinct_clean_audits_pass(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

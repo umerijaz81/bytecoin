@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import pathlib
 import re
 import subprocess
@@ -37,11 +38,19 @@ def _reject_json_constant(value: str) -> object:
     raise NonFiniteJsonNumber(f"non-finite JSON number: {value}")
 
 
+def _strict_json_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise NonFiniteJsonNumber(f"JSON number exceeds finite range: {value}")
+    return result
+
+
 def strict_json_loads(value: str | bytes | bytearray) -> object:
     return json.loads(
         value,
         object_pairs_hook=_unique_json_object,
         parse_constant=_reject_json_constant,
+        parse_float=_strict_json_float,
     )
 
 

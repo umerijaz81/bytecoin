@@ -125,7 +125,8 @@ Every JSON document in the release boundary is decoded with duplicate object key
 nesting depth. This includes dependency locks, Cargo checksum manifests, activation gates, typed
 attestations, provenance and SPDX evidence; last-key-wins ambiguity is never accepted.
 The same decoder rejects the non-standard `NaN`, `Infinity` and `-Infinity` numeric tokens at every
-nesting depth, so non-finite values cannot bypass thresholds or enter canonical release evidence.
+nesting depth. It also rejects finite-syntax exponent values that overflow the host numeric range,
+so non-finite values cannot bypass thresholds or enter canonical release evidence.
 
 The enforced minimums are release policy, not claims about the current branch:
 
