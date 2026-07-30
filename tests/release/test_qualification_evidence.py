@@ -637,21 +637,49 @@ class QualificationEvidenceTest(unittest.TestCase):
                 errors,
             )
 
-    def test_reproducibility_binds_each_builder_to_identical_hash(self) -> None:
+    def test_reproducibility_binds_every_program_and_independent_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             platforms = []
             for name in sorted(qualification_evidence.REQUIRED_PLATFORMS):
+                builder_ids = [f"{name}-a", f"{name}-b"]
                 platforms.append(
                     {
                         "name": name,
                         "independent_builders": 2,
-                        "builder_ids": [f"{name}-a", f"{name}-b"],
+                        "builder_ids": builder_ids,
                         "hashes_match": True,
-                        "normalized_sha256": DIGEST,
-                        "builds": [
-                            {"builder_id": f"{name}-a", "sha256": DIGEST},
-                            {"builder_id": f"{name}-b", "sha256": DIGEST},
+                        "builders": [
+                            {
+                                "builder_id": builder_id,
+                                "revision": REVISION,
+                                "environment_sha256": str(index + 3) * 64,
+                                "compiler": "pinned compiler",
+                                "sdk": "pinned sdk",
+                                "linker": "pinned linker",
+                                "dependencies_lock_sha256": DIGEST,
+                            }
+                            for index, builder_id in enumerate(builder_ids)
+                        ],
+                        "artifacts": [
+                            {
+                                "name": program,
+                                "binary_sha256": "5" * 64,
+                                "debug_symbols_sha256": "6" * 64,
+                                "sbom_sha256": "7" * 64,
+                                "builds": [
+                                    {
+                                        "builder_id": builder_id,
+                                        "binary_sha256": "5" * 64,
+                                        "debug_symbols_sha256": "6" * 64,
+                                        "sbom_sha256": "7" * 64,
+                                    }
+                                    for builder_id in builder_ids
+                                ],
+                            }
+                            for program in sorted(
+                                qualification_evidence.REQUIRED_RELEASE_PROGRAMS
+                            )
                         ],
                     }
                 )
@@ -667,16 +695,29 @@ class QualificationEvidenceTest(unittest.TestCase):
             self.assertEqual(
                 [],
                 qualification_evidence.verify_gate(
-                    "reproducible-platform-binaries", [evidence], root
+                    "reproducible-platform-binaries",
+                    [evidence],
+                    root,
+                    dependencies_lock_digest=DIGEST,
                 ),
             )
-            platforms[0]["builds"][1]["sha256"] = "3" * 64
+            platforms[0]["builders"][1]["environment_sha256"] = platforms[0]["builders"][0][
+                "environment_sha256"
+            ]
+            platforms[0]["artifacts"][0]["builds"][1]["binary_sha256"] = "8" * 64
             evidence = self.write_document(root, "reproducibility.json", document)
             errors = qualification_evidence.verify_gate(
-                "reproducible-platform-binaries", [evidence], root
+                "reproducible-platform-binaries",
+                [evidence],
+                root,
+                dependencies_lock_digest=DIGEST,
             )
             self.assertTrue(
-                any("every builder hash must equal normalized_sha256" in error for error in errors),
+                any("distinct environment identities" in error for error in errors),
+                errors,
+            )
+            self.assertTrue(
+                any("every builder binary_sha256 must match" in error for error in errors),
                 errors,
             )
 

@@ -22,6 +22,7 @@ EXTERNAL_GATES = {
 HEX_32 = re.compile(r"^[0-9a-f]{64}$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_PLATFORMS = {"linux-x86_64", "macos-arm64", "windows-x86_64"}
+REQUIRED_RELEASE_PROGRAMS = {"bytecoind", "walletd", "minerd"}
 REQUIRED_AUDIT_SCOPES = {
     "zk-circuits-and-cryptography",
     "consensus-and-state-transition",
@@ -471,7 +472,11 @@ def _testnet(
 
 
 def _reproducibility(
-    document: dict, root: pathlib.Path, label: str, tracked_paths: set[str] | None
+    document: dict,
+    root: pathlib.Path,
+    label: str,
+    tracked_paths: set[str] | None,
+    dependencies_lock_digest: str | None,
 ) -> list[str]:
     errors = _common(document, "reproducible-platform-binaries", label)
     platforms = document.get("platforms")
@@ -499,41 +504,125 @@ def _reproducibility(
             )
             if item.get("hashes_match") is not True:
                 errors.append(f"{label}:{name}: hashes_match must be true")
-            normalized_sha256 = item.get("normalized_sha256")
-            if not isinstance(normalized_sha256, str) or not HEX_32.fullmatch(normalized_sha256):
-                errors.append(f"{label}:{name}: normalized_sha256 must be lowercase SHA-256")
-            builds = item.get("builds")
-            if not isinstance(builds, list):
-                errors.append(f"{label}:{name}: builds must bind each builder identity and hash")
-                continue
-            build_ids: list[str] = []
-            build_hashes: list[str] = []
-            for build in builds:
-                if not isinstance(build, dict):
-                    errors.append(f"{label}:{name}: invalid build entry")
-                    continue
-                builder_id = build.get("builder_id")
-                digest = build.get("sha256")
-                if not isinstance(builder_id, str) or not builder_id.strip():
-                    errors.append(f"{label}:{name}: build builder_id is invalid")
-                else:
-                    build_ids.append(" ".join(builder_id.split()).casefold())
-                if not isinstance(digest, str) or not HEX_32.fullmatch(digest):
-                    errors.append(f"{label}:{name}: build sha256 must be lowercase SHA-256")
-                else:
-                    build_hashes.append(digest)
+            builders = item.get("builders")
+            builder_records: list[str] = []
+            environment_digests: list[str] = []
+            if not isinstance(builders, list):
+                errors.append(f"{label}:{name}: builders must describe each independent environment")
+            else:
+                for builder in builders:
+                    if not isinstance(builder, dict):
+                        errors.append(f"{label}:{name}: invalid builder environment")
+                        continue
+                    builder_id = builder.get("builder_id")
+                    if not isinstance(builder_id, str) or not builder_id.strip():
+                        errors.append(f"{label}:{name}: builder_id is invalid")
+                    else:
+                        builder_records.append(" ".join(builder_id.split()).casefold())
+                    environment_digest = builder.get("environment_sha256")
+                    if not isinstance(environment_digest, str) or not HEX_32.fullmatch(
+                        environment_digest
+                    ):
+                        errors.append(
+                            f"{label}:{name}: environment_sha256 must be lowercase SHA-256"
+                        )
+                    else:
+                        environment_digests.append(environment_digest)
+                    if builder.get("revision") != document.get("revision"):
+                        errors.append(
+                            f"{label}:{name}: every builder must use the attested revision"
+                        )
+                    for key in ("compiler", "sdk", "linker"):
+                        value = builder.get(key)
+                        if not isinstance(value, str) or not value.strip():
+                            errors.append(f"{label}:{name}: builder {key} identity is required")
+                    lock_digest = builder.get("dependencies_lock_sha256")
+                    if not isinstance(lock_digest, str) or not HEX_32.fullmatch(lock_digest):
+                        errors.append(
+                            f"{label}:{name}: dependencies_lock_sha256 must be lowercase SHA-256"
+                        )
+                    elif (
+                        dependencies_lock_digest is not None
+                        and lock_digest != dependencies_lock_digest
+                    ):
+                        errors.append(
+                            f"{label}:{name}: dependency lock does not match frozen revision"
+                        )
             if (
                 builder_ids is None
-                or len(build_ids) != len(builder_ids)
-                or set(build_ids) != set(builder_ids)
+                or len(builder_records) != len(builder_ids)
+                or set(builder_records) != set(builder_ids)
             ):
-                errors.append(f"{label}:{name}: builds must cover every declared builder exactly once")
+                errors.append(
+                    f"{label}:{name}: builder environments must cover every builder exactly once"
+                )
+            if builder_ids is not None and (
+                len(environment_digests) != len(builder_ids)
+                or len(set(environment_digests)) != len(builder_ids)
+            ):
+                errors.append(f"{label}:{name}: builders must use distinct environment identities")
+
+            artifacts = item.get("artifacts")
+            if not isinstance(artifacts, list):
+                errors.append(f"{label}:{name}: artifacts must bind every release program")
+                continue
+            artifact_names = [
+                artifact.get("name")
+                for artifact in artifacts
+                if isinstance(artifact, dict) and isinstance(artifact.get("name"), str)
+            ]
             if (
-                not isinstance(normalized_sha256, str)
-                or len(build_hashes) != len(builds)
-                or any(digest != normalized_sha256 for digest in build_hashes)
+                set(artifact_names) != REQUIRED_RELEASE_PROGRAMS
+                or len(artifact_names) != len(REQUIRED_RELEASE_PROGRAMS)
             ):
-                errors.append(f"{label}:{name}: every builder hash must equal normalized_sha256")
+                errors.append(
+                    f"{label}:{name}: artifacts must contain every release program exactly once"
+                )
+            for artifact in artifacts:
+                if not isinstance(artifact, dict):
+                    errors.append(f"{label}:{name}: invalid release artifact")
+                    continue
+                program = artifact.get("name", "unknown")
+                expected_hashes = {}
+                for key in (
+                    "binary_sha256",
+                    "debug_symbols_sha256",
+                    "sbom_sha256",
+                ):
+                    digest = artifact.get(key)
+                    if not isinstance(digest, str) or not HEX_32.fullmatch(digest):
+                        errors.append(f"{label}:{name}:{program}: {key} must be lowercase SHA-256")
+                    else:
+                        expected_hashes[key] = digest
+                builds = artifact.get("builds")
+                if not isinstance(builds, list):
+                    errors.append(
+                        f"{label}:{name}:{program}: builds must bind every builder"
+                    )
+                    continue
+                build_ids: list[str] = []
+                for build in builds:
+                    if not isinstance(build, dict):
+                        errors.append(f"{label}:{name}:{program}: invalid build result")
+                        continue
+                    builder_id = build.get("builder_id")
+                    if not isinstance(builder_id, str) or not builder_id.strip():
+                        errors.append(f"{label}:{name}:{program}: build builder_id is invalid")
+                    else:
+                        build_ids.append(" ".join(builder_id.split()).casefold())
+                    for key, expected in expected_hashes.items():
+                        if build.get(key) != expected:
+                            errors.append(
+                                f"{label}:{name}:{program}: every builder {key} must match"
+                            )
+                if (
+                    builder_ids is None
+                    or len(build_ids) != len(builder_ids)
+                    or set(build_ids) != set(builder_ids)
+                ):
+                    errors.append(
+                        f"{label}:{name}:{program}: builds must cover every builder exactly once"
+                    )
     _artifact(document, root, errors, label, tracked_paths)
     return errors
 
@@ -749,7 +838,15 @@ def verify_gate(
         elif gate_id == "public-testnet-soak":
             errors.extend(_testnet(document, root, label, tracked_paths))
         elif gate_id == "reproducible-platform-binaries":
-            errors.extend(_reproducibility(document, root, label, tracked_paths))
+            errors.extend(
+                _reproducibility(
+                    document,
+                    root,
+                    label,
+                    tracked_paths,
+                    dependencies_lock_digest,
+                )
+            )
         elif gate_id == "incident-response-drill":
             errors.extend(_incident(document, root, label, tracked_paths))
         elif gate_id == "governance-approval":

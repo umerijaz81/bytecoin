@@ -137,8 +137,10 @@ The enforced minimums are release policy, not claims about the current branch:
   declared node must run the attested revision and converge on the exact final height, block hash and
   supply-audit snapshot;
 - binary reproducibility requires Linux x86-64, macOS ARM64, and Windows x86-64, with two independent
-  builders and byte-identical normalized hashes for each platform; each platform must appear exactly
-  once, and every named builder must bind its own SHA-256 to that platform's normalized SHA-256;
+  builders in distinct digest-bound environments for each platform. Every builder binds the frozen
+  revision and dependency lock plus non-empty compiler, SDK and linker identities. Each platform must
+  appear exactly once and include `bytecoind`, `walletd`, and `minerd`; for every program, both
+  builders must independently reproduce the exact binary, debug-symbol and per-binary SBOM SHA-256;
 - an incident drill requires at least two participants, an independent observer, named decision
   authority, recorded communications, migration/supply reconciliation and an unresolved-action list.
   It must exercise consensus-stall, reorg and proof-DoS exactly once each; every scenario records
