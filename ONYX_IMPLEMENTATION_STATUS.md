@@ -114,7 +114,13 @@ configuration that would create a standalone V5/V6 interval or a mismatched Rand
    database and reorganizes onto the retained branch while checking every selected seed ancestor.
    The real daemon/miner process path accepts and submits a canonical template, while mock-daemon cases
    prove fail-closed retry without hashing/submission for malformed metadata, blobs, seeds, parent and
-   coinbase-height bindings. Remaining: independent review, longer public long-sync/reorg soak,
+   coinbase-height bindings. A fixed ZK-only `--net=onyx` qualification network now co-activates V7 and
+   RandomX at height 1 with its own UUID, ports, genesis, data folder and wallet domain, no inherited
+   seeds or checkpoint authority, and inert checkpoint-key slots preserving the database format. Its
+   real-process CI rehearsal mines two competing RandomX branches across three isolated daemons,
+   reconnects them, requires a longer-branch reorganization and exact supply-audit convergence, rejects
+   truncated V7 bytes without losing liveness, rejects a foreign testnet peer, and emits a revision-bound
+   report explicitly marked as non-release evidence. Remaining: independent review, longer public long-sync/reorg soak,
    published throughput/power benchmarks on native qualification hardware and public soak.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.

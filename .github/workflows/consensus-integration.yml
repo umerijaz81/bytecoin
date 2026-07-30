@@ -101,10 +101,21 @@ jobs:
       - name: Configure locked ZK-enabled qualification binaries
         run: cmake -S . -B build-onyx-network -DUSE_SQLITE=ON -DONYX_ZK=ON
       - name: Build qualification node and consensus tests
-        run: cmake --build build-onyx-network --parallel 2 --target tests bytecoind
+        run: cmake --build build-onyx-network --parallel 2 --target tests bytecoind minerd
       - name: Check height-1 V7/RandomX schedule and network domains
         run: build-onyx-network/artifacts/bin/tests --jade
       - name: Qualify fixed identity across real daemon sockets
         run: >-
           python3 tests/network/test_onyx_qualification_process.py
           --bytecoind build-onyx-network/artifacts/bin/bytecoind
+          --minerd build-onyx-network/artifacts/bin/minerd
+          --revision "${{ github.sha }}"
+          --report build-onyx-network/onyx-local-qualification.json
+      - name: Upload non-release local qualification report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onyx-local-qualification-${{ github.sha }}
+          path: build-onyx-network/onyx-local-qualification.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
