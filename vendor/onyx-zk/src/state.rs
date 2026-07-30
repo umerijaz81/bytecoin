@@ -900,7 +900,11 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
                     .ok_or(SnapshotError::InvalidIssuanceLedger)?;
                 let (_, _, policy) = issuance_policy_from_entry(entry)
                     .map_err(|_| SnapshotError::InvalidIssuanceLedger)?;
-                if issued_supply == 0 || issued_supply > policy.max_supply || next_sequence == 0 {
+                if issued_supply == 0
+                    || issued_supply > policy.max_supply
+                    || next_sequence == 0
+                    || next_sequence > issued_supply
+                {
                     return Err(SnapshotError::InvalidIssuanceLedger);
                 }
                 issuance.insert(
@@ -1656,6 +1660,17 @@ mod tests {
         let restored = ShieldedState::<4>::decode_snapshot(&snapshot).unwrap();
         assert_eq!(restored.encode_snapshot(), snapshot);
         assert_eq!(restored.token_issued_supply(&program_id), 100);
+
+        let mut unreachable = state;
+        unreachable
+            .issuance
+            .get_mut(&program_id)
+            .unwrap()
+            .next_sequence = 101;
+        assert_eq!(
+            ShieldedState::<4>::decode_snapshot(&unreachable.encode_snapshot()).err(),
+            Some(SnapshotError::InvalidIssuanceLedger)
+        );
     }
 
     #[test]
