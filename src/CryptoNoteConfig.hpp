@@ -89,6 +89,7 @@ const uint64_t ADDRESS_BASE58_PREFIX_AMETHYST = 572238;  // addresses start with
 const uint64_t SENDPROOF_BASE58_PREFIX        = 86762904402638;
 // proofs start with "bcn1PRoof", varintdata={0xce, 0xf5, 0xe2, 0x80, 0x91, 0xdd, 0x13}
 const uint64_t VIEWONLYWALLET_BASE58_PREFIX = 3904523549390;
+const uint64_t VIEWONLYWALLET_V2_BASE58_PREFIX = VIEWONLYWALLET_BASE58_PREFIX + 1;
 // wallets start with "bcnAUDit", varintdata={0xce, 0xf5, 0xf4, 0xbd, 0xd1, 0x71}
 const char BLOCKS_FILENAME[]       = "blocks.bin";
 const char BLOCKINDEXES_FILENAME[] = "blockindexes.bin";

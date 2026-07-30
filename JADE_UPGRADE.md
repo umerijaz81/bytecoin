@@ -116,7 +116,8 @@ re-architecting.
 ```
 cmake -S . -B build -DUSE_SQLITE=1
 cmake --build build --parallel --target tests
-build/artifacts/bin/tests --jade
+cd build
+artifacts/bin/tests --jade
 ```
 (`USE_SQLITE=1` avoids the external LMDB clone. Toolchain note: a handful of missing
 `<stdexcept>/<limits>/<memory>/<algorithm>` includes were added so the code builds under GCC 13.)

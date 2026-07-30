@@ -3,16 +3,20 @@
 // details.
 
 #include "Core/Config.hpp"
+#include "CryptoNoteConfig.hpp"
 #include "Core/Wallet.hpp"
 #include "Core/WalletHD.hpp"
 #include "Core/WalletHDsqlite.hpp"
 #include "Core/WalletLegacy.hpp"
 #include "common/BIPs.hpp"
+#include "common/Base58.hpp"
 #include "common/CommandLine.hpp"
 #include "crypto/crypto.hpp"
 #include "logging/ConsoleLogger.hpp"
 #include "platform/DBmemory.hpp"
 #include "platform/PathTools.hpp"
+#include "seria/BinaryInputStream.hpp"
+#include "seria/BinaryOutputStream.hpp"
 #include "seria/JsonOutputStream.hpp"
 
 #include "test_wallet_file.hpp"
@@ -243,6 +247,66 @@ void test_wallet_file(const std::string &path_prefix) {
 	} catch (const Wallet::Exception &) {
 	}
 	WalletHDJson wa(currency, logger, mnemonic, 0, std::string{}, "storage-password");
+#ifdef onyx_USE_ZK
+	const auto portable_view = wa.export_viewonly_wallet_string("unused", true);
+	uint64_t portable_tag = 0;
+	BinaryArray portable_payload;
+	invariant(common::base58::decode_addr(portable_view, &portable_tag, &portable_payload) &&
+	              portable_tag == parameters::VIEWONLYWALLET_V2_BASE58_PREFIX,
+	    "portable Onyx view-only export did not use the v2 wallet type");
+	WalletHDBase::WalletStringFormatV2 portable_v2;
+	seria::from_binary(portable_v2, portable_payload);
+	invariant(portable_v2.onyx_full_viewing_key.size() == 177,
+	    "portable Onyx view-only export emitted a malformed viewing key");
+	WalletHDJson portable_view_wallet(
+	    currency, logger, portable_view, 0, std::string{}, "portable-password");
+	std::array<uint8_t, 177> original_portable_viewing_key{};
+	std::array<uint8_t, 177> imported_portable_viewing_key{};
+	const auto portable_network = Wallet::onyx_network_id_for_net(currency.net);
+	invariant(wa.get_onyx_full_viewing_key(portable_network, &original_portable_viewing_key),
+	    "portable Onyx viewing-key derivation failed");
+	invariant(portable_view_wallet.get_onyx_seed() == Hash{},
+	    "portable view-only wallet retained Onyx spend authority");
+	invariant(portable_view_wallet.get_onyx_full_viewing_key(
+	              portable_network, &imported_portable_viewing_key) &&
+	              imported_portable_viewing_key == original_portable_viewing_key,
+	    "portable view-only wallet lost Onyx scanning authority");
+	const auto portable_json = portable_view_wallet.save_json_data();
+	WalletHDJson reloaded_portable_view(currency, logger, portable_json, "portable-password");
+	imported_portable_viewing_key.fill(0);
+	invariant(reloaded_portable_view.get_onyx_full_viewing_key(
+	              portable_network, &imported_portable_viewing_key) &&
+	              imported_portable_viewing_key == original_portable_viewing_key,
+	    "encrypted browser wallet lost portable Onyx scanning authority");
+	common::JsonValue malformed_portable_json = seria::to_json_value(portable_view_wallet);
+	malformed_portable_json.set("onyx_full_viewing_key", "00");
+	try {
+		WalletHDJson malformed_json_view(
+		    currency, logger, malformed_portable_json.to_string(), "malformed-json-password");
+		invariant(false, "browser wallet accepted a malformed Onyx viewing-key length");
+	} catch (const Wallet::Exception &) {
+	}
+	const std::string legacy_portable = common::base58::encode_addr(
+	    parameters::VIEWONLYWALLET_BASE58_PREFIX, seria::to_binary(portable_v2.legacy));
+	WalletHDJson legacy_portable_view(
+	    currency, logger, legacy_portable, 0, std::string{}, "legacy-portable-password");
+	imported_portable_viewing_key.fill(0xff);
+	invariant(!legacy_portable_view.get_onyx_full_viewing_key(
+	              portable_network, &imported_portable_viewing_key),
+	    "legacy portable wallet unexpectedly acquired Onyx scanning authority");
+	const std::array<uint8_t, 177> empty_portable_viewing_key{};
+	invariant(imported_portable_viewing_key == empty_portable_viewing_key,
+	    "legacy portable wallet left stale Onyx viewing-key material");
+	portable_v2.onyx_full_viewing_key.pop_back();
+	const std::string malformed_portable = common::base58::encode_addr(
+	    parameters::VIEWONLYWALLET_V2_BASE58_PREFIX, seria::to_binary(portable_v2));
+	try {
+		WalletHDJson malformed_portable_view(
+		    currency, logger, malformed_portable, 0, std::string{}, "malformed-portable-password");
+		invariant(false, "portable Onyx wallet accepted a malformed viewing-key length");
+	} catch (const Wallet::Exception &) {
+	}
+#endif
 	const auto da = wa.save_json_data();
 	invariant(da.find(mnemonic) == std::string::npos, "encrypted JSON wallet leaked mnemonic");
 	WalletHDJson wa2(currency, logger, da, "storage-password");

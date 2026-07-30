@@ -350,6 +350,13 @@ std::string WalletHDBase::export_viewonly_wallet_string(
 	ws.view_secrets_signature  = m_view_secrets_signature;
 
 	ws.address_count = m_used_address_count;
+	std::array<uint8_t, 177> onyx_viewing_key{};
+	if (get_onyx_full_viewing_key(onyx_network_id_for_net(m_currency.net), &onyx_viewing_key)) {
+		WalletStringFormatV2 ws2;
+		ws2.legacy = ws;
+		ws2.onyx_full_viewing_key.assign(onyx_viewing_key.begin(), onyx_viewing_key.end());
+		return base58::encode_addr(parameters::VIEWONLYWALLET_V2_BASE58_PREFIX, seria::to_binary(ws2));
+	}
 	return base58::encode_addr(parameters::VIEWONLYWALLET_BASE58_PREFIX, seria::to_binary(ws));
 }
 
@@ -475,9 +482,20 @@ WalletHDJson::WalletHDJson(const Currency &currency, logging::ILogger &log, cons
 	uint64_t utag = 0;
 	BinaryArray data_inside_base58;
 	if (common::base58::decode_addr(mnemonic, &utag, &data_inside_base58) &&
-	    utag == parameters::VIEWONLYWALLET_BASE58_PREFIX) {
+	    (utag == parameters::VIEWONLYWALLET_BASE58_PREFIX ||
+	        utag == parameters::VIEWONLYWALLET_V2_BASE58_PREFIX)) {
 		WalletStringFormat ws;
-		seria::from_binary(ws, data_inside_base58);
+		if (utag == parameters::VIEWONLYWALLET_V2_BASE58_PREFIX) {
+			WalletStringFormatV2 ws2;
+			seria::from_binary(ws2, data_inside_base58);
+			if (ws2.onyx_full_viewing_key.size() != 177)
+				throw Wallet::Exception(
+				    api::WALLET_FILE_DECRYPT_ERROR, "Onyx view wallet key has invalid size");
+			ws = std::move(ws2.legacy);
+			m_onyx_full_viewing_key = std::move(ws2.onyx_full_viewing_key);
+		} else {
+			seria::from_binary(ws, data_inside_base58);
+		}
 		if (ws.address_type != AccountAddressAmethyst::type_tag)
 			throw Wallet::Exception(api::WALLET_FILE_DECRYPT_ERROR, "View wallet type not supported");
 		m_view_seed                 = ws.view_seed;
@@ -515,6 +533,16 @@ void WalletHDJson::ser_members(seria::ISeria &s) {
 		}
 		seria_kv("sH", m_sH, s);
 		seria_kv("view_secrets_signature", m_view_secrets_signature, s);
+		boost::optional<BinaryArray> onyx_viewing_key;
+		if (!s.is_input() && !m_onyx_full_viewing_key.empty())
+			onyx_viewing_key = m_onyx_full_viewing_key;
+		seria_kv("onyx_full_viewing_key", onyx_viewing_key, s);
+		if (s.is_input() && onyx_viewing_key) {
+			if (onyx_viewing_key->size() != 177)
+				throw Exception(
+				    api::WALLET_FILE_DECRYPT_ERROR, "Wallet Onyx full viewing key is malformed");
+			m_onyx_full_viewing_key = std::move(*onyx_viewing_key);
+		}
 	}
 	seria_kv("total_address_count", m_used_address_count, s);
 	seria_kv("creation_timestamp", m_oldest_timestamp, s);
@@ -552,6 +580,11 @@ void ser_members(cn::WalletHDBase::WalletStringFormat &v, ISeria &s) {
 	seria_kv("sH", v.sH, s);
 	seria_kv("view_secrets_signature", v.view_secrets_signature, s);
 	seria_kv("address_count", v.address_count, s);
+}
+
+void ser_members(cn::WalletHDBase::WalletStringFormatV2 &v, ISeria &s) {
+	ser_members(v.legacy, s);
+	seria_kv("onyx_full_viewing_key", v.onyx_full_viewing_key, s);
 }
 
 }  // namespace seria

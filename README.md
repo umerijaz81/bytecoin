@@ -75,13 +75,15 @@ python tools/release/verify_dependencies.py --verify-upstream
 Build the `tests` target and run the relevant suites:
 
 ```sh
-build/artifacts/bin/tests --jade
-build/artifacts/bin/tests --zk
-build/artifacts/bin/tests --wallet
-build/artifacts/bin/tests --wallet-state
+cd build
+artifacts/bin/tests --jade
+artifacts/bin/tests --zk
+artifacts/bin/tests --wallet
+artifacts/bin/tests --wallet-state
 ```
 
-For Visual Studio builds, use `build/artifacts/bin/Release/tests.exe`.
+The test runner intentionally resolves tracked fixtures relative to that build-directory working
+directory. For Visual Studio builds, use `artifacts/bin/Release/tests.exe` after `cd build`.
 
 Additional real-process, compiler, SDK, fuzz, RandomX, release, and reproducibility gates are defined
 under `tests/` and `.github/workflows/`. A green local build is not an audit, public testnet soak,

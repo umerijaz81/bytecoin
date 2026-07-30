@@ -43,6 +43,10 @@ public:
 		Signature view_secrets_signature;
 		size_t address_count = 0;
 	};
+	struct WalletStringFormatV2 {
+		WalletStringFormat legacy;
+		BinaryArray onyx_full_viewing_key;
+	};
 	void set_password(const std::string &password) override;
 
 	bool is_view_only() const override { return m_spend_secret_key == SecretKey{}; }
@@ -104,4 +108,5 @@ namespace seria {
 
 inline void ser_members(cn::WalletHDJson &v, ISeria &s) { v.ser_members(s); }
 void ser_members(cn::WalletHDBase::WalletStringFormat &v, ISeria &s);
+void ser_members(cn::WalletHDBase::WalletStringFormatV2 &v, ISeria &s);
 }  // namespace seria
