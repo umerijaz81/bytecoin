@@ -136,7 +136,8 @@ int onyx_extract_authenticated_standard_program_delta(
 	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out,
 	uint8_t *state_keys_out, size_t state_key_capacity, size_t *state_key_count_out);
 
-/* Decode the rollback-safe consensus snapshot and return its public supply-accounting totals. */
+/* Decode the rollback-safe consensus snapshot and return its public supply-accounting totals.
+ * After all pointers are validated, every output is zeroed before any decode that can fail. */
 int onyx_state_supply_audit(
     const uint8_t *snapshot, size_t snapshot_len,
     uint64_t *total_bridged_out, uint64_t *total_fees_out,
@@ -144,7 +145,8 @@ int onyx_state_supply_audit(
     uint64_t *program_count_out, uint64_t *current_block_program_cost_out,
     uint8_t root_out[32]);
 
-/* Query a stable standard-application identity in a depth-32 consensus snapshot. */
+/* Query a stable standard-application identity in a depth-32 consensus snapshot. After all
+ * pointers are validated, state_out and found_out are zeroed before any decode that can fail. */
 int onyx_state_standard_program_state(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t program_id[32],
     const uint8_t *application, size_t application_len, uint8_t state_out[32],

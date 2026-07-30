@@ -1448,6 +1448,15 @@ pub extern "C" fn onyx_state_supply_audit(
         {
             return -1;
         }
+        unsafe {
+            *total_bridged_out = 0;
+            *total_fees_out = 0;
+            *circulating_supply_out = 0;
+            *leaf_count_out = 0;
+            *program_count_out = 0;
+            *current_block_program_cost_out = 0;
+            std::ptr::write_bytes(root_out, 0, 32);
+        }
         let state = match state::ShieldedState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(snapshot, snapshot_len)
         }) {
@@ -1490,6 +1499,10 @@ pub extern "C" fn onyx_state_standard_program_state(
             || found_out.is_null()
         {
             return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(state_out, 0, 32);
+            *found_out = 0;
         }
         let state = match state::ShieldedState::<32>::decode_snapshot(unsafe {
             slice::from_raw_parts(snapshot, snapshot_len)
@@ -3551,6 +3564,80 @@ mod tests {
         assert!(manifest.is_null());
         assert_eq!(manifest_len, 0);
         assert_eq!(program_id, [0u8; 32]);
+    }
+
+    #[test]
+    fn state_queries_clear_outputs_before_decode_failure() {
+        let malformed = [0u8; 1];
+        let mut total_bridged = u64::MAX;
+        let mut total_fees = u64::MAX;
+        let mut circulating_supply = u64::MAX;
+        let mut leaf_count = u64::MAX;
+        let mut program_count = u64::MAX;
+        let mut current_block_program_cost = u64::MAX;
+        let mut root = [0xffu8; 32];
+        assert_eq!(
+            onyx_state_supply_audit(
+                malformed.as_ptr(),
+                malformed.len(),
+                &mut total_bridged,
+                &mut total_fees,
+                &mut circulating_supply,
+                &mut leaf_count,
+                &mut program_count,
+                &mut current_block_program_cost,
+                root.as_mut_ptr(),
+            ),
+            -2
+        );
+        assert_eq!(
+            (
+                total_bridged,
+                total_fees,
+                circulating_supply,
+                leaf_count,
+                program_count,
+                current_block_program_cost,
+            ),
+            (0, 0, 0, 0, 0, 0)
+        );
+        assert_eq!(root, [0u8; 32]);
+
+        let program_id = [1u8; 32];
+        let mut state = [0xffu8; 32];
+        let mut found = u8::MAX;
+        assert_eq!(
+            onyx_state_standard_program_state(
+                malformed.as_ptr(),
+                malformed.len(),
+                program_id.as_ptr(),
+                malformed.as_ptr(),
+                malformed.len(),
+                state.as_mut_ptr(),
+                &mut found,
+            ),
+            -2
+        );
+        assert_eq!(state, [0u8; 32]);
+        assert_eq!(found, 0);
+
+        let snapshot = state::ShieldedState::<32>::new(10).encode_snapshot();
+        state.fill(0xff);
+        found = u8::MAX;
+        assert_eq!(
+            onyx_state_standard_program_state(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                program_id.as_ptr(),
+                malformed.as_ptr(),
+                malformed.len(),
+                state.as_mut_ptr(),
+                &mut found,
+            ),
+            -3
+        );
+        assert_eq!(state, [0u8; 32]);
+        assert_eq!(found, 0);
     }
 
     #[test]
