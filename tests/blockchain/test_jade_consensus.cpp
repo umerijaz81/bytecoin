@@ -21,11 +21,36 @@
 #include "p2p/Socks5.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
+#include "seria/KVBinaryCommon.hpp"
 #include "seria/KVBinaryInputStream.hpp"
 #include "seria/KVBinaryOutputStream.hpp"
 #include "rpc_api.hpp"
 
 using namespace cn;
+
+static void append_le(common::BinaryArray &out, uint64_t value, size_t size) {
+	for (size_t i = 0; i != size; ++i)
+		out.push_back(static_cast<uint8_t>(value >> (i * 8)));
+}
+
+static common::BinaryArray kv_header() {
+	common::BinaryArray out;
+	append_le(out, PORTABLE_STORAGE_SIGNATUREA, 4);
+	append_le(out, PORTABLE_STORAGE_SIGNATUREB, 4);
+	out.push_back(PORTABLE_STORAGE_FORMAT_VER);
+	return out;
+}
+
+static bool rejects_malformed_kv(const common::BinaryArray &wire) {
+	try {
+		common::MemoryInputStream stream(wire.data(), wire.size());
+		seria::KVBinaryInputStream input(stream);
+		(void)input;
+		return false;
+	} catch (const std::exception &) {
+		return true;
+	}
+}
 
 // Minimal semantically-valid (under check_keys=false) 1-in/1-out transaction with the given
 // transaction version and ring size (number of output indexes on the single input).
@@ -68,6 +93,55 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	Currency currency(config);
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;
+
+	// Portable-storage is reachable through both RPC and Levin/P2P. Reject ambiguous encodings and
+	// attacker-selected allocation/work factors before materializing the intermediate JSON tree.
+	{
+		common::BinaryArray duplicate = kv_header();
+		duplicate.push_back(2 << 2);  // root object count
+		for (uint8_t value = 1; value != 3; ++value) {
+			duplicate.push_back(1);
+			duplicate.push_back('a');
+			duplicate.push_back(BIN_KV_SERIALIZE_TYPE_UINT8);
+			duplicate.push_back(value);
+		}
+		invariant(rejects_malformed_kv(duplicate), "duplicate KV object key was accepted");
+
+		common::BinaryArray noncanonical = kv_header();
+		append_le(noncanonical, (uint64_t{0} << 2) | PORTABLE_RAW_SIZE_MARK_WORD, 2);
+		invariant(rejects_malformed_kv(noncanonical), "non-canonical KV size varint was accepted");
+
+		common::BinaryArray oversized_object = kv_header();
+		append_le(oversized_object,
+		    (uint64_t{KV_BINARY_MAX_CONTAINER_ENTRIES + 1} << 2) | PORTABLE_RAW_SIZE_MARK_DWORD, 4);
+		invariant(rejects_malformed_kv(oversized_object), "oversized KV object count was accepted");
+
+		common::BinaryArray oversized_string = kv_header();
+		oversized_string.push_back(1 << 2);
+		oversized_string.push_back(1);
+		oversized_string.push_back('s');
+		oversized_string.push_back(BIN_KV_SERIALIZE_TYPE_STRING);
+		append_le(oversized_string,
+		    (uint64_t{KV_BINARY_MAX_STRING_SIZE + 1} << 2) | PORTABLE_RAW_SIZE_MARK_DWORD, 4);
+		invariant(rejects_malformed_kv(oversized_string), "oversized KV string was accepted");
+
+		common::BinaryArray invalid_bool = kv_header();
+		invalid_bool.push_back(1 << 2);
+		invalid_bool.push_back(1);
+		invalid_bool.push_back('b');
+		invalid_bool.push_back(BIN_KV_SERIALIZE_TYPE_BOOL);
+		invalid_bool.push_back(2);
+		invariant(rejects_malformed_kv(invalid_bool), "non-canonical KV boolean was accepted");
+
+		common::BinaryArray invalid_empty_array = kv_header();
+		invalid_empty_array.push_back(1 << 2);
+		invalid_empty_array.push_back(1);
+		invalid_empty_array.push_back('a');
+		invalid_empty_array.push_back(BIN_KV_SERIALIZE_FLAG_ARRAY | 0x7f);
+		invalid_empty_array.push_back(0);
+		invariant(rejects_malformed_kv(invalid_empty_array), "invalid empty KV array type was accepted");
+		std::cout << "  [jade] bounded canonical KV-binary parser checks ok" << std::endl;
+	}
 
 	// Privacy-sensitive attribution is opt-in at both the top-level config and the lower-level
 	// archive constructor. The deprecated ambiguous flag must not silently restore collection.

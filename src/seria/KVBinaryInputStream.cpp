@@ -65,11 +65,17 @@ size_t read_kv_varint(common::IInputStream &s) {
 	}
 
 	value >>= 2;
+	if ((size_mask == PORTABLE_RAW_SIZE_MARK_WORD && value <= 63) ||
+	    (size_mask == PORTABLE_RAW_SIZE_MARK_DWORD && value <= 16383) ||
+	    (size_mask == PORTABLE_RAW_SIZE_MARK_INT64 && value <= 1073741823))
+		throw std::runtime_error("KVBinaryInputStream non-canonical size encoding");
 	return integer_cast<size_t>(value);
 }
 
 std::string read_string(common::IInputStream &s) {
 	auto size = read_kv_varint(s);
+	if (size > KV_BINARY_MAX_STRING_SIZE)
+		throw std::runtime_error("KVBinaryInputStream string too large");
 	std::string str;
 	s.read(str, size);
 	return str;
@@ -82,27 +88,40 @@ void read_name(common::IInputStream &s, std::string &name) {
 	s.read(name, len);
 }
 
-JsonValue load_value(size_t level, common::IInputStream &stream, uint8_t type);
-JsonValue load_object(size_t level, common::IInputStream &stream);
-JsonValue load_entry(size_t level, common::IInputStream &stream);
-JsonValue load_array(size_t level, common::IInputStream &stream, uint8_t item_type);
+JsonValue load_value(size_t level, common::IInputStream &stream, uint8_t type, size_t &values_left);
+JsonValue load_object(size_t level, common::IInputStream &stream, size_t &values_left);
+JsonValue load_entry(size_t level, common::IInputStream &stream, size_t &values_left);
+JsonValue load_array(
+    size_t level, common::IInputStream &stream, uint8_t item_type, size_t &values_left);
 
-JsonValue load_object(size_t level, common::IInputStream &stream) {
-	if (level > 100)
+void consume_value_budget(size_t &values_left) {
+	if (values_left == 0)
+		throw std::runtime_error("KVBinaryInputStream value limit exceeded");
+	--values_left;
+}
+
+JsonValue load_object(size_t level, common::IInputStream &stream, size_t &values_left) {
+	if (level > KV_BINARY_MAX_NESTING_DEPTH)
 		throw std::runtime_error("KVBinaryInputStream depth too high");
+	consume_value_budget(values_left);
 	JsonValue sec(JsonValue::OBJECT);
 	size_t count = read_kv_varint(stream);
+	if (count > KV_BINARY_MAX_CONTAINER_ENTRIES || count > values_left)
+		throw std::runtime_error("KVBinaryInputStream object too large");
 	std::string name;
 
 	while (count--) {
 		read_name(stream, name);
-		sec.insert(name, load_entry(level, stream));
+		if (sec.contains(name))
+			throw std::runtime_error("KVBinaryInputStream duplicate object key");
+		sec.insert(name, load_entry(level, stream, values_left));
 	}
 
 	return sec;
 }
 
-JsonValue load_value(size_t level, common::IInputStream &stream, uint8_t type) {
+JsonValue load_value(size_t level, common::IInputStream &stream, uint8_t type, size_t &values_left) {
+	consume_value_budget(values_left);
 	switch (type) {
 	case BIN_KV_SERIALIZE_TYPE_INT64:
 		return read_integer_json<int64_t, int64_t>(stream);
@@ -127,35 +146,50 @@ JsonValue load_value(size_t level, common::IInputStream &stream, uint8_t type) {
 		//		return dv;
 	}
 	case BIN_KV_SERIALIZE_TYPE_BOOL:
-		return JsonValue(stream.read_byte() != 0);
+		{
+			const uint8_t value = stream.read_byte();
+			if (value > 1)
+				throw std::runtime_error("KVBinaryInputStream invalid boolean");
+			return JsonValue(value != 0);
+		}
 	case BIN_KV_SERIALIZE_TYPE_STRING:
 		return read_string_json(stream);
 	case BIN_KV_SERIALIZE_TYPE_OBJECT:
-		return load_object(level + 1, stream);
+		++values_left;  // The nested container accounts for itself.
+		return load_object(level + 1, stream, values_left);
 	case BIN_KV_SERIALIZE_TYPE_ARRAY:
-		return load_array(level + 1, stream, type);
+		++values_left;  // The nested container accounts for itself.
+		return load_array(level + 1, stream, type, values_left);
 	default:
 		throw std::runtime_error("KVBinaryInputStream Unknown data type");
 	}
 }
 
-JsonValue load_entry(size_t level, common::IInputStream &stream) {
-	if (level > 100)
+JsonValue load_entry(size_t level, common::IInputStream &stream, size_t &values_left) {
+	if (level > KV_BINARY_MAX_NESTING_DEPTH)
 		throw std::runtime_error("KVBinaryInputStream depth too high");
 	uint8_t type;
 	stream.read(&type, 1);
 
 	if (type & BIN_KV_SERIALIZE_FLAG_ARRAY) {
 		type &= ~BIN_KV_SERIALIZE_FLAG_ARRAY;
-		return load_array(level + 1, stream, type);
+		return load_array(level + 1, stream, type, values_left);
 	}
 
-	return load_value(level, stream, type);
+	return load_value(level, stream, type, values_left);
 }
 
-JsonValue load_array(size_t level, common::IInputStream &stream, uint8_t item_type) {
+JsonValue load_array(size_t level, common::IInputStream &stream, uint8_t item_type, size_t &values_left) {
+	if (level > KV_BINARY_MAX_NESTING_DEPTH)
+		throw std::runtime_error("KVBinaryInputStream depth too high");
+	if (item_type < BIN_KV_SERIALIZE_TYPE_INT64 || item_type > BIN_KV_SERIALIZE_TYPE_ARRAY ||
+	    item_type == BIN_KV_SERIALIZE_TYPE_DOUBLE)
+		throw std::runtime_error("KVBinaryInputStream invalid array item type");
+	consume_value_budget(values_left);
 	JsonValue arr(JsonValue::ARRAY);
 	size_t count = read_kv_varint(stream);
+	if (count > KV_BINARY_MAX_CONTAINER_ENTRIES || count > values_left)
+		throw std::runtime_error("KVBinaryInputStream array too large");
 
 	while (count--) {
 		if (item_type == BIN_KV_SERIALIZE_TYPE_ARRAY) {
@@ -165,9 +199,9 @@ JsonValue load_array(size_t level, common::IInputStream &stream, uint8_t item_ty
 				throw std::runtime_error("KVBinaryInputStream Incorrect array of array encoding");
 			type &= ~BIN_KV_SERIALIZE_FLAG_ARRAY;
 
-			arr.push_back(load_array(level + 1, stream, type));
+			arr.push_back(load_array(level + 1, stream, type, values_left));
 		} else
-			arr.push_back(load_value(level, stream, item_type));
+			arr.push_back(load_value(level, stream, item_type, values_left));
 	}
 
 	return arr;
@@ -184,7 +218,8 @@ JsonValue parse_binary(common::IInputStream &stream) {
 	if (hdr.m_ver != PORTABLE_STORAGE_FORMAT_VER)
 		throw std::runtime_error("KVBinaryInputStream unknown binary storage format version");
 
-	return load_object(0, stream);
+	size_t values_left = KV_BINARY_MAX_TOTAL_VALUES;
+	return load_object(0, stream, values_left);
 }
 }  // namespace
 

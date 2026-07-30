@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace cn {
@@ -18,6 +19,14 @@ const uint8_t PORTABLE_RAW_SIZE_MARK_DWORD = 2;
 const uint8_t PORTABLE_RAW_SIZE_MARK_INT64 = 3;
 
 enum { MAX_STRING_LEN_POSSIBLE = 2000000000 };  // do not let string be so big
+
+// Portable-storage values are materialized into an in-memory JsonValue tree before
+// typed deserialization. Keep attacker-controlled lengths from causing excessive
+// allocation or CPU work even when the enclosing transport has no size limit.
+constexpr size_t KV_BINARY_MAX_STRING_SIZE       = 64 * 1024 * 1024;
+constexpr size_t KV_BINARY_MAX_CONTAINER_ENTRIES = 1024 * 1024;
+constexpr size_t KV_BINARY_MAX_TOTAL_VALUES      = 1024 * 1024;
+constexpr size_t KV_BINARY_MAX_NESTING_DEPTH     = 100;
 
 // data types
 
