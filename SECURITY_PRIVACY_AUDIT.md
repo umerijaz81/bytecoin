@@ -41,6 +41,7 @@ layers (`src/Core/Node*.cpp`, `WalletSync.cpp`, `Archive.cpp`, `Config.cpp`).
 | Authenticated browser-wallet storage | `src/Core/WalletHD.*`, `WalletNodeExt.cpp`, `src/platform/IndexDB.*`, `.github/workflows/emscripten-wallet.yml` | Emscripten wallet seeds are stored in a password-derived ChaCha20 envelope with keyed authentication, strict field/size checks and mandatory non-empty passwords. Plaintext records migrate before open succeeds, password changes report storage failures instead of false success, and pinned Emscripten/Boost compilation covers the browser-only branches. |
 | Opt-in peer attribution | `src/Core/Config.*`, `Node*.cpp`, `Archive.cpp`, `PeerDB.cpp` | Archive source IPs and log-visible peer addresses are both off by default and require explicit privacy-sensitive options; the v3-to-v4 PeerDB reset is announced as rediscovery rather than an unexplained wipe. |
 | Bounded anonymity referrals | `src/p2p/PeerDB.*`, `P2P.*`, `P2PProtocolBasic.cpp` | Anonymity peer advertisements stay gray until a validated outbound handshake, are capped at 16 unresolved entries per source, and eight consecutive target failures ban the source and delete sole-source poison. Local proxy negotiation failures are not attributed to the destination. |
+| Periodically reseeded CSPRNG | `src/crypto/random.*`, `crypto.cpp`, `tests/crypto/test_crypto.cpp` | Fresh operating-system entropy is mixed into the Keccak state before output crosses each 1 MiB boundary, including within one oversized request. The public C++ entry serializes concurrent callers; tests cover exact boundaries, zero-length state neutrality and parallel requests. |
 | Multicast disabled on mainnet | `src/Core/Config.cpp:63` | Prevents LAN peer-enumeration deanonymization. |
 
 No coin-forging, signature-forging, or double-spend vector was found. **All findings below
@@ -137,10 +138,13 @@ cross-platform packet capture and independent review remain release requirements
 - `src/Core/WalletSync.cpp:239-246` — `first_block_timestamp` (narrows wallet age) and
   `sparse_chain` (fingerprints client / infers visibility) are sent to the node.
 
-#### L-1. CSPRNG seeded once, never reseeded
-- `src/crypto/random.c:103-121` — the global Keccak sponge takes 32 bytes of system entropy at
-  startup and is never re-mixed. Standard practice, but offers no defense-in-depth if the state
-  is ever compromised in a long-running daemon.
+#### L-1. Long-lived CSPRNG state — remediated
+The global Keccak sponge now mixes 32 fresh operating-system bytes before emitting output beyond
+each 1 MiB interval. Reseeding is enforced inside large requests rather than only between API calls,
+so a single oversized request cannot bypass the interval or overflow its accounting counter.
+Production callers use the mutex-serialized C++ entry point. Deterministic test initialization
+deliberately disables reseeding only inside the test process so frozen cryptographic vectors remain
+stable.
 
 #### L-2. Verbose peer-IP logging
 - `src/Core/Node_P2PProtocolBytecoin.cpp:147-172`, `src/Core/Node.cpp:76,81` — peer addresses are
@@ -159,7 +163,7 @@ cross-platform packet capture and independent review remain release requirements
 | C-5 | Critical, partially remediated | Dandelion++ implemented; transport anonymity and adversarial validation remain |
 | M-1 | Medium | Archive stores source IP per transaction |
 | M-2 | Medium | Wallet leaks creation timestamp + sparse chain |
-| L-1 | Low | CSPRNG seeded once, never reseeded |
+| L-1 | Remediated | CSPRNG periodically reseeded at exact byte boundaries |
 | L-2 | Low | Verbose peer-IP logging |
 | Q-1 | Critical (industry-wide) | Not quantum-resistant — CRQC breaks supply integrity and privacy |
 

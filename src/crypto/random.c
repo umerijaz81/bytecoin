@@ -104,8 +104,8 @@ static int initialized = 0;
  * entropy is mixed in periodically (and on demand via crypto_reseed_random), so a one-time state
  * compromise does not let an attacker predict all future keys/output-secrets of a long-running
  * daemon. Callers already serialize access via crypto::generate_random_bytes' random_lock. */
-#define CRYPTO_RESEED_INTERVAL_BYTES (1u << 20) /* mix fresh entropy at least every 1 MiB */
 static size_t bytes_since_reseed = 0;
+static size_t reseed_count       = 0;
 static int reseed_disabled       = 0; /* set in deterministic test mode to keep vectors stable */
 
 void crypto_reseed_random(void) {
@@ -117,37 +117,45 @@ void crypto_reseed_random(void) {
 		state.b[i] ^= fresh[i];
 	crypto_keccak_permutation(&state);
 	bytes_since_reseed = 0;
+	reseed_count += 1;
 }
 
 void crypto_initialize_random(void) {
 	generate_system_random_bytes(32, state.b);
-	initialized       = 1;
+	initialized        = 1;
+	reseed_disabled    = 0;
 	bytes_since_reseed = 0;
+	reseed_count        = 0;
 }
 
 void crypto_unsafe_generate_random_bytes(unsigned char *result, size_t n) {
 	if (!initialized)
 		crypto_initialize_random();
-	if (bytes_since_reseed >= CRYPTO_RESEED_INTERVAL_BYTES)
-		crypto_reseed_random();
-	bytes_since_reseed += n;
-	for (;;) {
+	while (n != 0) {
+		if (!reseed_disabled && bytes_since_reseed >= CRYPTO_RESEED_INTERVAL_BYTES)
+			crypto_reseed_random();
 		crypto_keccak_permutation(&state);
-		if (n <= HASH_DATA_AREA) {
-			memcpy(result, state.b, n);
-			return;
+		size_t take = n < HASH_DATA_AREA ? n : HASH_DATA_AREA;
+		if (!reseed_disabled) {
+			const size_t until_reseed = CRYPTO_RESEED_INTERVAL_BYTES - bytes_since_reseed;
+			if (take > until_reseed)
+				take = until_reseed;
+			bytes_since_reseed += take;
 		}
-		memcpy(result, state.b, HASH_DATA_AREA);
-		result += HASH_DATA_AREA;
-		n -= HASH_DATA_AREA;
+		memcpy(result, state.b, take);
+		result += take;
+		n -= take;
 	}
 }
+
+size_t crypto_unsafe_random_reseed_count(void) { return reseed_count; }
 
 void crypto_initialize_random_for_tests(void) {
 	memset(state.b, 42, sizeof(struct cryptoKeccakState));
 	initialized        = 1;
 	reseed_disabled    = 1;  // keep deterministic test vectors stable
 	bytes_since_reseed = 0;
+	reseed_count        = 0;
 }
 
 // We keep initialize@start, because generate_system_random_bytes will exit on error, and in

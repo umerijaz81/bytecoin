@@ -2,6 +2,8 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for
 // details.
 
+#include <algorithm>
+#include <array>
 //#include <cstddef>
 //#include <cstring>
 //#include <sys/param.h>
@@ -10,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <thread>
 
 #include "../io.hpp"
 #include "common/Invariant.hpp"
@@ -17,6 +20,7 @@
 #include "crypto/bernstein/crypto-ops.h"
 #include "crypto/crypto.hpp"
 #include "crypto/crypto_helpers.hpp"
+#include "crypto/random.h"
 #include "seria/BinaryInputStream.hpp"
 #include "test_crypto.hpp"
 
@@ -658,6 +662,50 @@ void run_test_suite(const std::string &name, std::fstream &input, std::map<std::
 
 static const size_t FAILED_TEST_COUNT_PRINT_LIMIT = 40;
 
+void test_random_reseed_boundaries() {
+	crypto_initialize_random_for_tests();
+	std::array<unsigned char, 32> after_empty{};
+	crypto_unsafe_generate_random_bytes(nullptr, 0);
+	crypto_unsafe_generate_random_bytes(after_empty.data(), after_empty.size());
+	crypto_initialize_random_for_tests();
+	std::array<unsigned char, 32> without_empty{};
+	crypto_unsafe_generate_random_bytes(without_empty.data(), without_empty.size());
+	invariant(after_empty == without_empty, "zero-length RNG request advanced deterministic state");
+
+	crypto_initialize_random();
+	std::vector<unsigned char> across_boundary(CRYPTO_RESEED_INTERVAL_BYTES + 1);
+	crypto::generate_random_bytes(across_boundary.data(), across_boundary.size());
+	invariant(crypto_unsafe_random_reseed_count() == 1,
+	    "single large RNG request did not reseed at the byte boundary");
+	std::vector<unsigned char> to_boundary(CRYPTO_RESEED_INTERVAL_BYTES - 1);
+	crypto::generate_random_bytes(to_boundary.data(), to_boundary.size());
+	invariant(crypto_unsafe_random_reseed_count() == 1,
+	    "RNG reseeded before reaching the byte boundary");
+	unsigned char next = 0;
+	crypto::generate_random_bytes(&next, 1);
+	invariant(crypto_unsafe_random_reseed_count() == 2,
+	    "RNG did not reseed before emitting beyond the byte boundary");
+
+	crypto_initialize_random();
+	const size_t thread_count = 8;
+	const size_t bytes_per_thread = CRYPTO_RESEED_INTERVAL_BYTES / 4;
+	std::vector<std::vector<unsigned char>> parallel(
+	    thread_count, std::vector<unsigned char>(bytes_per_thread));
+	std::vector<std::thread> workers;
+	for (size_t i = 0; i != thread_count; ++i)
+		workers.emplace_back([&, i] {
+			crypto::generate_random_bytes(parallel[i].data(), parallel[i].size());
+		});
+	for (auto &worker : workers)
+		worker.join();
+	invariant(crypto_unsafe_random_reseed_count() == 1,
+	    "serialized parallel RNG requests crossed an unexpected number of reseed boundaries");
+	for (size_t i = 0; i != thread_count; ++i)
+		for (size_t j = i + 1; j != thread_count; ++j)
+			invariant(!std::equal(parallel[i].begin(), parallel[i].begin() + 32, parallel[j].begin()),
+			    "parallel RNG requests returned a repeated prefix");
+}
+
 /*static void print_fe(const char * name, const char * text){
     auto ba = common::from_hex(text);
     fe f;
@@ -695,6 +743,7 @@ void test_crypto(const std::string &test_vectors_folder,
     const std::string &test_results_log = "", const bool break_on_failure = false) {
 	//	test_fe();
 	//	test_jade();
+	test_random_reseed_boundaries();
 
 	std::map<std::string, test_case> test_function;
 	test_function["elligator"]                            = test_elligator;
