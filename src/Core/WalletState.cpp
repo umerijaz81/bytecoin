@@ -330,7 +330,7 @@ bool WalletState::create_onyx_program_deployment(Amount max_supply, const Binary
 	}
 	return zk::Halo2ProofSystem::wallet_create_program_deployment(proving_snapshot, seed,
 	    max_supply, metadata, inclusion_height, activation_height, deactivation_height,
-	    expiry_height, fee, parameters::ONYX_CIRCUIT_K, envelope, program_id);
+	    expiry_height, fee, parameters::ONYX_PROGRAM_CIRCUIT_K, envelope, program_id);
 #else
 	return false;
 #endif
@@ -378,7 +378,7 @@ bool WalletState::create_onyx_standard_program_deployment(uint8_t kind, Height i
 	}
 	return zk::Halo2ProofSystem::wallet_create_standard_program_deployment(proving_snapshot, seed,
 	    kind, inclusion_height, activation_height, deactivation_height, expiry_height, fee,
-	    parameters::ONYX_CIRCUIT_K, envelope, program_id);
+	    parameters::ONYX_PROGRAM_CIRCUIT_K, envelope, program_id);
 #else
 	return false;
 #endif
@@ -426,7 +426,7 @@ bool WalletState::create_onyx_standard_program_call(const std::array<uint8_t, 32
 	}
 	return zk::Halo2ProofSystem::wallet_create_standard_program_call(proving_snapshot, seed, program_id,
 	    inclusion_height, valid_from_height, expiry_height, application, prior_state, next_state,
-	    witness, parameters::ONYX_CIRCUIT_K, envelope);
+	    witness, parameters::ONYX_PROGRAM_CIRCUIT_K, envelope);
 #else
 	return false;
 #endif
@@ -886,15 +886,23 @@ bool WalletState::redo_block(
 #ifdef onyx_USE_ZK
 		if (pb.transactions.at(tx_index).tx.version == m_currency.onyx_transaction_version &&
 		    can_scan_onyx) {
+			const uint8_t onyx_type = pb.transactions.at(tx_index).tx.onyx_type;
+			uint32_t circuit_k = parameters::ONYX_CIRCUIT_K;
+			if (onyx_type == parameters::ONYX_TYPE_TRANSFER)
+				circuit_k = parameters::ONYX_TRANSFER_CIRCUIT_K;
+			else if (onyx_type == parameters::ONYX_TYPE_BRIDGE)
+				circuit_k = parameters::ONYX_BRIDGE_CIRCUIT_K;
+			else if (onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT ||
+			         onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL)
+				circuit_k = parameters::ONYX_PROGRAM_CIRCUIT_K;
 			BinaryArray scanned;
 			const bool scan_ok = m_wallet.get_onyx_seed() != Hash{}
 			                         ? zk::Halo2ProofSystem::wallet_scan(next_onyx_snapshot, onyx_seed,
-			                               onyx_network, pb.transactions.at(tx_index).tx.onyx_type, height,
-			                               parameters::ONYX_CIRCUIT_K, pb.transactions.at(tx_index).tx.onyx_envelope,
+			                               onyx_network, onyx_type, height, circuit_k,
+			                               pb.transactions.at(tx_index).tx.onyx_envelope,
 			                               &scanned, &next_onyx_summary)
 			                         : zk::Halo2ProofSystem::wallet_scan_viewing(next_onyx_snapshot,
-			                               onyx_viewing_key_bytes, pb.transactions.at(tx_index).tx.onyx_type,
-			                               height, parameters::ONYX_CIRCUIT_K,
+			                               onyx_viewing_key_bytes, onyx_type, height, circuit_k,
 			                               pb.transactions.at(tx_index).tx.onyx_envelope,
 			                               &scanned, &next_onyx_summary);
 			if (!scan_ok)

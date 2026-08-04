@@ -825,6 +825,121 @@ def main():
                 "reservation, tamper/nullifier replay rejection, and exact fee accounting"
             )
 
+            deployment_fee = 100000
+            standard_deployment = receiver_wallet.call(
+                "create_onyx_standard_program_deployment",
+                {
+                    "kind": "nft",
+                    "activation_height": 0,
+                    "deactivation_height": 0,
+                    "fee": deployment_fee,
+                    "expiry_height": 0,
+                },
+            )
+            tampered_deployment = standard_deployment["binary_transaction"][:-2] + (
+                "00"
+                if standard_deployment["binary_transaction"][-2:] != "00"
+                else "01"
+            )
+            tampered_deployment_response = rpc_response(
+                onyx_a.rpc_port,
+                "send_transaction",
+                {"binary_transaction": tampered_deployment},
+            )
+            if "error" not in tampered_deployment_response:
+                raise RuntimeError(
+                    "node accepted a standard-program deployment with tampered proof data: "
+                    f"{tampered_deployment_response!r}"
+                )
+            receiver_wallet.call(
+                "send_transaction",
+                {"binary_transaction": standard_deployment["binary_transaction"]},
+            )
+            pending_duplicate_deployment = rpc_response(
+                receiver_wallet.rpc_port,
+                "create_onyx_standard_program_deployment",
+                {
+                    "kind": "nft",
+                    "activation_height": 0,
+                    "deactivation_height": 0,
+                    "fee": deployment_fee,
+                    "expiry_height": 0,
+                },
+                WALLET_AUTH,
+            )
+            if pending_duplicate_deployment.get("error", {}).get("code") != -32602:
+                raise RuntimeError(
+                    "wallet did not reserve pending standard-program deployment spends: "
+                    f"{pending_duplicate_deployment!r}"
+                )
+            mine_blocks(
+                minerd,
+                root,
+                "standard-program-deployment-confirmation",
+                onyx_a_rpc,
+                MINING_ADDRESS_A,
+                1,
+            )
+            deployment_height = final_height + 1
+            wait_until(
+                "standard-program deployment convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= deployment_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and len(
+                    {
+                        node.status()["top_block_hash"]
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    }
+                )
+                == 1,
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+            post_deployment_balance = transfer_amount - deployment_fee
+            wait_until(
+                "standard-program deployment wallet accounting",
+                lambda: receiver_wallet.status()["top_block_height"] >= deployment_height
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == post_deployment_balance,
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+            replay_deployment_response = rpc_response(
+                onyx_c.rpc_port,
+                "send_transaction",
+                {"binary_transaction": standard_deployment["binary_transaction"]},
+            )
+            if "error" not in replay_deployment_response:
+                raise RuntimeError(
+                    "node accepted a confirmed standard-program deployment replay: "
+                    f"{replay_deployment_response!r}"
+                )
+            audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            if audits[1:] != audits[:-1] or (
+                audits[0].get("total_bridged") != migration_output["amount"]
+                or audits[0].get("total_fees")
+                != migration_fee + transfer_fee + deployment_fee
+                or audits[0].get("circulating_supply") != post_deployment_balance
+                or audits[0].get("commitment_count") != 4
+                or audits[0].get("program_count") != 1
+            ):
+                raise RuntimeError(
+                    "standard-program deployment state, supply, or convergence failed: "
+                    f"{audits!r}"
+                )
+            final_height = deployment_height
+            final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+            final_tip = final_statuses[0]["top_block_hash"]
+            print(
+                "independent wallet deployed a pinned NFT program with pending-spend, "
+                "tamper/replay, registry, and exact supply checks"
+            )
+
             foreign = Node(
                 binary,
                 root,
@@ -889,6 +1004,10 @@ def main():
                     "pending_shielded_spend_reservation": "passed",
                     "transfer_tamper_rejection": "passed",
                     "nullifier_replay_rejection": "passed",
+                    "standard_program_deployment": "passed",
+                    "standard_program_deployment_tamper_rejection": "passed",
+                    "pending_standard_program_deployment_reservation": "passed",
+                    "standard_program_deployment_replay_rejection": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -899,7 +1018,8 @@ def main():
                     "spendable_outputs": recovered_balance["spendable_outputs"],
                     "migrated_legacy_amount": migration_output["amount"],
                     "migration_fee": migration_fee,
-                    "shielded_balance": expected_shielded,
+                    "post_migration_shielded_balance": expected_shielded,
+                    "shielded_balance": 0,
                     "remaining_legacy_total": remaining_legacy_total,
                 },
                 "shielded_transfer": {
@@ -908,6 +1028,12 @@ def main():
                     "sender_balance": 0,
                     "receiver_balance": transfer_amount,
                     "receiver_onyx_address": receiver_onyx["address"],
+                },
+                "standard_program_deployment": {
+                    "kind": "nft",
+                    "program_id": standard_deployment["program_id"],
+                    "fee": deployment_fee,
+                    "receiver_balance": post_deployment_balance,
                 },
             }
             if args.report:
