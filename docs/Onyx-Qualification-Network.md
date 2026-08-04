@@ -42,8 +42,11 @@ ZK-enabled processes:
 8. create a second independent encrypted wallet, transfer the migrated shielded value minus a fee,
    reject a tampered transfer and a pending double spend, mine the valid transaction, reconcile both
    wallet balances and supply on every node, and reject confirmed nullifier replay;
-9. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
-10. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
+9. use that funded wallet to deploy the pinned NFT standard program, reject tampered and pending-
+   duplicate deployments, mine the valid registry transition, reconcile the deployment fee and
+   program count on every node, and reject confirmed deployment replay;
+10. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
+11. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
    supply-audit snapshot and the nonsensitive wallet qualification results.
 
 Example:
@@ -69,6 +72,13 @@ serialization prevents concurrent cold requests from duplicating the same expens
 while different shapes do not hold one global generation lock. This is a bounded runtime optimization,
 not a substitute for the still-required cold-start, parallel valid-proof, memory-pressure, and
 denial-of-service qualification.
+
+Program deployments and the four pinned stateful standard programs use their committed full-depth
+domain `k=16`. The C ABI fixture proves both deployment funding and an NFT call at that domain. The
+process rehearsal additionally proves a real NFT deployment through wallet RPC, mempool admission,
+mining, registry application, wallet scanning, cross-node convergence and replay rejection. The
+unrelated general token issuance/transfer domain remains `k=20` until it receives the same circuit-
+specific qualification.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not

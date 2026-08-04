@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-04**  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Committed revision at reconciliation: `dd9755e` (`Qualify independent Onyx transfers`)  
+Committed revision at reconciliation: `1a82773` (`Qualify Onyx standard program deployment`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -38,7 +38,7 @@ Current overall status:
 | O2 private transfers | Implemented and process-qualified locally | Real two-wallet transfer is committed; hosted CI and independent/public qualification remain |
 | O3 wallet and RPC | Implemented in repository | Needs real hardware-wallet and multi-operator acceptance |
 | O4 legacy migration | Implemented and committed | Local three-node migration passes; public supply evidence and incident drill remain |
-| O5 programs/compiler/SDKs | Substantially implemented | Real multi-process standard-program qualification is the next major code task |
+| O5 programs/compiler/SDKs | Substantially implemented; deployment process-qualified | Stateful calls, issuance, token transfer, rollback, and public qualification remain |
 | O6 network/PoW/release | Major components implemented | Real Tor/I2P, long soaks, platform measurements, audits, and ceremony remain |
 | External release gates | Not complete | Must be independently performed; must never be fabricated in repository JSON |
 
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `dd9755e` on this branch.
+- **Committed**: present at or before Git revision `1a82773` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -69,7 +69,7 @@ At reconciliation, the worktree contains both user-owned changes and active impl
 A  Bytecoin_Onyx_Security_Review.md
  M JADE_ONYX_PROJECT_HANDOFF.md
  M docs/Onyx-Qualification-Network.md
-?? PROJECT_PROGRESS_AND_IMPLEMENTATION_GUIDE.md
+ M PROJECT_PROGRESS_AND_IMPLEMENTATION_GUIDE.md
 ```
 
 Important ownership rules:
@@ -353,7 +353,8 @@ Implemented cache safeguards and remaining review points:
 
 Remaining work for this milestone:
 
-- Push `dd9755e` and the associated documentation, then verify hosted Ubuntu CI and retain its report.
+- The hosted fixed-Onyx Ubuntu job passed for `02d6fc6` and uploaded its local qualification report.
+  Separate workflow failures are recorded in section 13.4 and remain to be repaired/rerun.
 - Complete independent cold/warm, concurrent valid-proof and memory-pressure qualification; functional
   success and local caching do not establish denial-of-service safety.
 
@@ -448,7 +449,7 @@ protocol requiring its own threat model, supply proof, activation rules, tests, 
 
 ## 12. O5 — standard programs, compiler, and SDKs
 
-Status: **substantially implemented; real end-to-end process qualification is the next major code phase**.
+Status: **substantially implemented; real pinned NFT deployment is process-qualified in `1a82773`**.
 
 Implemented program consensus:
 
@@ -495,7 +496,22 @@ Primary files:
 - `vendor/onyx-zk/src/compiler.rs` and standard-program proof modules
 - `ONYX_PROGRAMS.md`
 
-### Next implementation: standard-program process qualification
+Process qualification implemented in `1a82773`:
+
+- Introduces `ONYX_PROGRAM_CIRCUIT_K=16` for all program deployments and the four pinned stateful
+  standard programs. Token issuance and mixed token transfer remain on the separate general domain.
+- Routes semantic validation, fee extraction, mempool dry-run, block apply/undo, conflict eviction,
+  wallet construction and type-aware wallet scanning through the program-specific domain.
+- The first real production-path attempt at the unrelated general `k=20` domain exceeded the
+  unchanged 180-second RPC deadline; the committed full-depth C ABI fixture already proves deployment
+  funding and an NFT call at `k=16`.
+- An independently funded encrypted wallet constructs and relays a pinned NFT deployment.
+- A byte-tampered deployment, pending duplicate spend, and confirmed replay are rejected.
+- Three nodes converge at height 6 with one program, four commitments, `100002` total fees and
+  `641998` circulating native units.
+- ZK/non-ZK builds, both Jade suites, all 61 release tests, and the complete C++ ZK suite pass locally.
+
+### Next implementation: stateful calls and private-token process qualification
 
 Extend `tests/network/test_onyx_qualification_process.py` after the independent-wallet transfer. Keep
 the scenario deterministic and bounded.
@@ -640,6 +656,16 @@ Primary files:
 - `.github/workflows/release-evidence.yml`
 - `.github/workflows/reproducible-binaries.yml`
 
+Known hosted CI findings at `02d6fc6`:
+
+- The fixed-Onyx qualification job passed; Consensus failed in the separate, previously documented
+  recovered-wallet Dandelion height race.
+- The sanitizer harness did not compile because `src/main_fuzzer.cpp:75` refers to
+  `parameters::ONYX_BRIDGE_CIRCUIT_K` outside namespace `cn`.
+- Release evidence correctly rejected the stale tracked-tree digest for `vendor/onyx-zk` after the
+  native proof cache changed `proof.rs`.
+- These require focused fixes and reruns; none justify weakening their checks.
+
 ## 14. Fixed `--net=onyx` qualification network
 
 Status: **committed and locally exercised**.
@@ -666,6 +692,7 @@ Committed milestones:
 | `6ee5247` | Real legacy-to-Onyx migration |
 | `787a5b1` | Migration qualification documentation |
 | `dd9755e` | Independent-wallet native shielded transfer and native proof-key caching |
+| `1a82773` | Pinned NFT deployment and program-specific consensus domain |
 
 The local network is intentionally accelerated. Its proof, PoW, and timing results cannot substitute
 for public release hardware or 14-day qualification evidence.
@@ -742,8 +769,8 @@ Use this order unless new evidence changes the risk assessment.
 
 ### Step 1 — finish and publish the native-transfer milestone
 
-Status: **implemented, locally validated, and committed as `dd9755e`; documentation/push and hosted CI
-verification remain.**
+Status: **implemented in `dd9755e`, documented/pushed in `02d6fc6`, and passed in the hosted fixed-Onyx
+Ubuntu job.**
 
 Files in scope:
 
@@ -764,15 +791,19 @@ Completed locally:
 3. Update qualification documentation.
 4. Commit only the listed implementation files as `dd9755e`.
 
-Remaining:
+Hosted follow-up:
 
-1. Commit the associated documentation separately.
-2. Push the branch and inspect hosted CI logs and the uploaded non-release qualification report.
+1. The fixed-Onyx qualification job passed and uploaded its non-release report.
+2. Repair and rerun the separate Dandelion, sanitizer compile, and release-lock failures recorded in
+   section 13.4 after their focused plan is approved.
 
 Exit criterion: clean scoped diff, local matrix passes, hosted Onyx qualification passes, and no
 unrelated user file enters the commit.
 
 ### Step 2 — implement standard-program multi-process qualification
+
+Status: **pinned NFT deployment is committed in `1a82773`; stateful call, issuance, token transfer,
+the other pinned profiles, and rollback/recovery remain.**
 
 Follow the detailed scenario in section 12. Start with capped token deployment/issuance/transfer, then
 the four pinned profiles, then reorg/recovery. Avoid combining all profiles into one opaque commit.

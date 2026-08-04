@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-04  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `dd9755e` (`Qualify independent Onyx transfers`)
+Last committed revision reviewed: `1a82773` (`Qualify Onyx standard program deployment`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `dd9755e`.
+- **Implemented and committed** means the code is in the branch history at or before `1a82773`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -313,6 +313,9 @@ Implemented:
 - Golden cross-language request/response and canonical byte compatibility.
 - Rust SDK network-bound portable keys and typed transport-independent JSON.
 - Structured compiler campaign and real proof vectors for supported standard programs.
+- Real three-node pinned NFT deployment from an independently funded encrypted wallet, with a
+  program-specific `k=16` consensus domain, tamper/pending-spend/replay rejection, registry
+  convergence, wallet accounting, and exact supply/fee reconciliation (`1a82773`).
 
 Primary locations:
 
@@ -527,9 +530,9 @@ Required:
 
 Status: **The fixed network was implemented in `5ed59bd`; its three-node local reorganization
 qualification was added in `d1dca30`; wallet recovery across that reorganization was added in
-`a26303e`; real migration qualification was added in `6ee5247`; and an independent-wallet native
-shielded transfer was qualified in `dd9755e`. The pre-wallet Ubuntu qualification jobs for `5fa57c7`
-and `8861b86` passed.**
+`a26303e`; real migration qualification was added in `6ee5247`; an independent-wallet native
+shielded transfer was qualified in `dd9755e`; and pinned NFT deployment was qualified in `1a82773`.
+The pre-wallet Ubuntu qualification jobs for `5fa57c7` and `8861b86` passed.**
 
 Purpose:
 
@@ -586,6 +589,9 @@ Committed implementation:
     mines the valid transfer, and requires exact sender/receiver balances across the next block.
   - Rejects confirmed nullifier replay and requires all three nodes to reconcile two commitments,
     both fees, and exact circulating supply after the transfer.
+  - Uses the independent receiver wallet to deploy the pinned NFT program, rejects a tampered
+    deployment and pending duplicate, mines the valid registry transition, requires exact program,
+    commitment, fee and wallet accounting on all nodes, and rejects confirmed deployment replay.
   - Proves a testnet daemon cannot cross the network identity/genesis boundary.
   - Emits a revision-bound per-node JSON report explicitly marked as non-release evidence.
 - `.github/workflows/consensus-integration.yml`
@@ -627,10 +633,17 @@ Validation performed before commit:
   conformance tests.
 - Full cold/warm, parallel valid-proof runtime, memory-pressure and denial-of-service qualification is
   still open even though the functional ZK suite now passes.
+- The first production-domain standard deployment attempt at the general `k=20` exceeded the
+  unchanged 180-second wallet RPC deadline. After routing deployments, pinned standard calls and
+  wallet scanning through the full-depth-tested `ONYX_PROGRAM_CIRCUIT_K=16`, the complete process
+  rehearsal passed at height 6 with one registered program, four commitments, `100002` total fees and
+  `641998` circulating native units. Both build variants, both Jade suites, all 61 release tests and
+  the complete ZK suite passed after that change.
 
 Validation not yet completed:
 
-- Validate transfer commit `dd9755e` on GitHub's Ubuntu runner and retain the uploaded report.
+- Validate standard-program deployment commit `1a82773` on GitHub's Ubuntu runner and retain the
+  uploaded report.
 
 Recommended immediate acceptance criteria:
 
@@ -644,14 +657,22 @@ Recommended immediate acceptance criteria:
 
 ## 11. Known CI issues identified but not yet applied
 
-Two CI-specific fixes were identified. Treat them as proposed work and inspect current CI before
+Several CI-specific fixes were identified. Treat them as proposed work and inspect current CI before
 applying:
 
+- Push workflow run `30917654339` proved the expanded fixed-Onyx qualification job itself passed
+  through the independent-wallet transfer. The workflow failed only in its separate Dandelion job.
 - Linux Consensus integration runs `30527675836` and `30528317812` both confirmed a wallet-height
   race in `test_dandelion_process.py`: after the recovered wallet's second launch, the test calls
   `create_transaction` before waiting for height 15 and receives "before amethyst upgrade". The
   focused fix is to reuse the existing height-synchronization wait immediately after that launch;
-  this is unrelated to the Onyx qualification job, which passed in both runs.
+  run `30917654339` reproduced the same failure while its Onyx qualification job passed.
+- Sanitizer run `30917653262` failed while compiling `src/main_fuzzer.cpp:75`: the bridge fuzz call
+  uses `parameters::ONYX_BRIDGE_CIRCUIT_K` outside namespace `cn`; the focused compile repair is the
+  explicit `cn::parameters::` qualification. No sanitizer campaign ran after that compile failure.
+- Release-evidence run `30917653273` correctly rejected a stale `onyx-zk` tracked-tree digest after
+  the native proof cache changed `vendor/onyx-zk/src/proof.rs`. Recompute and review the exact lock
+  digest rather than weakening the verifier.
 - Windows fixtures may need `.gitattributes` rules forcing LF for Onyx canonical/golden artifacts to
   avoid checkout newline mutation.
 
@@ -730,13 +751,14 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 ### Priority 0 — Finish the qualification network
 
 Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`,
-migration-qualified in `6ee5247`, and native-transfer-qualified in `dd9755e`.**
+migration-qualified in `6ee5247`, native-transfer-qualified in `dd9755e`, and pinned NFT deployment
+qualified in `1a82773`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
-report, wallet recovery, real migration, and independent-wallet native transfer are implemented
-through `dd9755e`.**
+report, wallet recovery, real migration, independent-wallet native transfer, and pinned NFT
+deployment are implemented through `1a82773`.**
 
 Implemented:
 
@@ -752,12 +774,14 @@ Implemented:
   legacy/shielded/fee reconciliation, cross-node audit equality, and consumed-output replay rejection.
 - Real independent-wallet shielded transfer proving, pending-spend reservation, tamper rejection,
   relay/mining, exact sender/receiver/fee accounting, and confirmed nullifier replay rejection.
+- Real pinned NFT program deployment, pending-spend reservation, tamper/replay rejection, registry
+  convergence, wallet scanning, and exact deployment-fee/supply accounting.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Standard-program transactions.
+- Stateful standard-program calls, capped-token issuance, and private token transfers.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - A longer local run and the independently operated 14-day public soak.
 
