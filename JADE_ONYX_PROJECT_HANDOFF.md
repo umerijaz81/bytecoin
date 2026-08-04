@@ -1,9 +1,9 @@
 # Jade/Onyx Project Progress and Implementation Handoff
 
-Last reviewed: 2026-07-30  
+Last reviewed: 2026-08-04  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `d1dca30` (`Qualify Onyx three-node reorganization`)
+Last committed revision reviewed: `a26303e` (`Qualify Onyx wallet recovery across reorgs`)
 
 ## 1. Purpose and status vocabulary
 
@@ -523,8 +523,8 @@ Required:
 ## 10. Fixed `--net=onyx` qualification network
 
 Status: **The fixed network was implemented in `5ed59bd`; its three-node local reorganization
-qualification was added in `d1dca30`. GitHub-hosted Ubuntu CI had not yet reported when this handoff
-was last updated.**
+qualification was added in `d1dca30`; wallet recovery across that reorganization was added in
+`a26303e`. The pre-wallet Ubuntu qualification jobs for `5fa57c7` and `8861b86` passed.**
 
 Purpose:
 
@@ -567,6 +567,10 @@ Committed implementation:
     branches, reconnects the topology, and requires a real longer-branch reorganization.
   - Requires exact final height, block-hash, and supply-audit equality across all three nodes.
   - Rejects truncated V7 transaction bytes on every node while proving continued liveness.
+  - Creates an encrypted legacy migration-source wallet, derives its network-bound Onyx identity,
+    mines branch-B V7 coinbase rewards to it, and verifies reward recognition after node A reorganizes.
+  - Backs up the wallet and cache, rotates its password, rejects the old password, and recovers the
+    exact legacy address, Onyx address and balance through node C.
   - Proves a testnet daemon cannot cross the network identity/genesis boundary.
   - Emits a revision-bound per-node JSON report explicitly marked as non-release evidence.
 - `.github/workflows/consensus-integration.yml`
@@ -586,6 +590,10 @@ Validation performed before commit:
   branches, a height-3 reorganization, exact supply-audit convergence, malformed V7 rejection, and
   testnet isolation. The fixed genesis observed was
   `325a59101b9bcefcc49dfcbcc2367123ed1b0dd6c04568e964cc8ef4e118284c`.
+- The wallet extension passed locally after fresh ZK builds: V7 rewards were recognized, and encrypted
+  backup, password rotation, old-password rejection and node-C recovery preserved both wallet domains
+  and the exact balance. The qualification target is fixed at one second; performance and proof-DoS
+  evidence cannot use this accelerated parameter.
 
 Validation not yet completed:
 
@@ -603,11 +611,14 @@ Recommended immediate acceptance criteria:
 
 ## 11. Known CI issues identified but not yet applied
 
-Two CI-specific fixes were previously identified. Treat them as proposed work and inspect current CI
-before applying:
+Two CI-specific fixes were identified. Treat them as proposed work and inspect current CI before
+applying:
 
-- Linux consensus process qualification may need an explicit wallet-height synchronization wait
-  before assertions that depend on freshly mined blocks.
+- Linux Consensus integration runs `30527675836` and `30528317812` both confirmed a wallet-height
+  race in `test_dandelion_process.py`: after the recovered wallet's second launch, the test calls
+  `create_transaction` before waiting for height 15 and receives "before amethyst upgrade". The
+  focused fix is to reuse the existing height-synchronization wait immediately after that launch;
+  this is unrelated to the Onyx qualification job, which passed in both runs.
 - Windows fixtures may need `.gitattributes` rules forcing LF for Onyx canonical/golden artifacts to
   avoid checkout newline mutation.
 
@@ -685,29 +696,30 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 
 ### Priority 0 — Finish the qualification network
 
-Status: **Completed in `5ed59bd` and extended in `d1dca30`, subject to GitHub-hosted CI.**
+Status: **Completed in `5ed59bd`, extended in `d1dca30`, and wallet-qualified in `a26303e`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
-and report foundation is implemented in `d1dca30`.**
+report and wallet recovery foundation is implemented through `a26303e`.**
 
 Implemented:
 
 - Explicit node identities and topology; no implicit seeds.
 - Separate data directories and ports.
 - Real daemon and miner processes.
+- Real wallet process with protected RPC authentication and password input through standard input.
 - Competing RandomX branches, node restart/reconnection, and longer-chain reorganization.
 - Truncated V7 rejection and post-rejection liveness.
+- Mined-fund recognition plus encrypted wallet/cache backup, password rotation, old-password rejection,
+  and alternate-node recovery with exact identity/balance comparison.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Wallet processes, mined-fund recognition, migration transactions, shielded transfers, and standard
-  program transactions.
+- Migration transactions, shielded transfers, and standard-program transactions.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
-- Wallet recovery through an alternate qualification node.
 - A longer local run and the independently operated 14-day public soak.
 
 ### Priority 2 — Migration and incident rehearsal tooling
