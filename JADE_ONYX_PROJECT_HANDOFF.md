@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-04  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `1a82773` (`Qualify Onyx standard program deployment`)
+Last committed revision reviewed: `060b691` (`Qualify stateful Onyx NFT calls`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `1a82773`.
+- **Implemented and committed** means the code is in the branch history at or before `060b691`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -316,6 +316,9 @@ Implemented:
 - Real three-node pinned NFT deployment from an independently funded encrypted wallet, with a
   program-specific `k=16` consensus domain, tamper/pending-spend/replay rejection, registry
   convergence, wallet accounting, and exact supply/fee reconciliation (`1a82773`).
+- Real stateful NFT call after activation, with tamper/replay rejection, exact transaction-hash
+  propagation, same-stable-key pending conflict rejection, state-query convergence, wallet accounting,
+  and exact final supply/fee reconciliation (`060b691`).
 
 Primary locations:
 
@@ -531,7 +534,8 @@ Required:
 Status: **The fixed network was implemented in `5ed59bd`; its three-node local reorganization
 qualification was added in `d1dca30`; wallet recovery across that reorganization was added in
 `a26303e`; real migration qualification was added in `6ee5247`; an independent-wallet native
-shielded transfer was qualified in `dd9755e`; and pinned NFT deployment was qualified in `1a82773`.
+shielded transfer was qualified in `dd9755e`; pinned NFT deployment was qualified in `1a82773`; and
+one stateful NFT call was qualified in `060b691`.
 The pre-wallet Ubuntu qualification jobs for `5fa57c7` and `8861b86` passed.**
 
 Purpose:
@@ -592,6 +596,16 @@ Committed implementation:
   - Uses the independent receiver wallet to deploy the pinned NFT program, rejects a tampered
     deployment and pending duplicate, mines the valid registry transition, requires exact program,
     commitment, fee and wallet accounting on all nodes, and rejects confirmed deployment replay.
+  - Advances twenty blocks to activation height 26, proves and relays a real NFT state transition,
+    rejects tampered proof data, and requires the exact transaction hash on every node before mining.
+  - Proves the mutable NFT nonce is excluded from the stable state key: a second valid proof for nonce
+    2 is absent from the pool while nonce 1 remains present and the pool count stays one.
+  - Does not treat `send_result="broadcast"` as admission evidence because that legacy field is always
+    returned even when `add_transaction` reports a conflict; it verifies admission with
+    `get_raw_transaction` instead.
+  - Mines the accepted call at height 27, waits for independent proof-bearing block validation, then
+    requires identical state through both nonce encodings, confirmed replay rejection, and exact final
+    supply (`742000` bridged, `100002` fees, `641998` circulating, five commitments, one program).
   - Proves a testnet daemon cannot cross the network identity/genesis boundary.
   - Emits a revision-bound per-node JSON report explicitly marked as non-release evidence.
 - `.github/workflows/consensus-integration.yml`
@@ -639,11 +653,17 @@ Validation performed before commit:
   rehearsal passed at height 6 with one registered program, four commitments, `100002` total fees and
   `641998` circulating native units. Both build variants, both Jade suites, all 61 release tests and
   the complete ZK suite passed after that change.
+- The stateful NFT extension passed locally through height 27. During qualification it exposed three
+  harness assumptions that future work must not repeat: absent program state is encoded as an empty
+  string, pool version is not transaction membership, and the deprecated send result is not an
+  admission verdict. Exact transaction lookup plus pool count now proves pending conflict behavior.
+- The passing report is `build/codex-zk/onyx-stateful-nft-qualification.json`, marked
+  `local-ci-not-release-evidence`; it records identical final tips and supply audits on all three nodes.
 
 Validation not yet completed:
 
-- Validate standard-program deployment commit `1a82773` on GitHub's Ubuntu runner and retain the
-  uploaded report.
+- Push and validate standard-program commits `1a82773` and `060b691` on GitHub's Ubuntu runner, then
+  retain the uploaded revision-bound report. The current stateful-call pass is local evidence only.
 
 Recommended immediate acceptance criteria:
 
@@ -751,14 +771,14 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 ### Priority 0 — Finish the qualification network
 
 Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`,
-migration-qualified in `6ee5247`, native-transfer-qualified in `dd9755e`, and pinned NFT deployment
-qualified in `1a82773`.**
+migration-qualified in `6ee5247`, native-transfer-qualified in `dd9755e`, pinned NFT deployment
+qualified in `1a82773`, and stateful NFT call qualified in `060b691`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
-report, wallet recovery, real migration, independent-wallet native transfer, and pinned NFT
-deployment are implemented through `1a82773`.**
+report, wallet recovery, real migration, independent-wallet native transfer, pinned NFT deployment,
+and one stateful NFT call are implemented through `060b691`.**
 
 Implemented:
 
@@ -776,12 +796,15 @@ Implemented:
   relay/mining, exact sender/receiver/fee accounting, and confirmed nullifier replay rejection.
 - Real pinned NFT program deployment, pending-spend reservation, tamper/replay rejection, registry
   convergence, wallet scanning, and exact deployment-fee/supply accounting.
+- Real stateful NFT call with activation, exact-hash propagation, tamper/replay rejection, same-state
+  pending conflict rejection, stable-key query equivalence, and exact cross-node state/supply checks.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Stateful standard-program calls, capped-token issuance, and private token transfers.
+- Capped-token issuance, private token transfers, and stateful vesting/multisig/swap calls.
+- Program-state reorganization, rollback, alternate-node wallet recovery, and reopen qualification.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - A longer local run and the independently operated 14-day public soak.
 

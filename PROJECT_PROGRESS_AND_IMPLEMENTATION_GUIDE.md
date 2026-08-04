@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-04**  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Committed revision at reconciliation: `1a82773` (`Qualify Onyx standard program deployment`)
+Committed revision at reconciliation: `060b691` (`Qualify stateful Onyx NFT calls`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -38,7 +38,7 @@ Current overall status:
 | O2 private transfers | Implemented and process-qualified locally | Real two-wallet transfer is committed; hosted CI and independent/public qualification remain |
 | O3 wallet and RPC | Implemented in repository | Needs real hardware-wallet and multi-operator acceptance |
 | O4 legacy migration | Implemented and committed | Local three-node migration passes; public supply evidence and incident drill remain |
-| O5 programs/compiler/SDKs | Substantially implemented; deployment process-qualified | Stateful calls, issuance, token transfer, rollback, and public qualification remain |
+| O5 programs/compiler/SDKs | Substantially implemented; NFT deployment/call process-qualified locally | Issuance, token transfer, remaining profiles, rollback/recovery, and public qualification remain |
 | O6 network/PoW/release | Major components implemented | Real Tor/I2P, long soaks, platform measurements, audits, and ceremony remain |
 | External release gates | Not complete | Must be independently performed; must never be fabricated in repository JSON |
 
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `1a82773` on this branch.
+- **Committed**: present at or before Git revision `060b691` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -449,7 +449,8 @@ protocol requiring its own threat model, supply proof, activation rules, tests, 
 
 ## 12. O5 — standard programs, compiler, and SDKs
 
-Status: **substantially implemented; real pinned NFT deployment is process-qualified in `1a82773`**.
+Status: **substantially implemented; real pinned NFT deployment and one stateful NFT call are locally
+process-qualified through `060b691`**.
 
 Implemented program consensus:
 
@@ -511,48 +512,58 @@ Process qualification implemented in `1a82773`:
   `641998` circulating native units.
 - ZK/non-ZK builds, both Jade suites, all 61 release tests, and the complete C++ ZK suite pass locally.
 
-### Next implementation: stateful calls and private-token process qualification
+### Stateful NFT call qualification implemented in `060b691`
 
-Extend `tests/network/test_onyx_qualification_process.py` after the independent-wallet transfer. Keep
-the scenario deterministic and bounded.
+`tests/network/test_onyx_qualification_process.py` now continues after the committed NFT deployment:
 
-Recommended order:
+1. Mines the twenty blocks required by the default deployment delay and requires all nodes and the
+   independent receiver wallet to reach activation height 26.
+2. Queries `get_onyx_standard_program_state` on every node before the first call. The canonical RPC
+   representation for an absent value is `found=false`, `state=""`, not a 32-byte zero hex string.
+3. Constructs a real NFT application for collection field 21, token field 22, serial 33 and transfer
+   nonce 1. It proves a transition from
+   `dea354729d447a92315a7730a8ffa9c2621f025a2e73cf2c794b7923939f1a00` to
+   `8503` followed by 30 zero bytes, using owner witness field 34.
+4. Rejects a byte-tampered call, relays the valid call, and waits until the exact transaction hash is
+   queryable through `get_raw_transaction` on all three nodes. Do not use
+   `transaction_pool_version > 1` as a membership test; the version persists across earlier activity.
+5. Builds a second valid proof with nonce 2 and a different next state. NFT nonce is intentionally
+   excluded from the stable state key, so this transition conflicts with the pending first call.
+6. Verifies admission by state, not by the deprecated transport string: node `send_transaction`
+   always returns `send_result="broadcast"` even when `add_transaction` returns false. The test
+   requires the competitor hash to be absent, the original hash to remain present, and pool count to
+   remain exactly one.
+7. Mines the original call at height 27, allows up to 360 seconds for independent proof validation,
+   and requires identical tips and state on all nodes. Querying with nonce 1 or nonce 2 returns the
+   same stable-key value `8503...0000` at height 27.
+8. Rejects confirmed replay and reconciles exact final supply: `742000` bridged, `100002` fees,
+   `641998` circulating, five commitments, and one registered program. A zero-fee stateful call does
+   not change wallet native balance.
+9. Extends the local report with activation/call heights, program ID, application bytes, prior/next
+   state, balance, and explicit scenario results. The report remains
+   `local-ci-not-release-evidence` and contains no wallet credentials or spend secrets.
 
-1. **Fund the actor wallets**
-   - Preserve enough native shielded value for deployment and call fees.
-   - If the preceding full-balance transfer consumes all sender value, split the transfer or add a
-     dedicated funded program wallet.
-   - Assert exact starting balances and node heights.
+The complete three-node process run passed locally against the release ZK binaries and wrote
+`build/codex-zk/onyx-stateful-nft-qualification.json`. Python syntax validation and
+`git diff --check` also passed. This is strong functional regression evidence, not public or
+independent release evidence.
 
-2. **Capped token deployment**
-   - Call `create_onyx_program_deployment` through wallet RPC.
-   - Reject a byte-tampered deployment on a different node.
-   - Relay the valid transaction, mine it, and wait for all nodes and the wallet.
-   - Query wallet/node program status and verify program ID, issuer, cap, activation, metadata, fee,
-     and supply state.
+### Next implementation: private-token and remaining standard-profile qualification
 
-3. **Private issuance**
-   - Issue a bounded amount to an independent receiver.
-   - Test wrong issuer, wrong sequence, zero amount, over-cap issuance, tampered proof, and duplicate
-     pending issuance.
-   - Mine and check token balance, sequence advancement, cap, native fee, and cross-node convergence.
+Keep each scenario deterministic and bounded. Recommended order:
 
-4. **Private token transfer**
-   - Transfer part of the issued asset to another independent wallet while paying native fees.
-   - Check sender/receiver asset balances, native balance changes, pending nullifier reservation,
-     tamper rejection, and confirmed replay rejection.
-
-5. **Pinned standard deployments and calls**
-   - Deploy NFT, vesting, multisig, and swap artifacts one at a time.
-   - For each, exercise one valid state transition and its most important invalid transition.
-   - Query `get_onyx_standard_program_state` before and after mining.
-   - Force a short reorg and prove canonical state, wallet state, and mempool conflicts roll back.
-
-6. **Evidence/report extension**
-   - Add scenario names, program IDs, transaction hashes, heights, final state commitments, balances,
-     fees, and supply audit to the local report.
-   - Do not log seeds, passwords, raw spend keys, authorization signatures, or wallet auth tokens.
-   - Keep the report labeled `local-ci-not-release-evidence`.
+1. **Capped token deployment**: construct through wallet RPC; test tampering and duplicate pending
+   deployment; mine; verify issuer, cap, activation, metadata, fee, and program state.
+2. **Private issuance**: test valid issuance plus wrong issuer, wrong sequence, zero amount, over-cap,
+   tampered proof, duplicate pending issuance, exact cap/sequence state, and wallet recognition.
+3. **Private token transfer**: use independent wallets; assert token balances, native fee changes,
+   pending nullifier reservation, tamper rejection, replay rejection, and three-node convergence.
+4. **Remaining pinned profiles**: deploy and call vesting, multisig, and swap one at a time; include
+   their most important invalid transitions and stable-state conflicts.
+5. **Rollback/recovery**: force a short reorg after each transaction class and prove program roots,
+   sequences, balances, supply, wallet recovery, and mempool eligibility restore exactly.
+6. **Evidence**: record transaction hashes, heights, state commitments, balances, fees, and supply
+   audits without logging seeds, passwords, spend keys, signatures, or auth tokens.
 
 Acceptance criteria:
 
@@ -693,6 +704,7 @@ Committed milestones:
 | `787a5b1` | Migration qualification documentation |
 | `dd9755e` | Independent-wallet native shielded transfer and native proof-key caching |
 | `1a82773` | Pinned NFT deployment and program-specific consensus domain |
+| `060b691` | Stateful NFT call, exact-hash propagation, stable-key conflict and state convergence |
 
 The local network is intentionally accelerated. Its proof, PoW, and timing results cannot substitute
 for public release hardware or 14-day qualification evidence.
@@ -802,8 +814,8 @@ unrelated user file enters the commit.
 
 ### Step 2 — implement standard-program multi-process qualification
 
-Status: **pinned NFT deployment is committed in `1a82773`; stateful call, issuance, token transfer,
-the other pinned profiles, and rollback/recovery remain.**
+Status: **pinned NFT deployment is committed in `1a82773` and a stateful NFT call is committed in
+`060b691`; issuance, token transfer, the other pinned profiles, and rollback/recovery remain.**
 
 Follow the detailed scenario in section 12. Start with capped token deployment/issuance/transfer, then
 the four pinned profiles, then reorg/recovery. Avoid combining all profiles into one opaque commit.

@@ -45,8 +45,14 @@ ZK-enabled processes:
 9. use that funded wallet to deploy the pinned NFT standard program, reject tampered and pending-
    duplicate deployments, mine the valid registry transition, reconcile the deployment fee and
    program count on every node, and reject confirmed deployment replay;
-10. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
-11. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
+10. advance to the program's activation height, query the initially absent state, prove and propagate
+   one real NFT state transition, and reject byte-tampered proof data;
+11. construct a second valid proof whose mutable NFT nonce differs but whose stable state key is the
+   same, require the competitor hash to remain absent while the original hash remains in the pool,
+   mine the original call, and require identical state and supply on all three nodes;
+12. reject confirmed call replay, prove a testnet daemon cannot cross the network-identity/genesis
+   boundary; and
+13. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
    supply-audit snapshot and the nonsensitive wallet qualification results.
 
 Example:
@@ -76,9 +82,22 @@ denial-of-service qualification.
 Program deployments and the four pinned stateful standard programs use their committed full-depth
 domain `k=16`. The C ABI fixture proves both deployment funding and an NFT call at that domain. The
 process rehearsal additionally proves a real NFT deployment through wallet RPC, mempool admission,
-mining, registry application, wallet scanning, cross-node convergence and replay rejection. The
-unrelated general token issuance/transfer domain remains `k=20` until it receives the same circuit-
-specific qualification.
+mining, registry application, wallet scanning, cross-node convergence and replay rejection. It then
+mines to activation height 26 and proves a real stateful NFT call at height 27. The call scenario
+requires exact transaction-hash propagation, tamper and confirmed-replay rejection, stable-state-key
+conflict rejection for a different mutable nonce, canonical state-query convergence, and exact final
+supply (`742000` bridged, `100002` fees, `641998` circulating, five commitments, one program).
+
+Two RPC details are security-relevant for future qualification extensions. First, an absent
+`get_onyx_standard_program_state` value is represented as `found=false` with an empty state string.
+Second, `send_transaction.send_result` is deprecated and always says `broadcast`, even if mempool
+admission returns false. Tests must establish admission using the exact transaction hash through
+`get_raw_transaction` and, where useful, the transaction-pool count. `transaction_pool_version` is a
+change counter and must not be treated as proof that a particular transaction is present.
+
+The unrelated general token issuance/transfer domain remains `k=20` until it receives the same
+circuit-specific process qualification. Stateful vesting, multisig and swap calls, program-state
+reorganization/rollback, and alternate-node recovery are also still open.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
