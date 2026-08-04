@@ -45,9 +45,9 @@ def rpc_response(port, method, params=None, authorization=None):
         headers=headers,
         method="POST",
     )
-    # Real Halo2 proving is intentionally exercised by this harness and can exceed the short
-    # control-plane timeout used by the non-proving RPC calls on slower CI workers.
-    with urllib.request.urlopen(request, timeout=180) as response:
+    # Real Halo2 proving and independent node verification are intentionally exercised by this
+    # harness and can exceed short control-plane timeouts on slower qualification workers.
+    with urllib.request.urlopen(request, timeout=360) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -200,6 +200,19 @@ def wait_until(description, predicate, nodes, timeout=30):
 
 def connected(statistics):
     return len(statistics.get("connected_peers", [])) > 0
+
+
+def transaction_known(node, transaction_hash):
+    response = rpc_response(
+        node.rpc_port, "get_raw_transaction", {"hash": transaction_hash}
+    )
+    if "result" in response:
+        return True
+    if response.get("error", {}).get("code") == -5:
+        return False
+    raise RuntimeError(
+        f"{node.name} returned an unexpected transaction lookup response: {response!r}"
+    )
 
 
 def mine_blocks(minerd, root, name, rpc_port, wallet_address, count):
@@ -872,6 +885,15 @@ def main():
                     "wallet did not reserve pending standard-program deployment spends: "
                     f"{pending_duplicate_deployment!r}"
                 )
+            wait_until(
+                "standard-program deployment propagation",
+                lambda: all(
+                    transaction_known(node, standard_deployment["transaction_hash"])
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=120,
+            )
             mine_blocks(
                 minerd,
                 root,
@@ -904,7 +926,7 @@ def main():
                 and receiver_wallet.call("get_onyx_status")["balance"]
                 == post_deployment_balance,
                 nodes + [wallet, receiver_wallet],
-                timeout=60,
+                timeout=360,
             )
             replay_deployment_response = rpc_response(
                 onyx_c.rpc_port,
@@ -938,6 +960,235 @@ def main():
             print(
                 "independent wallet deployed a pinned NFT program with pending-spend, "
                 "tamper/replay, registry, and exact supply checks"
+            )
+
+            # The default deployment activates twenty blocks after its expected inclusion. Advance
+            # the real network to that boundary before constructing the first stateful call.
+            activation_height = deployment_height + 20
+            mine_blocks(
+                minerd,
+                root,
+                "standard-program-activation",
+                onyx_b_rpc,
+                MINING_ADDRESS_A,
+                activation_height - deployment_height,
+            )
+            wait_until(
+                "standard-program activation convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= activation_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+            wait_until(
+                "standard-program activation wallet synchronization",
+                lambda: receiver_wallet.status()["top_block_height"] >= activation_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+
+            collection_id = (21).to_bytes(32, "little")
+            token_id = (22).to_bytes(32, "little")
+            nft_application = (
+                bytes((1, 1))
+                + collection_id
+                + token_id
+                + bytes((33, 1))
+            ).hex()
+            competing_nft_application = (
+                bytes((1, 1))
+                + collection_id
+                + token_id
+                + bytes((33, 2))
+            ).hex()
+            prior_state = "dea354729d447a92315a7730a8ffa9c2621f025a2e73cf2c794b7923939f1a00"
+            next_state = "8503" + "00" * 30
+            competing_next_state = "8603" + "00" * 30
+            owner_witness = "22" + "00" * 31
+            initial_states = [
+                rpc_call(
+                    node.rpc_port,
+                    "get_onyx_standard_program_state",
+                    {
+                        "program_id": standard_deployment["program_id"],
+                        "application": nft_application,
+                    },
+                )
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            if initial_states[1:] != initial_states[:-1] or any(
+                state.get("found")
+                or state.get("state") != ""
+                or state.get("block_height") != activation_height
+                for state in initial_states
+            ):
+                raise RuntimeError(
+                    f"initial standard-program state was not absent and converged: {initial_states!r}"
+                )
+            standard_call = receiver_wallet.call(
+                "create_onyx_standard_program_call",
+                {
+                    "program_id": standard_deployment["program_id"],
+                    "valid_from_height": 0,
+                    "expiry_height": 0,
+                    "application": nft_application,
+                    "prior_state": prior_state,
+                    "next_state": next_state,
+                    "witness": owner_witness,
+                },
+            )
+            tampered_call = standard_call["binary_transaction"][:-2] + (
+                "00" if standard_call["binary_transaction"][-2:] != "00" else "01"
+            )
+            tampered_call_response = rpc_response(
+                onyx_c.rpc_port,
+                "send_transaction",
+                {"binary_transaction": tampered_call},
+            )
+            if "error" not in tampered_call_response:
+                raise RuntimeError(
+                    "node accepted a standard-program call with tampered proof data: "
+                    f"{tampered_call_response!r}"
+                )
+            receiver_wallet.call(
+                "send_transaction",
+                {"binary_transaction": standard_call["binary_transaction"]},
+            )
+            wait_until(
+                "standard-program call propagation",
+                lambda: all(
+                    transaction_known(node, standard_call["transaction_hash"])
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=360,
+            )
+            competing_call = receiver_wallet.call(
+                "create_onyx_standard_program_call",
+                {
+                    "program_id": standard_deployment["program_id"],
+                    "valid_from_height": 0,
+                    "expiry_height": 0,
+                    "application": competing_nft_application,
+                    "prior_state": prior_state,
+                    "next_state": competing_next_state,
+                    "witness": owner_witness,
+                },
+            )
+            competing_call_response = rpc_response(
+                onyx_b.rpc_port,
+                "send_transaction",
+                {"binary_transaction": competing_call["binary_transaction"]},
+            )
+            if (
+                transaction_known(onyx_b, competing_call["transaction_hash"])
+                or not transaction_known(onyx_b, standard_call["transaction_hash"])
+                or onyx_b.statistics()["transaction_pool_count"] != 1
+            ):
+                raise RuntimeError(
+                    "node accepted two pending transitions for the same standard-program state: "
+                    f"{competing_call_response!r}"
+                )
+            mine_blocks(
+                minerd,
+                root,
+                "standard-program-call-confirmation",
+                onyx_c_rpc,
+                MINING_ADDRESS_A,
+                1,
+            )
+            call_height = activation_height + 1
+            wait_until(
+                "standard-program call convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= call_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and len(
+                    {
+                        node.status()["top_block_hash"]
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    }
+                )
+                == 1,
+                nodes + [wallet, receiver_wallet],
+                timeout=360,
+            )
+            wait_until(
+                "standard-program call wallet accounting",
+                lambda: receiver_wallet.status()["top_block_height"] >= call_height
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == post_deployment_balance,
+                nodes + [wallet, receiver_wallet],
+                timeout=360,
+            )
+            final_program_states = [
+                rpc_call(
+                    node.rpc_port,
+                    "get_onyx_standard_program_state",
+                    {
+                        "program_id": standard_deployment["program_id"],
+                        "application": nft_application,
+                    },
+                )
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            if final_program_states[1:] != final_program_states[:-1] or any(
+                not state.get("found")
+                or state.get("state") != next_state
+                or state.get("block_height") != call_height
+                for state in final_program_states
+            ):
+                raise RuntimeError(
+                    "standard-program call state did not converge to the proved commitment: "
+                    f"{final_program_states!r}"
+                )
+            competing_state = rpc_call(
+                onyx_a.rpc_port,
+                "get_onyx_standard_program_state",
+                {
+                    "program_id": standard_deployment["program_id"],
+                    "application": competing_nft_application,
+                },
+            )
+            if not competing_state.get("found") or competing_state.get("state") != next_state:
+                raise RuntimeError(
+                    "mutable NFT nonce changed the stable state key: "
+                    f"{competing_state!r}"
+                )
+            replay_call_response = rpc_response(
+                onyx_a.rpc_port,
+                "send_transaction",
+                {"binary_transaction": standard_call["binary_transaction"]},
+            )
+            if "error" not in replay_call_response:
+                raise RuntimeError(
+                    "node accepted a confirmed standard-program call replay: "
+                    f"{replay_call_response!r}"
+                )
+            audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            if audits[1:] != audits[:-1] or (
+                audits[0].get("total_bridged") != migration_output["amount"]
+                or audits[0].get("total_fees")
+                != migration_fee + transfer_fee + deployment_fee
+                or audits[0].get("circulating_supply") != post_deployment_balance
+                or audits[0].get("commitment_count") != 5
+                or audits[0].get("program_count") != 1
+            ):
+                raise RuntimeError(
+                    f"standard-program call supply or convergence failed: {audits!r}"
+                )
+            final_height = call_height
+            final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+            final_tip = final_statuses[0]["top_block_hash"]
+            print(
+                "independent wallet executed a stateful NFT call with activation, tamper, "
+                "pending-conflict, stable-key, replay, state, and supply checks"
             )
 
             foreign = Node(
@@ -1008,6 +1259,12 @@ def main():
                     "standard_program_deployment_tamper_rejection": "passed",
                     "pending_standard_program_deployment_reservation": "passed",
                     "standard_program_deployment_replay_rejection": "passed",
+                    "standard_program_activation": "passed",
+                    "stateful_nft_call": "passed",
+                    "standard_program_call_tamper_rejection": "passed",
+                    "pending_standard_program_state_conflict_rejection": "passed",
+                    "standard_program_call_replay_rejection": "passed",
+                    "standard_program_state_query_convergence": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -1033,6 +1290,15 @@ def main():
                     "kind": "nft",
                     "program_id": standard_deployment["program_id"],
                     "fee": deployment_fee,
+                    "receiver_balance": post_deployment_balance,
+                },
+                "standard_program_call": {
+                    "program_id": standard_deployment["program_id"],
+                    "application": nft_application,
+                    "activation_height": activation_height,
+                    "call_height": call_height,
+                    "prior_state": prior_state,
+                    "next_state": next_state,
                     "receiver_balance": post_deployment_balance,
                 },
             }
