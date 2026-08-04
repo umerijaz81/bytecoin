@@ -7,10 +7,14 @@
 use group::{Curve, Group, GroupEncoding};
 use halo2_gadgets::poseidon::primitives::{ConstantLength, Hash as PrimitiveHash, P128Pow5T3};
 use halo2_proofs::pasta::{EqAffine, Fp};
-use halo2_proofs::plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier};
+use halo2_proofs::plonk::{
+    create_proof, keygen_pk, keygen_vk, verify_proof, ProvingKey, SingleVerifier, VerifyingKey,
+};
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255};
 use pasta_curves::{arithmetic::CurveAffine, pallas};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::authorization::{
     verify_authorized_transaction, verify_issuance_binding_authorization,
@@ -40,6 +44,124 @@ use crate::transaction::{
 
 pub const EXPERIMENTAL_TRANSFER_BACKEND: &str = "halo2-ipa-pasta-onyx-o2-experimental";
 pub const BRIDGE_BACKEND: &str = "halo2-ipa-pasta-onyx-bridge-v1";
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NativeTransferKey {
+    k: u32,
+    depth: usize,
+    spends: usize,
+    outputs: usize,
+}
+
+struct NativeTransferVerificationMaterial {
+    params: Arc<Params<EqAffine>>,
+    verifying_key: Arc<VerifyingKey<EqAffine>>,
+}
+
+struct NativeTransferMaterialSlot {
+    verification: Mutex<Option<Arc<NativeTransferVerificationMaterial>>>,
+    proving_key: Mutex<Option<Arc<ProvingKey<EqAffine>>>>,
+}
+
+impl NativeTransferMaterialSlot {
+    fn empty() -> Self {
+        Self {
+            verification: Mutex::new(None),
+            proving_key: Mutex::new(None),
+        }
+    }
+}
+
+static NATIVE_TRANSFER_MATERIAL_CACHE: OnceLock<
+    Mutex<BTreeMap<NativeTransferKey, Arc<NativeTransferMaterialSlot>>>,
+> = OnceLock::new();
+
+fn native_transfer_key<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>(
+    k: u32,
+) -> NativeTransferKey {
+    NativeTransferKey {
+        k,
+        depth: DEPTH,
+        spends: SPENDS,
+        outputs: OUTPUTS,
+    }
+}
+
+fn native_transfer_material_slot<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>(
+    k: u32,
+) -> Result<Arc<NativeTransferMaterialSlot>, ProofError> {
+    let key = native_transfer_key::<DEPTH, SPENDS, OUTPUTS>(k);
+    let cache = NATIVE_TRANSFER_MATERIAL_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut locked = cache.lock().map_err(|_| ProofError::VerificationFailed)?;
+    Ok(locked
+        .entry(key)
+        .or_insert_with(|| Arc::new(NativeTransferMaterialSlot::empty()))
+        .clone())
+}
+
+fn native_transfer_verification_material<
+    const DEPTH: usize,
+    const SPENDS: usize,
+    const OUTPUTS: usize,
+>(
+    k: u32,
+    circuit: &MultiTransferCircuit<DEPTH, SPENDS, OUTPUTS>,
+) -> Result<Arc<NativeTransferVerificationMaterial>, ProofError> {
+    let slot = native_transfer_material_slot::<DEPTH, SPENDS, OUTPUTS>(k)?;
+    let mut verification = slot
+        .verification
+        .lock()
+        .map_err(|_| ProofError::VerificationFailed)?;
+    if let Some(material) = verification.as_ref() {
+        return Ok(material.clone());
+    }
+    let params = Arc::new(Params::new(k));
+    let verifying_key =
+        Arc::new(keygen_vk(params.as_ref(), circuit).map_err(|_| ProofError::VerificationFailed)?);
+    let generated = Arc::new(NativeTransferVerificationMaterial {
+        params,
+        verifying_key,
+    });
+    *verification = Some(generated.clone());
+    Ok(generated)
+}
+
+fn native_transfer_proving_material<
+    const DEPTH: usize,
+    const SPENDS: usize,
+    const OUTPUTS: usize,
+>(
+    k: u32,
+    circuit: &MultiTransferCircuit<DEPTH, SPENDS, OUTPUTS>,
+) -> Result<
+    (
+        Arc<NativeTransferVerificationMaterial>,
+        Arc<ProvingKey<EqAffine>>,
+    ),
+    ProofError,
+> {
+    let slot = native_transfer_material_slot::<DEPTH, SPENDS, OUTPUTS>(k)
+        .map_err(|_| ProofError::ProvingFailed)?;
+    let verification = native_transfer_verification_material::<DEPTH, SPENDS, OUTPUTS>(k, circuit)
+        .map_err(|_| ProofError::ProvingFailed)?;
+    let mut proving_key = slot
+        .proving_key
+        .lock()
+        .map_err(|_| ProofError::ProvingFailed)?;
+    if let Some(cached) = proving_key.as_ref() {
+        return Ok((verification, cached.clone()));
+    }
+    let generated = Arc::new(
+        keygen_pk(
+            verification.params.as_ref(),
+            verification.verifying_key.as_ref().clone(),
+            circuit,
+        )
+        .map_err(|_| ProofError::ProvingFailed)?,
+    );
+    *proving_key = Some(generated.clone());
+    Ok((verification, generated))
+}
 
 pub fn multi_transfer_backend_id(spends: usize, outputs: usize) -> String {
     format!("halo2-ipa-pasta-onyx-o2-s{spends}-o{outputs}")
@@ -538,9 +660,8 @@ pub fn create_multi_transfer_proof<
         return Err(ProofError::InvalidShape);
     }
     let circuit = witness.circuit::<SPENDS, OUTPUTS>()?;
-    let params: Params<EqAffine> = Params::new(k);
-    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::ProvingFailed)?;
-    let pk = keygen_pk(&params, vk, &circuit).map_err(|_| ProofError::ProvingFailed)?;
+    let (verification, proving_key) =
+        native_transfer_proving_material::<DEPTH, SPENDS, OUTPUTS>(k, &circuit)?;
     let public = [Fp::from(fee)];
     let mut membership = Vec::with_capacity(SPENDS + 1);
     membership.push(anchor.field());
@@ -576,8 +697,8 @@ pub fn create_multi_transfer_proof<
     }
     let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<EqAffine>>::init(Vec::new());
     create_proof::<EqAffine, Challenge255<EqAffine>, _, _, _>(
-        &params,
-        &pk,
+        verification.params.as_ref(),
+        proving_key.as_ref(),
         &[circuit],
         &[&[&public, &membership, &notes, &authorization]],
         rand::rngs::OsRng,
@@ -1112,8 +1233,8 @@ pub fn verify_multi_transfer_proof<
         vec![crate::spend_auth_circuit::binding_generator(); OUTPUTS],
     )
     .map_err(|_| ProofError::InvalidShape)?;
-    let params: Params<EqAffine> = Params::new(k);
-    let vk = keygen_vk(&params, &circuit).map_err(|_| ProofError::VerificationFailed)?;
+    let verification =
+        native_transfer_verification_material::<DEPTH, SPENDS, OUTPUTS>(k, &circuit)?;
     let public = [Fp::from(transaction.preimage.fee)];
     let mut membership = Vec::with_capacity(SPENDS + 1);
     membership.push(transaction.preimage.anchor.field());
@@ -1161,9 +1282,9 @@ pub fn verify_multi_transfer_proof<
     let mut transcript =
         Blake2bRead::<_, EqAffine, Challenge255<EqAffine>>::init(&transaction.proof[..]);
     verify_proof::<EqAffine, Challenge255<EqAffine>, _, _>(
-        &params,
-        &vk,
-        SingleVerifier::new(&params),
+        verification.params.as_ref(),
+        verification.verifying_key.as_ref(),
+        SingleVerifier::new(verification.params.as_ref()),
         &[&[&public, &membership, &notes, &authorization]],
         &mut transcript,
     )

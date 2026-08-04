@@ -105,6 +105,10 @@ static bool semantic_rejects(const Currency &currency, uint8_t block_major_versi
 void test_jade_consensus(common::CommandLine &cmd) {
 	Config config(cmd);
 	Currency currency(config);
+	invariant(parameters::ONYX_TRANSFER_CIRCUIT_K == 16 &&
+	              parameters::ONYX_BRIDGE_CIRCUIT_K == 13 &&
+	              parameters::ONYX_TRANSFER_CIRCUIT_K < parameters::ONYX_CIRCUIT_K,
+	    "Onyx circuit-specific consensus domains changed unexpectedly");
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;
 	invariant(currency.get_next_block_major_version(parameters::UPGRADE_HEIGHT_ONYX - 2) ==

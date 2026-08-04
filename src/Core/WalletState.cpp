@@ -240,7 +240,7 @@ bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient,
 		proving_snapshot = std::move(reserved);
 	}
 	return zk::Halo2ProofSystem::wallet_create_transfer(proving_snapshot, seed, recipient, amount, fee,
-	    expiry_height, memo, parameters::ONYX_CIRCUIT_K, envelope);
+	    expiry_height, memo, parameters::ONYX_TRANSFER_CIRCUIT_K, envelope);
 #else
 	return false;
 #endif

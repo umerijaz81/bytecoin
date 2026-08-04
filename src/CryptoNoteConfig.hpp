@@ -75,6 +75,9 @@ const uint64_t ONYX_MAX_PROGRAM_ACTIVATION_DELAY = 100000;
 const size_t ONYX_MAX_ENVELOPE_SIZE     = 512 * 1024;
 const uint32_t ONYX_MERKLE_DEPTH        = 32;
 const uint32_t ONYX_CIRCUIT_K           = 20;
+// Native transfers are bounded to the committed 1x1, 1x2, 2x1, and 2x2 circuit family. The largest
+// 2x2 shape is proven and tested at k=16; larger domains add work without adding circuit constraints.
+const uint32_t ONYX_TRANSFER_CIRCUIT_K  = 16;
 // Bridge is an independent, substantially smaller circuit whose committed shape is proven and
 // tested at k=13. Keeping it separate avoids 128x over-allocation during proving and verification.
 const uint32_t ONYX_BRIDGE_CIRCUIT_K    = 13;

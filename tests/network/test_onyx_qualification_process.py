@@ -116,10 +116,20 @@ class Node:
 
 
 class WalletProcess:
-    def __init__(self, binary, root, wallet_file, data, rpc_port, node_rpc_port, password):
-        self.name = "qualification-wallet"
+    def __init__(
+        self,
+        binary,
+        root,
+        wallet_file,
+        data,
+        rpc_port,
+        node_rpc_port,
+        password,
+        name="qualification-wallet",
+    ):
+        self.name = name
         self.rpc_port = rpc_port
-        self.log_path = root / "qualification-wallet.log"
+        self.log_path = root / f"{name}.log"
         self.log = self.log_path.open("w+", encoding="utf-8")
         auth_file = root / "walletd.auth"
         if not auth_file.exists():
@@ -233,12 +243,12 @@ def canonical_utc_now():
     )
 
 
-def create_wallet(walletd, root):
+def create_wallet(walletd, root, prefix="qualification"):
     # A legacy wallet is the qualification migration source: it scans the version-1 coinbase
     # outputs that V7 blocks carry (an amethyst wallet's unlinkable output handler cannot see
     # them), and it still derives an Onyx identity from its seed.
-    wallet_file = root / "qualification.wallet"
-    wallet_data = root / "wallet-data"
+    wallet_file = root / f"{prefix}.wallet"
+    wallet_data = root / f"{prefix}-wallet-data"
     wallet_data.mkdir()
     creation_input = f"{WALLET_PASSWORD}\n{WALLET_PASSWORD}\n"
     result = subprocess.run(
@@ -326,8 +336,10 @@ def main():
         onyx_c_p2p, onyx_c_rpc = unused_port(), unused_port()
         foreign_p2p, foreign_rpc = unused_port(), unused_port()
         wallet_rpc = unused_port()
+        receiver_wallet_rpc = unused_port()
         nodes = []
         wallet = None
+        receiver_wallet = None
         try:
             onyx_a = Node(binary, root, "onyx-a-isolated", "onyx", onyx_a_p2p, onyx_a_rpc)
             nodes.append(onyx_a)
@@ -676,6 +688,143 @@ def main():
                 "supply conservation and consumed-output replay rejection"
             )
 
+            receiver_file, receiver_data = create_wallet(
+                walletd, root, prefix="shielded-receiver"
+            )
+            receiver_wallet = WalletProcess(
+                walletd,
+                root,
+                receiver_file,
+                receiver_data,
+                receiver_wallet_rpc,
+                onyx_b_rpc,
+                WALLET_PASSWORD,
+                name="shielded-receiver-wallet",
+            )
+            wait_until(
+                "independent shielded receiver synchronization",
+                lambda: receiver_wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+            receiver_onyx = receiver_wallet.call("get_onyx_status")
+            if receiver_onyx.get("balance") != 0 or not receiver_onyx.get("address"):
+                raise RuntimeError(
+                    f"independent shielded receiver did not start empty: {receiver_onyx!r}"
+                )
+            transfer_fee = 1
+            transfer_amount = expected_shielded - transfer_fee
+            shielded_transfer = wallet.call(
+                "create_onyx_transaction",
+                {
+                    "address": receiver_onyx["address"],
+                    "amount": transfer_amount,
+                    "fee": transfer_fee,
+                    "expiry_height": 0,
+                    "memo": "independent receiver qualification",
+                },
+            )
+            tampered_transaction = shielded_transfer["binary_transaction"][:-2] + (
+                "00"
+                if shielded_transfer["binary_transaction"][-2:] != "00"
+                else "01"
+            )
+            tampered_transfer_response = rpc_response(
+                onyx_c.rpc_port,
+                "send_transaction",
+                {"binary_transaction": tampered_transaction},
+            )
+            if "error" not in tampered_transfer_response:
+                raise RuntimeError(
+                    "node accepted a transfer with a tampered proof or authorization: "
+                    f"{tampered_transfer_response!r}"
+                )
+            wallet.call(
+                "send_transaction",
+                {"binary_transaction": shielded_transfer["binary_transaction"]},
+            )
+            pending_double_spend = rpc_response(
+                wallet.rpc_port,
+                "create_onyx_transaction",
+                {
+                    "address": receiver_onyx["address"],
+                    "amount": transfer_amount,
+                    "fee": transfer_fee,
+                    "expiry_height": 0,
+                    "memo": "must be reserved",
+                },
+                WALLET_AUTH,
+            )
+            if pending_double_spend.get("error", {}).get("code") != -32602:
+                raise RuntimeError(
+                    f"wallet did not reserve pending shielded spends: {pending_double_spend!r}"
+                )
+            mine_blocks(
+                minerd,
+                root,
+                "shielded-transfer-confirmation",
+                onyx_c_rpc,
+                MINING_ADDRESS_A,
+                1,
+            )
+            transfer_height = final_height + 1
+            wait_until(
+                "shielded transfer convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= transfer_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and len(
+                    {
+                        node.status()["top_block_hash"]
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    }
+                )
+                == 1,
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+            wait_until(
+                "sender and receiver shielded balance recognition",
+                lambda: wallet.status()["top_block_height"] >= transfer_height
+                and receiver_wallet.status()["top_block_height"] >= transfer_height
+                and wallet.call("get_onyx_status")["balance"] == 0
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == transfer_amount,
+                nodes + [wallet, receiver_wallet],
+                timeout=60,
+            )
+            replay_transfer_response = rpc_response(
+                onyx_a.rpc_port,
+                "send_transaction",
+                {"binary_transaction": shielded_transfer["binary_transaction"]},
+            )
+            if "error" not in replay_transfer_response:
+                raise RuntimeError(
+                    f"node accepted a confirmed nullifier replay: {replay_transfer_response!r}"
+                )
+            audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            expected_circulating = transfer_amount
+            if audits[1:] != audits[:-1] or (
+                audits[0].get("total_bridged") != migration_output["amount"]
+                or audits[0].get("total_fees") != migration_fee + transfer_fee
+                or audits[0].get("circulating_supply") != expected_circulating
+                or audits[0].get("commitment_count") != 2
+            ):
+                raise RuntimeError(
+                    f"post-transfer supply conservation or convergence failed: {audits!r}"
+                )
+            final_height = transfer_height
+            final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+            final_tip = final_statuses[0]["top_block_hash"]
+            print(
+                "independent wallets completed a real shielded transfer with pending-spend "
+                "reservation, tamper/nullifier replay rejection, and exact fee accounting"
+            )
+
             foreign = Node(
                 binary,
                 root,
@@ -736,6 +885,10 @@ def main():
                     "legacy_to_onyx_migration": "passed",
                     "bridge_tamper_rejection": "passed",
                     "bridge_replay_rejection": "passed",
+                    "independent_shielded_transfer": "passed",
+                    "pending_shielded_spend_reservation": "passed",
+                    "transfer_tamper_rejection": "passed",
+                    "nullifier_replay_rejection": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -748,6 +901,13 @@ def main():
                     "migration_fee": migration_fee,
                     "shielded_balance": expected_shielded,
                     "remaining_legacy_total": remaining_legacy_total,
+                },
+                "shielded_transfer": {
+                    "amount": transfer_amount,
+                    "fee": transfer_fee,
+                    "sender_balance": 0,
+                    "receiver_balance": transfer_amount,
+                    "receiver_onyx_address": receiver_onyx["address"],
                 },
             }
             if args.report:
@@ -762,8 +922,15 @@ def main():
                 print(f"\n--- {node.name} log ---\n{node.read_log()}")
             if wallet is not None:
                 print(f"\n--- {wallet.name} log ---\n{wallet.read_log()}")
+            if receiver_wallet is not None:
+                print(
+                    f"\n--- {receiver_wallet.name} log ---\n"
+                    f"{receiver_wallet.read_log()}"
+                )
             raise
         finally:
+            if receiver_wallet is not None:
+                receiver_wallet.stop()
             if wallet is not None:
                 wallet.stop()
             for node in reversed(nodes):
