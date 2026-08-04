@@ -150,7 +150,8 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		              onyx_currency.upgrade_heights.end(), [](Height height) { return height == 1; }) &&
 		              onyx_currency.get_block_major_version_for_height(1) ==
 		                  onyx_currency.onyx_block_version &&
-		              onyx_currency.uses_randomx(onyx_currency.onyx_block_version, 1),
+		              onyx_currency.uses_randomx(onyx_currency.onyx_block_version, 1) &&
+		              onyx_currency.difficulty_target == 1,
 		    "Onyx qualification network did not co-activate V7 and RandomX at height 1");
 		const auto main_onyx_id = Wallet::onyx_network_id_for_net("main");
 		const auto qualification_onyx_id = Wallet::onyx_network_id_for_net("onyx");

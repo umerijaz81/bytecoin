@@ -2,6 +2,7 @@
 """Real-process identity and isolation checks for the fixed Onyx qualification network."""
 
 import argparse
+import base64
 import datetime
 import json
 import os
@@ -18,10 +19,9 @@ MINING_ADDRESS_A = (
     "21mQ7KPdmLbjfpg3Coayi4hZzAEgjeL87QXGeDTHahKeJsvKHc6DoprAJmqU"
     "cLhWTUXtxCL6rQFSwEUe6NZdEoqZNpSq1iC"
 )
-MINING_ADDRESS_B = (
-    "24xTx43fFtNBUn5f6Fj1wC7y8JsbD4N1XS2s3Q8HzWxtfvERccTPX6e5ua1"
-    "mf55Wm7Z4MiaWT7LPeiBxPtD8kU9V7z3kuex"
-)
+WALLET_PASSWORD = "onyx-local-qualification-password"
+RECOVERY_PASSWORD = "onyx-local-recovery-password"
+WALLET_AUTH = "onyx-local:qualification-auth"
 
 
 def unused_port():
@@ -30,23 +30,27 @@ def unused_port():
         return listener.getsockname()[1]
 
 
-def rpc_response(port, method, params=None):
+def rpc_response(port, method, params=None, authorization=None):
     body = json.dumps(
         {"jsonrpc": "2.0", "id": method, "method": method, "params": params or {}},
         separators=(",", ":"),
     ).encode("ascii")
+    headers = {"Content-Type": "application/json-rpc"}
+    if authorization:
+        token = base64.b64encode(authorization.encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/json_rpc",
         data=body,
-        headers={"Content-Type": "application/json-rpc"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def rpc_call(port, method, params=None):
-    decoded = rpc_response(port, method, params)
+def rpc_call(port, method, params=None, authorization=None):
+    decoded = rpc_response(port, method, params, authorization)
     if "error" in decoded or "result" not in decoded:
         raise RuntimeError(f"{method} failed: {decoded}")
     return decoded["result"]
@@ -92,6 +96,62 @@ class Node:
 
     def statistics(self):
         return rpc_call(self.rpc_port, "get_statistics")
+
+    def read_log(self):
+        self.log.flush()
+        self.log.seek(0)
+        return self.log.read()
+
+    def stop(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        self.log.close()
+
+
+class WalletProcess:
+    def __init__(self, binary, root, wallet_file, data, rpc_port, node_rpc_port, password):
+        self.name = "qualification-wallet"
+        self.rpc_port = rpc_port
+        self.log_path = root / "qualification-wallet.log"
+        self.log = self.log_path.open("w+", encoding="utf-8")
+        auth_file = root / "walletd.auth"
+        if not auth_file.exists():
+            auth_file.write_text(WALLET_AUTH + "\n", encoding="utf-8")
+            auth_file.chmod(0o600)
+        self.process = subprocess.Popen(
+            [
+                str(binary),
+                "--net=onyx",
+                f"--data-folder={data}",
+                f"--wallet-file={wallet_file}",
+                f"--walletd-http-auth-file={auth_file}",
+                f"--walletd-bind-address=127.0.0.1:{rpc_port}",
+                f"--bytecoind-remote-address=127.0.0.1:{node_rpc_port}",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=self.log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.process.stdin.write(password + "\n")
+        self.process.stdin.close()
+
+    def check(self):
+        if self.process.poll() is not None:
+            raise RuntimeError(
+                f"walletd exited unexpectedly ({self.process.returncode})\n{self.read_log()}"
+            )
+
+    def status(self):
+        return rpc_call(self.rpc_port, "get_status", authorization=WALLET_AUTH)
+
+    def call(self, method, params=None):
+        return rpc_call(self.rpc_port, method, params, authorization=WALLET_AUTH)
 
     def read_log(self):
         self.log.flush()
@@ -171,19 +231,91 @@ def canonical_utc_now():
     )
 
 
+def create_wallet(walletd, root):
+    # A legacy wallet is the qualification migration source: it scans the version-1 coinbase
+    # outputs that V7 blocks carry (an amethyst wallet's unlinkable output handler cannot see
+    # them), and it still derives an Onyx identity from its seed.
+    wallet_file = root / "qualification.wallet"
+    wallet_data = root / "wallet-data"
+    wallet_data.mkdir()
+    creation_input = f"{WALLET_PASSWORD}\n{WALLET_PASSWORD}\n"
+    result = subprocess.run(
+        [
+            str(walletd),
+            "--net=onyx",
+            f"--data-folder={wallet_data}",
+            f"--wallet-file={wallet_file}",
+            "--create-wallet",
+            "--wallet-type=legacy",
+            "--creation-timestamp=0",
+        ],
+        input=creation_input,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Onyx wallet creation failed\n{result.stdout}\n{result.stderr}")
+    return wallet_file, wallet_data
+
+
+def recover_wallet(walletd, root, wallet_file, wallet_data):
+    backup_data = root / "recovered-wallet-data"
+    backup_data.mkdir()
+    result = subprocess.run(
+        [
+            str(walletd),
+            "--net=onyx",
+            f"--data-folder={wallet_data}",
+            f"--wallet-file={wallet_file}",
+            f"--backup-wallet-data={backup_data}",
+            "--set-password",
+        ],
+        input=f"{WALLET_PASSWORD}\n{RECOVERY_PASSWORD}\n{RECOVERY_PASSWORD}\n",
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    if result.returncode != 0 or "finished successfully" not in result.stdout:
+        raise RuntimeError(f"Onyx wallet backup/recovery failed\n{result.stdout}\n{result.stderr}")
+    recovered_wallet = backup_data / wallet_file.name
+    if not recovered_wallet.is_file():
+        raise RuntimeError("Onyx wallet backup omitted the encrypted wallet file")
+    old_password = subprocess.run(
+        [
+            str(walletd),
+            "--net=onyx",
+            f"--data-folder={backup_data}",
+            f"--wallet-file={recovered_wallet}",
+            "--export-keys",
+        ],
+        input=WALLET_PASSWORD + "\n",
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if old_password.returncode == 0:
+        raise RuntimeError("recovered Onyx wallet accepted its superseded password")
+    return recovered_wallet, backup_data
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bytecoind", required=True, type=pathlib.Path)
     parser.add_argument("--minerd", required=True, type=pathlib.Path)
+    parser.add_argument("--walletd", required=True, type=pathlib.Path)
     parser.add_argument("--report", type=pathlib.Path)
     parser.add_argument("--revision", default=os.environ.get("GITHUB_SHA", "unbound-local-run"))
     args = parser.parse_args()
     binary = args.bytecoind.resolve()
     minerd = args.minerd.resolve()
+    walletd = args.walletd.resolve()
     if not binary.is_file():
         parser.error(f"bytecoind does not exist: {binary}")
     if not minerd.is_file():
         parser.error(f"minerd does not exist: {minerd}")
+    if not walletd.is_file():
+        parser.error(f"walletd does not exist: {walletd}")
 
     with tempfile.TemporaryDirectory(prefix="bytecoin-onyx-net-") as temporary:
         root = pathlib.Path(temporary)
@@ -191,7 +323,9 @@ def main():
         onyx_b_p2p, onyx_b_rpc = unused_port(), unused_port()
         onyx_c_p2p, onyx_c_rpc = unused_port(), unused_port()
         foreign_p2p, foreign_rpc = unused_port(), unused_port()
+        wallet_rpc = unused_port()
         nodes = []
+        wallet = None
         try:
             onyx_a = Node(binary, root, "onyx-a-isolated", "onyx", onyx_a_p2p, onyx_a_rpc)
             nodes.append(onyx_a)
@@ -216,8 +350,32 @@ def main():
             if any(connected(stats) for stats in statistics):
                 raise RuntimeError("supposedly isolated qualification branches connected prematurely")
 
+            wallet_file, wallet_data = create_wallet(walletd, root)
+            wallet = WalletProcess(
+                walletd,
+                root,
+                wallet_file,
+                wallet_data,
+                wallet_rpc,
+                onyx_b_rpc,
+                WALLET_PASSWORD,
+            )
+            wait_until("Onyx wallet RPC", wallet.status, nodes + [wallet])
+            initial_addresses = wallet.call("get_addresses")["addresses"]
+            initial_onyx_status = wallet.call("get_onyx_status")
+            if len(initial_addresses) != 1 or not initial_onyx_status.get("address"):
+                raise RuntimeError(
+                    f"Onyx wallet identity is incomplete: {initial_addresses!r} "
+                    f"{initial_onyx_status!r}"
+                )
+            wallet.stop()
+            wallet = None
+
             mine_blocks(minerd, root, "branch-a", onyx_a_rpc, MINING_ADDRESS_A, 2)
-            mine_blocks(minerd, root, "branch-b", onyx_b_rpc, MINING_ADDRESS_B, 3)
+            # Onyx blocks are V7 from height 1, and consensus only accepts version-1 coinbase
+            # transactions in V7 blocks (validate_tx_semantic), so the legacy wallet address
+            # receives a v1 coinbase that its own consensus accepts and the wallet scans.
+            mine_blocks(minerd, root, "branch-b", onyx_b_rpc, initial_addresses[0], 3)
             wait_until(
                 "isolated branch A height",
                 lambda: onyx_a.status()["top_block_height"] >= 2,
@@ -317,6 +475,80 @@ def main():
             )
             print("all three nodes rejected a truncated V7 transaction and remained live")
 
+            wallet = WalletProcess(
+                walletd,
+                root,
+                wallet_file,
+                wallet_data,
+                wallet_rpc,
+                onyx_a_rpc,
+                WALLET_PASSWORD,
+            )
+            wait_until(
+                "wallet synchronization after node A reorganization",
+                lambda: wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet],
+                timeout=60,
+            )
+            pre_recovery_addresses = wallet.call("get_addresses")["addresses"]
+            pre_recovery_onyx = wallet.call("get_onyx_status")
+            pre_recovery_balance = wallet.call(
+                "get_balance", {"address": "", "height_or_depth": -1}
+            )
+            recognized_total = (
+                pre_recovery_balance["spendable"]
+                + pre_recovery_balance["spendable_dust"]
+                + pre_recovery_balance["locked_or_unconfirmed"]
+            )
+            # Amethyst-and-later coinbase outputs carry no unlock height (the unlock-time rule
+            # only applies to pre-amethyst blocks), so recognized rewards are immediately
+            # spendable rather than locked.
+            if recognized_total <= 0 or pre_recovery_balance["spendable_outputs"] <= 0:
+                raise RuntimeError(
+                    f"wallet did not recognize branch-B mining rewards: {pre_recovery_balance!r}"
+                )
+            wallet.stop()
+            wallet = None
+
+            recovered_wallet, recovered_data = recover_wallet(
+                walletd, root, wallet_file, wallet_data
+            )
+            wallet = WalletProcess(
+                walletd,
+                root,
+                recovered_wallet,
+                recovered_data,
+                wallet_rpc,
+                onyx_c_rpc,
+                RECOVERY_PASSWORD,
+            )
+            wait_until(
+                "recovered wallet synchronization through node C",
+                lambda: wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet],
+                timeout=60,
+            )
+            recovered_addresses = wallet.call("get_addresses")["addresses"]
+            recovered_onyx = wallet.call("get_onyx_status")
+            recovered_balance = wallet.call(
+                "get_balance", {"address": "", "height_or_depth": -1}
+            )
+            if (
+                recovered_addresses != pre_recovery_addresses
+                or recovered_addresses != initial_addresses
+                or recovered_onyx.get("address") != pre_recovery_onyx.get("address")
+                or recovered_onyx.get("address") != initial_onyx_status.get("address")
+                or recovered_balance != pre_recovery_balance
+            ):
+                raise RuntimeError(
+                    "alternate-node recovery changed wallet identity or balance: "
+                    f"{recovered_addresses!r} {recovered_onyx!r} {recovered_balance!r}"
+                )
+            print(
+                "Onyx wallet recognized mined funds and preserved legacy/Onyx identities and "
+                "balance through encrypted backup, password rotation and node-C recovery"
+            )
+
             foreign = Node(
                 binary,
                 root,
@@ -372,9 +604,17 @@ def main():
                     "longer_branch_reorganization": "passed",
                     "supply_audit_convergence": "passed",
                     "truncated_v7_rejection": "passed",
+                    "wallet_mined_fund_recognition": "passed",
+                    "wallet_alternate_node_recovery": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
+                "wallet": {
+                    "legacy_address_count": len(recovered_addresses),
+                    "onyx_address": recovered_onyx["address"],
+                    "recognized_total": recognized_total,
+                    "spendable_outputs": recovered_balance["spendable_outputs"],
+                },
             }
             if args.report:
                 report_path = args.report.resolve()
@@ -386,8 +626,12 @@ def main():
         except Exception:
             for node in nodes:
                 print(f"\n--- {node.name} log ---\n{node.read_log()}")
+            if wallet is not None:
+                print(f"\n--- {wallet.name} log ---\n{wallet.read_log()}")
             raise
         finally:
+            if wallet is not None:
+                wallet.stop()
             for node in reversed(nodes):
                 node.stop()
 

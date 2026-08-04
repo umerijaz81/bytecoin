@@ -7,8 +7,10 @@ testnet.
 The network has a distinct P2P UUID, genesis nonce, default ports and `_onyxnet` data directory.
 Jade V5, RandomX, reserved V6 and Onyx V7 are co-scheduled at height 1, so the first post-genesis
 block uses the same direct V4-to-V7 policy intended for release. RandomX uses the genesis block as
-its delayed seed ancestor until the normal lag is available. Qualification difficulty is deliberately
-low; performance evidence must use separately documented native release parameters.
+its delayed seed ancestor until the normal lag is available. The fixed qualification block target is
+one second and its minimum difficulty is deliberately low so deterministic process rehearsals do not
+inherit mainnet's 120-second pacing or its fast-block retarget. Performance, throughput, power and
+denial-of-service evidence must use separately documented native release parameters.
 
 An `ONYX_ZK=OFF` binary refuses to join this network. There are no compiled-in seed nodes: operators
 must publish and independently record the explicit `--seed-node-address` or
@@ -25,15 +27,18 @@ verification, which also fails closed for out-of-range key identifiers.
 ZK-enabled processes:
 
 1. start three isolated qualification daemons and verify their fixed genesis;
-2. mine two RandomX blocks on node A and three different blocks on node B;
+2. create an encrypted legacy migration-source wallet, derive its network-bound Onyx identity, and
+   mine three branch-B RandomX blocks to that wallet while mining a competing two-block branch A;
 3. reconnect A and C to B, require a real reorganization onto B's longer branch, and require all three
    tips to converge;
 4. compare the complete `get_onyx_supply_audit` response across all three nodes;
 5. submit a truncated V7 transaction to each node, require the canonical invalid-binary error, and
    prove every daemon remains live;
-6. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
-7. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID
-   and supply-audit snapshot.
+6. prove the wallet recognizes the V7 coinbase rewards, back up its wallet/cache, rotate its password,
+   reject the old password, and recover the same legacy address, Onyx address and balance through node C;
+7. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
+8. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
+   supply-audit snapshot and the nonsensitive wallet qualification results.
 
 Example:
 
@@ -41,6 +46,7 @@ Example:
 python3 tests/network/test_onyx_qualification_process.py \
   --bytecoind build/artifacts/bin/bytecoind \
   --minerd build/artifacts/bin/minerd \
+  --walletd build/artifacts/bin/walletd \
   --revision "$(git rev-parse HEAD)" \
   --report build/onyx-local-qualification.json
 ```

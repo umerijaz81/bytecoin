@@ -120,7 +120,13 @@ configuration that would create a standalone V5/V6 interval or a mismatched Rand
    real-process CI rehearsal mines two competing RandomX branches across three isolated daemons,
    reconnects them, requires a longer-branch reorganization and exact supply-audit convergence, rejects
    truncated V7 bytes without losing liveness, rejects a foreign testnet peer, and emits a revision-bound
-   report explicitly marked as non-release evidence. Remaining: independent review, longer public long-sync/reorg soak,
+   report explicitly marked as non-release evidence. The same rehearsal creates an encrypted legacy
+   migration-source wallet, mines V7 coinbase rewards to it, preserves its legacy and network-bound Onyx
+   identities and recognized balance through node-A reorganization, encrypted wallet/cache backup,
+   password rotation with old-password rejection, and recovery through node C. The network uses a fixed
+   one-second target and minimum difficulty for deterministic rehearsal only; native performance and DoS
+   evidence cannot use those accelerated parameters. Remaining: actual bridge/shielded/program transactions,
+   independent review, longer public long-sync/reorg soak,
    published throughput/power benchmarks on native qualification hardware and public soak.
 4. Proof aggregation/recursion only after profiling demonstrates a concrete need and the accumulation
    construction receives an independent cryptographic review.

@@ -104,6 +104,7 @@ Currency::Currency(const Config &config)
 	if (net == "onyx") {
 		upgrade_heights       = {1, 1, 1, 1, 1, 1};
 		randomx_switch_height = 1;
+		difficulty_target     = 1;
 		upgrade_voting_window = 30;
 		upgrade_window        = 10;
 	}
