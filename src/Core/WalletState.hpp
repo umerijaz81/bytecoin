@@ -123,6 +123,8 @@ public:
 	bool create_onyx_bridge(const std::array<uint8_t, 91> &recipient, Amount legacy_amount, Amount fee,
 	    uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image, Height expiry_height,
 	    const BinaryArray &memo, BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash) const;
+	bool sign_onyx_bridge(
+	    const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature) const;
 	bool finalize_onyx_bridge(const BinaryArray &unsigned_bridge,
 	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *envelope) const;
 

@@ -48,6 +48,7 @@ const WalletNode::HandlersMap WalletNode::m_jsonrpc_handlers = {
     {api::walletd::CreateOnyxTokenIssuance::method(),
         json_rpc::make_member_method(&WalletNode::on_create_onyx_token_issuance)},
     {api::walletd::CreateOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_create_onyx_bridge)},
+    {api::walletd::SignOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_sign_onyx_bridge)},
     {api::walletd::FinalizeOnyxBridge::method(), json_rpc::make_member_method(&WalletNode::on_finalize_onyx_bridge)},
     {api::walletd::GetUnspents::method(), json_rpc::make_member_method(&WalletNode::on_get_unspent)},
     {api::walletd::GetTransfers::method(), json_rpc::make_member_method(&WalletNode::on_get_transfers)},
@@ -678,6 +679,20 @@ bool WalletNode::on_create_onyx_bridge(http::Client *, http::RequestBody &&, jso
 	        &response.unsigned_bridge, &sighash))
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx bridge");
 	std::copy(sighash.begin(), sighash.end(), response.ownership_sighash.data);
+	return true;
+}
+
+bool WalletNode::on_sign_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+    api::walletd::SignOnyxBridge::Request &&request, api::walletd::SignOnyxBridge::Response &response) {
+	check_wallet_open();
+	if (get_wallet_state().db_empty())
+		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
+	check_onyx_construction_available();
+	std::array<uint8_t, 64> signature{};
+	if (!get_wallet_state().sign_onyx_bridge(request.unsigned_bridge, &signature))
+		throw json_rpc::Error(json_rpc::INVALID_PARAMS,
+		    "Unable to sign Onyx bridge (the envelope must be unsigned and reference a wallet-owned unspent output)");
+	response.ownership_signature = common::to_hex(signature.data(), signature.size());
 	return true;
 }
 

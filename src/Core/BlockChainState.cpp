@@ -181,7 +181,7 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 		if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 			zk::Halo2ProofSystem::VerifiedBridgeDelta verified;
 			if (!zk::Halo2ProofSystem::verify_bridge(
-			        tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &verified))
+			        tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &verified))
 				throw ConsensusError("Invalid Onyx bridge proof");
 			return verified.fee;
 		}
@@ -1124,7 +1124,8 @@ void BlockChainState::remove_from_pool(Hash tid) {
 	}
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
-		invariant(zk::Halo2ProofSystem::verify_bridge(tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &bridge),
+		invariant(zk::Halo2ProofSystem::verify_bridge(
+		              tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge),
 		    "stored Onyx bridge failed verification");
 		KeyImage key_image{};
 		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
@@ -1262,7 +1263,7 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 		} else if (transaction.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 			zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
 			if (!zk::Halo2ProofSystem::verify_apply_bridge(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
-			        transaction.onyx_envelope, parameters::ONYX_CIRCUIT_K, network,
+			        transaction.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, network,
 			        delta_state->get_block_height(), &next_snapshot, &bridge))
 				throw ConsensusError("Onyx bridge state transition rejected");
 			KeyImage key_image{};
@@ -1339,7 +1340,8 @@ void BlockChainState::undo_transaction(IBlockChainState *delta_state, Height, co
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 #ifdef onyx_USE_ZK
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
-		invariant(zk::Halo2ProofSystem::verify_bridge(tx.onyx_envelope, parameters::ONYX_CIRCUIT_K, &bridge),
+		invariant(zk::Halo2ProofSystem::verify_bridge(
+		              tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge),
 		    "accepted Onyx bridge failed verification during undo");
 		KeyImage key_image{};
 		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);

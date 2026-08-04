@@ -489,7 +489,7 @@ bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, A
 			continue;
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
 		if (!zk::Halo2ProofSystem::verify_bridge(
-		        pending.onyx_envelope, parameters::ONYX_CIRCUIT_K, &bridge))
+		        pending.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge))
 			return false;
 		if (bridge.legacy_key_image == legacy_key_image)
 			return false;
@@ -497,8 +497,62 @@ bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, A
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
 	return zk::Halo2ProofSystem::wallet_create_bridge(seed, recipient, expiry_height, fee, legacy_amount,
-	    legacy_stack_index, legacy_key_image, memo, parameters::ONYX_CIRCUIT_K, unsigned_bridge,
+	    legacy_stack_index, legacy_key_image, memo, parameters::ONYX_BRIDGE_CIRCUIT_K, unsigned_bridge,
 	    ownership_sighash);
+#else
+	return false;
+#endif
+}
+
+bool WalletState::sign_onyx_bridge(
+    const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature) const {
+	if (ownership_signature != nullptr)
+		ownership_signature->fill(0);
+#ifdef onyx_USE_ZK
+	if (unsigned_bridge.empty() || ownership_signature == nullptr || m_wallet.is_view_only() || m_wallet.get_hw())
+		return false;
+	zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+	if (!zk::Halo2ProofSystem::verify_bridge(unsigned_bridge, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge) ||
+	    bridge.ownership_signature != std::array<uint8_t, 64>{})
+		return false;
+	KeyImage key_image{};
+	Hash sighash{};
+	std::memcpy(key_image.data, bridge.legacy_key_image.data(), sizeof(key_image.data));
+	std::memcpy(sighash.data, bridge.ownership_sighash.data(), sizeof(sighash.data));
+	HeightGi output_location;
+	api::Output output;
+	if (!read_by_keyimage(key_image, &output_location) ||
+	    !read_from_unspent_index(output_location, &output) || output.key_image != key_image ||
+	    output.amount != bridge.legacy_amount || output.stack_index != bridge.legacy_stack_index ||
+	    is_memory_spent(output))
+		return false;
+	TransactionPrefix source_transaction;
+	api::Transaction source_api_transaction;
+	if (!get_transaction(output.transaction_hash, &source_transaction, &source_api_transaction) ||
+	    output.index_in_transaction >= source_transaction.outputs.size() ||
+	    source_transaction.outputs.at(output.index_in_transaction).type() != typeid(OutputKey))
+		return false;
+	const auto &key_output = boost::get<OutputKey>(source_transaction.outputs.at(output.index_in_transaction));
+	const Hash inputs_hash = get_transaction_inputs_hash(source_transaction);
+	const KeyDerivation derivation =
+	    crypto::generate_key_derivation(source_api_transaction.public_key, m_wallet.get_view_secret_key());
+	PublicKey output_shared_secret;
+	SecretKey output_secret_key_s;
+	SecretKey output_secret_key_a;
+	size_t record_index = 0;
+	if (!m_wallet.prepare_input_for_spend(source_transaction.version, derivation, inputs_hash,
+	        output.index_in_transaction, key_output, &output_shared_secret, &output_secret_key_s,
+	        &output_secret_key_a, &record_index) ||
+	    crypto::generate_key_image(key_output.public_key, output_secret_key_a) != key_image)
+		return false;
+	const RingSignature signature =
+	    crypto::generate_ring_signature(sighash, key_image, &key_output.public_key, 1, output_secret_key_a, 0);
+	if (signature.size() != 1 ||
+	    !crypto::check_ring_signature(sighash, key_image, std::vector<PublicKey>{key_output.public_key}, signature))
+		return false;
+	static_assert(sizeof(signature.front()) == 64, "bridge ownership signature size changed");
+	std::memcpy(ownership_signature->data(), &signature.front(), ownership_signature->size());
+	return true;
 #else
 	return false;
 #endif
@@ -900,6 +954,7 @@ bool WalletState::parse_raw_transaction(bool is_base, api::Transaction *ptx,
 	std::map<std::string, api::Transfer> transfer_map_inputs;
 	*unrecognized_inputs_amount = 0;
 	Amount input_amount         = 0;
+	Amount onyx_bridge_fee      = 0;
 	for (size_t in_index = 0; in_index != tx.inputs.size(); ++in_index) {
 		const auto &input = tx.inputs.at(in_index);
 		if (const InputKey *in = boost::get<InputKey>(&input)) {
@@ -918,6 +973,26 @@ bool WalletState::parse_raw_transaction(bool is_base, api::Transaction *ptx,
 			*unrecognized_inputs_amount += in->amount;
 		}
 	}
+#ifdef onyx_USE_ZK
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+		if (!zk::Halo2ProofSystem::verify_bridge(
+		        tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge))
+			return false;
+		KeyImage key_image{};
+		std::memcpy(key_image.data, bridge.legacy_key_image.data(), sizeof(key_image.data));
+		api::Output existing_output;
+		if (try_adding_incoming_keyimage(key_image, &existing_output)) {
+			api::Transfer &transfer = transfer_map_inputs[existing_output.address];
+			transfer.amount -= static_cast<SignedAmount>(existing_output.amount);
+			transfer.ours = true;
+			transfer.outputs.push_back(existing_output);
+			our_inputs = true;
+		}
+		onyx_bridge_fee = bridge.fee;
+	}
+#endif
 	for (auto &&tm : transfer_map_inputs) {
 		tm.second.address          = tm.first;
 		tm.second.transaction_hash = tid;
@@ -1031,7 +1106,9 @@ bool WalletState::parse_raw_transaction(bool is_base, api::Transaction *ptx,
 	ptx->amount = output_amount;
 	if (output_amount > input_amount && !is_base)
 		return false;
-	if (input_amount >= output_amount)
+	if (onyx_bridge_fee != 0)
+		ptx->fee = onyx_bridge_fee;
+	else if (input_amount >= output_amount)
 		ptx->fee = input_amount - output_amount;
 	if (ptx->anonymity == std::numeric_limits<size_t>::max())
 		ptx->anonymity = 0;  // No key inputs
@@ -1110,6 +1187,18 @@ bool WalletState::redo_transaction(const PreparedWalletTransaction &pwtx, const 
 		if (const InputKey *in = boost::get<InputKey>(&input))
 			delta_state->add_incoming_keyimage(block_height, in->key_image);
 	}
+#ifdef onyx_USE_ZK
+	if (pwtx.tx.version == m_currency.onyx_transaction_version &&
+	    pwtx.tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+		invariant(zk::Halo2ProofSystem::verify_bridge(
+		              pwtx.tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge),
+		    "accepted Onyx bridge failed verification during wallet application");
+		KeyImage key_image{};
+		std::memcpy(key_image.data, bridge.legacy_key_image.data(), sizeof(key_image.data));
+		delta_state->add_incoming_keyimage(block_height, key_image);
+	}
+#endif
 	//	for (auto &&tr : input_transfers) {
 	//		for (auto &&out : tr.outputs) {
 	//			delta_state->add_incoming_keyimage(block_height, out.key_image);

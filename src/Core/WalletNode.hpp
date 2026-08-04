@@ -68,6 +68,8 @@ public:
 	    api::walletd::CreateOnyxTokenIssuance::Response &);
 	bool on_create_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::CreateOnyxBridge::Request &&, api::walletd::CreateOnyxBridge::Response &);
+	bool on_sign_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::walletd::SignOnyxBridge::Request &&, api::walletd::SignOnyxBridge::Response &);
 	bool on_finalize_onyx_bridge(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::walletd::FinalizeOnyxBridge::Request &&, api::walletd::FinalizeOnyxBridge::Response &);
 	bool on_get_transfers(http::Client *, http::RequestBody &&, json_rpc::Request &&,

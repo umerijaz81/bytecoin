@@ -99,6 +99,7 @@ curl -s -u <user>:<pass> -X POST http://<ip>:<port>/json_rpc -H 'Content-Type: a
 | `create_onyx_standard_program_call` | Creates a stateful call to a deployed pinned NFT, vesting, multisig, or atomic-swap program. |
 | `create_onyx_token_issuance` | Privately issues tokens under a wallet-owned active capped program and its next consensus sequence. |
 | `create_onyx_bridge` | Creates a proved legacy-to-Onyx bridge and returns the legacy ownership message that must be signed. |
+| `sign_onyx_bridge` | Signs a verified unsigned bridge for an exact software-wallet-owned unspent output without exporting its spend key. |
 | `finalize_onyx_bridge` | Inserts the legacy ownership signature and returns a relayable Onyx bridge transaction. |
 
 Onyx transactions use the existing `send_transaction` method for durable payment-queue storage and
@@ -346,14 +347,20 @@ ID so two local requests cannot reuse a sequence.
 }
 ```
 
-#### `create_onyx_bridge` and `finalize_onyx_bridge`
+#### `create_onyx_bridge`, `sign_onyx_bridge`, and `finalize_onyx_bridge`
 
-Migration is deliberately split so a hardware or offline legacy signer can authorize ownership
-without exposing its spend key to `walletd`. `create_onyx_bridge` accepts a canonical Onyx address,
+Migration is deliberately split so a software wallet, hardware wallet, or offline legacy signer can
+authorize ownership without exporting its spend key. `create_onyx_bridge` accepts a canonical Onyx address,
 the exact legacy output amount and global stack index, its 32-byte key image, fee, expiry, and memo.
 It returns `unsigned_bridge` plus the 32-byte `ownership_sighash`.
 
-Sign `ownership_sighash` using the selected legacy output's one-member CryptoNote ring signature.
+For an unlocked software wallet, pass the complete unchanged envelope to `sign_onyx_bridge`.
+The wallet verifies the bridge proof, requires the embedded ownership signature to be zero, resolves
+the exact key image to a currently unspent wallet output, checks its amount and stack index, derives
+and verifies the one-time output key, and returns a one-member CryptoNote ring signature. View-only
+and hardware wallets refuse this software signing path. A hardware or offline signer can instead
+sign the returned `ownership_sighash` using the same one-member ring-signature format.
+
 Pass the resulting 64-byte signature (128 hexadecimal characters) and the unchanged
 `unsigned_bridge` to `finalize_onyx_bridge`. Once submitted, walletd reserves that bridge's legacy
 key image and rejects another bridge construction for the same output while it remains pending.
@@ -373,6 +380,17 @@ Submit its `binary_transaction` with
     "legacy_key_image": "<64-character-key-image-hex>",
     "expiry_height": 0,
     "memo": "migration"
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "bridge-sign",
+  "method": "sign_onyx_bridge",
+  "params": {
+    "unsigned_bridge": "<unsigned_bridge-from-create-response>"
   }
 }
 ```

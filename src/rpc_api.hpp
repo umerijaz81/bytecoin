@@ -534,6 +534,16 @@ struct CreateOnyxBridge {
 	};
 };
 
+struct SignOnyxBridge {
+	static std::string method() { return "sign_onyx_bridge"; }
+	struct Request {
+		BinaryArray unsigned_bridge;
+	};
+	struct Response {
+		std::string ownership_signature;
+	};
+};
+
 struct FinalizeOnyxBridge {
 	static std::string method() { return "finalize_onyx_bridge"; }
 	struct Request {
@@ -1186,6 +1196,8 @@ void ser_members(cn::api::walletd::CreateOnyxTokenIssuance::Request &v, ISeria &
 void ser_members(cn::api::walletd::CreateOnyxTokenIssuance::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxBridge::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::CreateOnyxBridge::Response &v, ISeria &s);
+void ser_members(cn::api::walletd::SignOnyxBridge::Request &v, ISeria &s);
+void ser_members(cn::api::walletd::SignOnyxBridge::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::FinalizeOnyxBridge::Request &v, ISeria &s);
 void ser_members(cn::api::walletd::FinalizeOnyxBridge::Response &v, ISeria &s);
 void ser_members(cn::api::walletd::GetUnspents::Request &v, ISeria &s);

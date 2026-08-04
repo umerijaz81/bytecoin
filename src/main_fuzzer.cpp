@@ -72,7 +72,8 @@ void socks5_parse(const cn::BinaryArray &msg) {
 void onyx_bridge_parse(const cn::BinaryArray &msg) {
 	uint64_t amount = 0, stack_index = 0, fee = 0;
 	uint8_t key_image[32] = {}, sighash[32] = {}, signature[64] = {};
-	sideeffect(onyx_verify_bridge(msg.data(), msg.size(), 20, &amount, &stack_index, key_image,
+	sideeffect(onyx_verify_bridge(msg.data(), msg.size(), parameters::ONYX_BRIDGE_CIRCUIT_K,
+	               &amount, &stack_index, key_image,
 	               sighash, signature, &fee) == 1);
 }
 

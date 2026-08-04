@@ -45,7 +45,9 @@ def rpc_response(port, method, params=None, authorization=None):
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
+    # Real Halo2 proving is intentionally exercised by this harness and can exceed the short
+    # control-plane timeout used by the non-proving RPC calls on slower CI workers.
+    with urllib.request.urlopen(request, timeout=180) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -549,6 +551,131 @@ def main():
                 "balance through encrypted backup, password rotation and node-C recovery"
             )
 
+            unspents = wallet.call(
+                "get_unspents",
+                {"address": recovered_addresses[0], "height_or_depth": -1},
+            )["spendable"]
+            migration_output = next(
+                (output for output in unspents if output["amount"] > 1), None
+            )
+            if migration_output is None:
+                raise RuntimeError(f"wallet has no output suitable for migration: {unspents!r}")
+            migration_fee = 1
+            bridge_create = wallet.call(
+                "create_onyx_bridge",
+                {
+                    "address": recovered_onyx["address"],
+                    "legacy_amount": migration_output["amount"],
+                    "fee": migration_fee,
+                    "legacy_stack_index": migration_output["stack_index"],
+                    "legacy_key_image": migration_output["key_image"],
+                    "expiry_height": 0,
+                    "memo": "local qualification migration",
+                },
+            )
+            unsigned_bridge = bridge_create["unsigned_bridge"]
+            ownership_signature = wallet.call(
+                "sign_onyx_bridge", {"unsigned_bridge": unsigned_bridge}
+            )["ownership_signature"]
+            if len(ownership_signature) != 128:
+                raise RuntimeError("wallet returned a non-canonical bridge ownership signature")
+            tampered_bridge = unsigned_bridge[:-2] + (
+                "00" if unsigned_bridge[-2:] != "00" else "01"
+            )
+            tampered_response = rpc_response(
+                wallet.rpc_port,
+                "sign_onyx_bridge",
+                {"unsigned_bridge": tampered_bridge},
+                WALLET_AUTH,
+            )
+            if tampered_response.get("error", {}).get("code") != -32602:
+                raise RuntimeError(
+                    f"wallet signed or misclassified a tampered bridge: {tampered_response!r}"
+                )
+            finalized_bridge = wallet.call(
+                "finalize_onyx_bridge",
+                {
+                    "unsigned_bridge": unsigned_bridge,
+                    "ownership_signature": ownership_signature,
+                },
+            )
+            rpc_call(
+                onyx_c.rpc_port,
+                "send_transaction",
+                {"binary_transaction": finalized_bridge["binary_transaction"]},
+            )
+            mine_blocks(minerd, root, "bridge-confirmation", onyx_c_rpc, MINING_ADDRESS_A, 1)
+            bridge_height = final_height + 1
+            wait_until(
+                "confirmed bridge convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= bridge_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and len(
+                    {
+                        node.status()["top_block_hash"]
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    }
+                )
+                == 1,
+                nodes + [wallet],
+                timeout=60,
+            )
+            wait_until(
+                "wallet bridge recognition",
+                lambda: wallet.status()["top_block_height"] >= bridge_height
+                and wallet.call("get_onyx_status")["balance"]
+                == migration_output["amount"] - migration_fee,
+                nodes + [wallet],
+                timeout=60,
+            )
+            replay_sign_response = rpc_response(
+                wallet.rpc_port,
+                "sign_onyx_bridge",
+                {"unsigned_bridge": unsigned_bridge},
+                WALLET_AUTH,
+            )
+            if replay_sign_response.get("error", {}).get("code") != -32602:
+                raise RuntimeError(
+                    f"wallet re-signed a consumed bridge output: {replay_sign_response!r}"
+                )
+            post_bridge_balance = wallet.call(
+                "get_balance", {"address": "", "height_or_depth": -1}
+            )
+            remaining_legacy_total = (
+                post_bridge_balance["spendable"]
+                + post_bridge_balance["spendable_dust"]
+                + post_bridge_balance["locked_or_unconfirmed"]
+            )
+            if remaining_legacy_total != recognized_total - migration_output["amount"]:
+                raise RuntimeError(
+                    "confirmed bridge did not consume the exact legacy wallet output: "
+                    f"before={recognized_total} migrated={migration_output['amount']} "
+                    f"after={post_bridge_balance!r}"
+                )
+            audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            if audits[1:] != audits[:-1]:
+                raise RuntimeError(f"post-bridge supply audits diverged: {audits!r}")
+            expected_shielded = migration_output["amount"] - migration_fee
+            if (
+                audits[0].get("total_bridged") != migration_output["amount"]
+                or audits[0].get("total_fees") != migration_fee
+                or audits[0].get("circulating_supply") != expected_shielded
+                or audits[0].get("commitment_count") != 1
+            ):
+                raise RuntimeError(f"bridge supply conservation failed: {audits[0]!r}")
+            final_height = bridge_height
+            final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+            final_tip = final_statuses[0]["top_block_hash"]
+            print(
+                "wallet signed and confirmed a real legacy-to-Onyx migration with exact "
+                "supply conservation and consumed-output replay rejection"
+            )
+
             foreign = Node(
                 binary,
                 root,
@@ -606,6 +733,9 @@ def main():
                     "truncated_v7_rejection": "passed",
                     "wallet_mined_fund_recognition": "passed",
                     "wallet_alternate_node_recovery": "passed",
+                    "legacy_to_onyx_migration": "passed",
+                    "bridge_tamper_rejection": "passed",
+                    "bridge_replay_rejection": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -614,6 +744,10 @@ def main():
                     "onyx_address": recovered_onyx["address"],
                     "recognized_total": recognized_total,
                     "spendable_outputs": recovered_balance["spendable_outputs"],
+                    "migrated_legacy_amount": migration_output["amount"],
+                    "migration_fee": migration_fee,
+                    "shielded_balance": expected_shielded,
+                    "remaining_legacy_total": remaining_legacy_total,
                 },
             }
             if args.report:

@@ -75,6 +75,9 @@ const uint64_t ONYX_MAX_PROGRAM_ACTIVATION_DELAY = 100000;
 const size_t ONYX_MAX_ENVELOPE_SIZE     = 512 * 1024;
 const uint32_t ONYX_MERKLE_DEPTH        = 32;
 const uint32_t ONYX_CIRCUIT_K           = 20;
+// Bridge is an independent, substantially smaller circuit whose committed shape is proven and
+// tested at k=13. Keeping it separate avoids 128x over-allocation during proving and verification.
+const uint32_t ONYX_BRIDGE_CIRCUIT_K    = 13;
 const uint64_t ONYX_ANCHOR_WINDOW_BLOCKS = 100;
 const uint64_t ONYX_MAX_EXPIRY_DISTANCE  = 100;
 

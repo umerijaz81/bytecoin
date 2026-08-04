@@ -473,6 +473,14 @@ void ser_members(api::walletd::CreateOnyxBridge::Response &v, ISeria &s) {
 	seria_kv("ownership_sighash", v.ownership_sighash, s);
 }
 
+void ser_members(api::walletd::SignOnyxBridge::Request &v, ISeria &s) {
+	seria_kv("unsigned_bridge", v.unsigned_bridge, s);
+}
+
+void ser_members(api::walletd::SignOnyxBridge::Response &v, ISeria &s) {
+	seria_kv("ownership_signature", v.ownership_signature, s);
+}
+
 void ser_members(api::walletd::FinalizeOnyxBridge::Request &v, ISeria &s) {
 	seria_kv("unsigned_bridge", v.unsigned_bridge, s);
 	seria_kv("ownership_signature", v.ownership_signature, s);
