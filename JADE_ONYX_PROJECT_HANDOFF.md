@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-04  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `a26303e` (`Qualify Onyx wallet recovery across reorgs`)
+Last committed revision reviewed: `6ee5247` (`Qualify legacy to Onyx migration`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `8671803`.
+- **Implemented and committed** means the code is in the branch history at or before `6ee5247`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -38,19 +38,11 @@ git branch --show-current
 git log --oneline -20
 ```
 
-At the time this document was created, the worktree contained:
+After the migration implementation commit, the unrelated worktree state still contained:
 
 ```text
 A  Bytecoin_Onyx_Security_Review.md
- M docs/Bytecoin-Node-Daemon-JSON-RPC-API.md
- M docs/Bytecoin-Wallet-Daemon-JSON-RPC-API.md
- M src/Core/Config.cpp
- M src/Core/Currency.cpp
- M src/Core/Wallet.cpp
- M src/main_bytecoind.cpp
- M src/main_walletd.cpp
- M tests/blockchain/test_jade_consensus.cpp
-?? docs/Onyx-Qualification-Network.md
+ M .gitignore
 ```
 
 `Bytecoin_Onyx_Security_Review.md` was already staged by the user. It is not part of the current
@@ -258,8 +250,8 @@ Still required:
 
 ### O4 — Legacy-to-Onyx migration and supply invariants
 
-Status: **Core repository implementation complete; operational rehearsal and independent supply audit
-remain.**
+Status: **Core repository implementation and local three-node operational rehearsal complete;
+independent supply audit and public evidence remain.**
 
 Implemented:
 
@@ -269,7 +261,19 @@ Implemented:
 - Atomic supply accounting and rollback.
 - Supply-audit RPC.
 - Pending-wallet bridge replay prevention.
+- Authenticated `sign_onyx_bridge` software-wallet RPC that accepts only a verified, still-unsigned
+  bridge for the exact wallet-owned unspent output; it re-derives the one-time key and key image,
+  produces a one-member ring signature, verifies the result, and never exports the spend key.
+- View-only and hardware wallets fail closed on the software signing path; hardware/offline signing
+  remains supported through `ownership_sighash` plus `finalize_onyx_bridge`.
+- Bridge-specific consensus/proving domain `ONYX_BRIDGE_CIRCUIT_K=13`, matching the committed bridge
+  circuit tests instead of over-allocating the unrelated general `k=20` domain.
+- Wallet mempool and confirmed-block processing consume the bridged legacy key image, update the
+  exact legacy balance, and reject re-signing after either reservation or confirmation.
 - State apply, exact supply reconciliation, replay rejection, and fail-closed output tests.
+- Real three-node migration from a mined legacy output into the recovered wallet's shielded identity,
+  including tamper rejection, relay, mining, audit convergence, exact wallet accounting, and replay
+  rejection (`6ee5247`).
 - Snapshot and supply decoder fuzz targets.
 
 Primary locations:
@@ -281,7 +285,6 @@ Primary locations:
 
 Still required:
 
-- Multi-node operational migration rehearsal.
 - Incident rollback drill using realistic snapshots.
 - Independent supply-invariant audit.
 - Public qualification evidence binding start/end supply snapshots and block hashes.
@@ -524,7 +527,8 @@ Required:
 
 Status: **The fixed network was implemented in `5ed59bd`; its three-node local reorganization
 qualification was added in `d1dca30`; wallet recovery across that reorganization was added in
-`a26303e`. The pre-wallet Ubuntu qualification jobs for `5fa57c7` and `8861b86` passed.**
+`a26303e`; real migration qualification was added in `6ee5247`. The pre-wallet Ubuntu qualification
+jobs for `5fa57c7` and `8861b86` passed.**
 
 Purpose:
 
@@ -571,6 +575,11 @@ Committed implementation:
     mines branch-B V7 coinbase rewards to it, and verifies reward recognition after node A reorganizes.
   - Backs up the wallet and cache, rotates its password, rejects the old password, and recovers the
     exact legacy address, Onyx address and balance through node C.
+  - Selects a real mined wallet output, constructs a bridge proof, signs it through the protected
+    software-wallet RPC, rejects a tampered envelope, relays and mines the V7 bridge, and requires all
+    three nodes to converge on the resulting block and exact supply audit.
+  - Requires exact conservation (`legacy_amount = shielded_balance + fee`), exact removal of the
+    migrated amount from legacy wallet balance, and refusal to sign the consumed output again.
   - Proves a testnet daemon cannot cross the network identity/genesis boundary.
   - Emits a revision-bound per-node JSON report explicitly marked as non-release evidence.
 - `.github/workflows/consensus-integration.yml`
@@ -594,10 +603,19 @@ Validation performed before commit:
   backup, password rotation, old-password rejection and node-C recovery preserved both wallet domains
   and the exact balance. The qualification target is fixed at one second; performance and proof-DoS
   evidence cannot use this accelerated parameter.
+- The migration extension passed locally after fresh ZK builds. A real 6,428-byte bridge transaction
+  was accepted into the mempool, mined at height 4, recognized by the wallet, and reconciled identically
+  by all three nodes. Tampered-envelope signing and consumed-output re-signing were rejected.
+- ZK and non-ZK Release targets `tests`, `bytecoind`, `walletd`, and `minerd` built successfully after
+  the migration changes. Both `tests.exe --jade` runs passed, all 61 release tests passed, Python syntax
+  validation passed, and `git diff --check` reported no whitespace errors.
+- The comprehensive `tests.exe --zk` run passed ABI, hash KAT, toy proof, batch verification, and
+  malformed-boundary stages but was manually bounded after several minutes in later real-proof work.
+  Treat full `k=20` proof runtime/DoS qualification as still open; do not report that suite as passed.
 
 Validation not yet completed:
 
-- Validate the new GitHub Actions job on GitHub's Ubuntu runner.
+- Validate migration commit `6ee5247` on GitHub's Ubuntu runner and retain the uploaded report.
 
 Recommended immediate acceptance criteria:
 
@@ -696,12 +714,13 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 
 ### Priority 0 — Finish the qualification network
 
-Status: **Completed in `5ed59bd`, extended in `d1dca30`, and wallet-qualified in `a26303e`.**
+Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`, and
+migration-qualified in `6ee5247`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
-report and wallet recovery foundation is implemented through `a26303e`.**
+report, wallet recovery, and real migration path are implemented through `6ee5247`.**
 
 Implemented:
 
@@ -713,12 +732,14 @@ Implemented:
 - Truncated V7 rejection and post-rejection liveness.
 - Mined-fund recognition plus encrypted wallet/cache backup, password rotation, old-password rejection,
   and alternate-node recovery with exact identity/balance comparison.
+- Real legacy-to-Onyx bridge proving, wallet-bound signing, tamper rejection, relay/mining, exact
+  legacy/shielded/fee reconciliation, cross-node audit equality, and consumed-output replay rejection.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Migration transactions, shielded transfers, and standard-program transactions.
+- Shielded transfers and standard-program transactions.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - A longer local run and the independently operated 14-day public soak.
 
