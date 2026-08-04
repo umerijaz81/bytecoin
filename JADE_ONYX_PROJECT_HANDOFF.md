@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-04  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `6ee5247` (`Qualify legacy to Onyx migration`)
+Last committed revision reviewed: `dd9755e` (`Qualify independent Onyx transfers`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `6ee5247`.
+- **Implemented and committed** means the code is in the branch history at or before `dd9755e`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -527,8 +527,9 @@ Required:
 
 Status: **The fixed network was implemented in `5ed59bd`; its three-node local reorganization
 qualification was added in `d1dca30`; wallet recovery across that reorganization was added in
-`a26303e`; real migration qualification was added in `6ee5247`. The pre-wallet Ubuntu qualification
-jobs for `5fa57c7` and `8861b86` passed.**
+`a26303e`; real migration qualification was added in `6ee5247`; and an independent-wallet native
+shielded transfer was qualified in `dd9755e`. The pre-wallet Ubuntu qualification jobs for `5fa57c7`
+and `8861b86` passed.**
 
 Purpose:
 
@@ -580,6 +581,11 @@ Committed implementation:
     three nodes to converge on the resulting block and exact supply audit.
   - Requires exact conservation (`legacy_amount = shielded_balance + fee`), exact removal of the
     migrated amount from legacy wallet balance, and refusal to sign the consumed output again.
+  - Creates a second independent encrypted wallet connected through node B, sends the migrated native
+    shielded value minus one fee, reserves the sender's pending spend, rejects a tampered transaction,
+    mines the valid transfer, and requires exact sender/receiver balances across the next block.
+  - Rejects confirmed nullifier replay and requires all three nodes to reconcile two commitments,
+    both fees, and exact circulating supply after the transfer.
   - Proves a testnet daemon cannot cross the network identity/genesis boundary.
   - Emits a revision-bound per-node JSON report explicitly marked as non-release evidence.
 - `.github/workflows/consensus-integration.yml`
@@ -607,15 +613,24 @@ Validation performed before commit:
   was accepted into the mempool, mined at height 4, recognized by the wallet, and reconciled identically
   by all three nodes. Tampered-envelope signing and consumed-output re-signing were rejected.
 - ZK and non-ZK Release targets `tests`, `bytecoind`, `walletd`, and `minerd` built successfully after
-  the migration changes. Both `tests.exe --jade` runs passed, all 61 release tests passed, Python syntax
+  the transfer changes. Both `tests.exe --jade` runs passed, all 61 release tests passed, Python syntax
   validation passed, and `git diff --check` reported no whitespace errors.
-- The comprehensive `tests.exe --zk` run passed ABI, hash KAT, toy proof, batch verification, and
-  malformed-boundary stages but was manually bounded after several minutes in later real-proof work.
-  Treat full `k=20` proof runtime/DoS qualification as still open; do not report that suite as passed.
+- The largest native 2x2 transfer proof test passed in release mode at `k=16` in 70.50 seconds.
+- The three-node process harness passed after a fresh build through reorganization, recovery, bridge,
+  independent-wallet transfer, tamper/pending-spend/nullifier-replay rejection, exact two-fee supply
+  reconciliation, and testnet isolation. Its report remains explicitly non-release local evidence.
+- The comprehensive `tests.exe --zk` run reached its final success result, including ABI, hash KAT,
+  toy proof, batch verification, malformed-boundary, standard-program deployment/NFT call proving,
+  bridge replay defense, and supply accounting stages.
+- Python compiler tests passed 25 tests with six environment-dependent tests skipped; the Python SDK
+  passed 10 tests, the TypeScript SDK golden/negative suite passed, and the Rust SDK passed four
+  conformance tests.
+- Full cold/warm, parallel valid-proof runtime, memory-pressure and denial-of-service qualification is
+  still open even though the functional ZK suite now passes.
 
 Validation not yet completed:
 
-- Validate migration commit `6ee5247` on GitHub's Ubuntu runner and retain the uploaded report.
+- Validate transfer commit `dd9755e` on GitHub's Ubuntu runner and retain the uploaded report.
 
 Recommended immediate acceptance criteria:
 
@@ -668,8 +683,8 @@ cmake --build build-onyx --config Release --target tests bytecoind walletd miner
 ```
 
 The full `--zk` suite can be long. Do not report it as passed unless it reaches its final success
-status. In the most recent session, only the ZK build and Jade suite were fully completed; an earlier
-long ZK run was interrupted after initial ABI/KAT/toy/batch/malformed-boundary sections.
+status. It completed successfully for `dd9755e`; future changes must rerun it rather than inheriting
+that result.
 
 ### C++ without ZK
 
@@ -714,13 +729,14 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 
 ### Priority 0 — Finish the qualification network
 
-Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`, and
-migration-qualified in `6ee5247`.**
+Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`,
+migration-qualified in `6ee5247`, and native-transfer-qualified in `dd9755e`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
-report, wallet recovery, and real migration path are implemented through `6ee5247`.**
+report, wallet recovery, real migration, and independent-wallet native transfer are implemented
+through `dd9755e`.**
 
 Implemented:
 
@@ -734,12 +750,14 @@ Implemented:
   and alternate-node recovery with exact identity/balance comparison.
 - Real legacy-to-Onyx bridge proving, wallet-bound signing, tamper rejection, relay/mining, exact
   legacy/shielded/fee reconciliation, cross-node audit equality, and consumed-output replay rejection.
+- Real independent-wallet shielded transfer proving, pending-spend reservation, tamper rejection,
+  relay/mining, exact sender/receiver/fee accounting, and confirmed nullifier replay rejection.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Shielded transfers and standard-program transactions.
+- Standard-program transactions.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - A longer local run and the independently operated 14-day public soak.
 

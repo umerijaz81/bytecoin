@@ -36,8 +36,14 @@ ZK-enabled processes:
    prove every daemon remains live;
 6. prove the wallet recognizes the V7 coinbase rewards, back up its wallet/cache, rotate its password,
    reject the old password, and recover the same legacy address, Onyx address and balance through node C;
-7. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
-8. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
+7. select a real recovered legacy output, construct and wallet-sign a one-way bridge, reject a
+   tampered bridge, mine the valid migration, reconcile legacy/shielded balances and fees on every
+   node, and reject reuse of the consumed output;
+8. create a second independent encrypted wallet, transfer the migrated shielded value minus a fee,
+   reject a tampered transfer and a pending double spend, mine the valid transaction, reconcile both
+   wallet balances and supply on every node, and reject confirmed nullifier replay;
+9. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
+10. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
    supply-audit snapshot and the nonsensitive wallet qualification results.
 
 Example:
@@ -55,6 +61,14 @@ The report schema marks itself `local-ci-not-release-evidence`. It is an automat
 not an independent node/operator attestation. The consensus workflow runs the rehearsal on Ubuntu and
 uploads the report for inspection. It separately runs the Jade invariant suite in both ZK-enabled and
 non-ZK configurations; the latter must reject `--net=onyx`.
+
+The native-transfer path uses its committed largest circuit domain `k=16` rather than the unrelated
+general-program domain `k=20`. Each process caches Halo2 parameters and native-transfer proving or
+verifying keys by the exact `(k, Merkle depth, spend count, output count)` shape. Per-shape first-use
+serialization prevents concurrent cold requests from duplicating the same expensive key generation,
+while different shapes do not hold one global generation lock. This is a bounded runtime optimization,
+not a substitute for the still-required cold-start, parallel valid-proof, memory-pressure, and
+denial-of-service qualification.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
