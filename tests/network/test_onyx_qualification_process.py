@@ -24,6 +24,29 @@ RECOVERY_PASSWORD = "onyx-local-recovery-password"
 WALLET_AUTH = "onyx-local:qualification-auth"
 
 
+def canonical_field(value):
+    return int(value).to_bytes(32, "little").hex()
+
+
+def encode_varint(value):
+    encoded = bytearray()
+    remaining = int(value)
+    while remaining >= 0x80:
+        encoded.append((remaining & 0x7F) | 0x80)
+        remaining >>= 7
+    encoded.append(remaining)
+    return bytes(encoded)
+
+
+def standard_application(kind, first, second, *suffix):
+    return (
+        bytes((1, kind))
+        + bytes.fromhex(first)
+        + bytes.fromhex(second)
+        + b"".join(encode_varint(value) for value in suffix)
+    ).hex()
+
+
 def unused_port():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -1557,6 +1580,397 @@ def main():
                 "capped-token deployment, issuance, and private transfer passed activation, "
                 "issuer/cap, tamper, pending-conflict, replay, balance, and supply checks"
             )
+            private_token_issuer_native_balance = receiver_native_balance
+
+            # Qualify the three remaining pinned stateful profiles against the real wallet, mempool,
+            # block-application, scanner, and state-query paths. The values below are the canonical
+            # vectors pinned by tests/onyx_compiler/test_standard_programs_v1.py.
+            profile_deployment_fee = 100000
+            profile_commitments = 11
+            profile_program_count = 2
+            profile_deployments = {}
+            for profile_kind in ("vesting", "multisig", "swap"):
+                deployment = receiver_wallet.call(
+                    "create_onyx_standard_program_deployment",
+                    {
+                        "kind": profile_kind,
+                        "activation_height": 0,
+                        "deactivation_height": 0,
+                        "fee": profile_deployment_fee,
+                        "expiry_height": 0,
+                    },
+                )
+                receiver_wallet.call(
+                    "send_transaction",
+                    {"binary_transaction": deployment["binary_transaction"]},
+                )
+                wait_until(
+                    f"{profile_kind} deployment propagation",
+                    lambda deployment=deployment: all(
+                        transaction_known(node, deployment["transaction_hash"])
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    ),
+                    nodes + [wallet, receiver_wallet],
+                    timeout=1800,
+                )
+                mine_blocks(
+                    minerd,
+                    root,
+                    f"{profile_kind}-deployment-confirmation",
+                    onyx_a_rpc,
+                    MINING_ADDRESS_A,
+                    1,
+                    timeout=1800,
+                )
+                final_height += 1
+                receiver_native_balance -= profile_deployment_fee
+                profile_commitments += 2
+                profile_program_count += 1
+                wait_until(
+                    f"{profile_kind} deployment convergence and wallet recovery",
+                    lambda: all(
+                        node.status()["top_block_height"] >= final_height
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    )
+                    and wallet.status()["top_block_height"] >= final_height
+                    and receiver_wallet.status()["top_block_height"] >= final_height
+                    and receiver_wallet.call("get_onyx_status")["balance"]
+                    == receiver_native_balance,
+                    nodes + [wallet, receiver_wallet],
+                    timeout=1800,
+                )
+                audits = [
+                    rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ]
+                if audits[1:] != audits[:-1] or (
+                    audits[0].get("total_fees")
+                    != migration_fee
+                    + transfer_fee
+                    + deployment_fee
+                    + token_deployment_fee
+                    + token_transfer_fee
+                    + profile_deployment_fee * (profile_program_count - 2)
+                    or audits[0].get("circulating_supply") != receiver_native_balance
+                    or audits[0].get("commitment_count") != profile_commitments
+                    or audits[0].get("program_count") != profile_program_count
+                ):
+                    raise RuntimeError(
+                        f"{profile_kind} deployment supply or convergence failed: {audits!r}"
+                    )
+                profile_deployments[profile_kind] = {
+                    "program_id": deployment["program_id"],
+                    "deployment_height": final_height,
+                    "activation_height": final_height + 20,
+                }
+
+            profile_activation_height = max(
+                entry["activation_height"] for entry in profile_deployments.values()
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "remaining-standard-profile-activation",
+                onyx_b_rpc,
+                MINING_ADDRESS_A,
+                profile_activation_height - final_height,
+                timeout=1800,
+            )
+            final_height = profile_activation_height
+            wait_until(
+                "remaining standard-profile activation and wallet convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= final_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and wallet.status()["top_block_height"] >= final_height
+                and receiver_wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+
+            def expect_profile_call_error(label, parameters):
+                response = rpc_response(
+                    receiver_wallet.rpc_port,
+                    "create_onyx_standard_program_call",
+                    parameters,
+                    WALLET_AUTH,
+                )
+                if "error" not in response:
+                    raise RuntimeError(f"wallet constructed invalid {label}: {response!r}")
+
+            def confirm_profile_call(label, parameters, expected_state, competitor=None):
+                nonlocal final_height, profile_commitments, audits, final_statuses, final_tip
+                initial = [
+                    rpc_call(
+                        node.rpc_port,
+                        "get_onyx_standard_program_state",
+                        {
+                            "program_id": parameters["program_id"],
+                            "application": parameters["application"],
+                        },
+                    )
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ]
+                if initial[1:] != initial[:-1] or any(state.get("found") for state in initial):
+                    raise RuntimeError(f"{label} initial state was not absent: {initial!r}")
+                transaction = receiver_wallet.call(
+                    "create_onyx_standard_program_call", parameters
+                )
+                receiver_wallet.call(
+                    "send_transaction",
+                    {"binary_transaction": transaction["binary_transaction"]},
+                )
+                wait_until(
+                    f"{label} propagation",
+                    lambda: all(
+                        transaction_known(node, transaction["transaction_hash"])
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    ),
+                    nodes + [wallet, receiver_wallet],
+                    timeout=1800,
+                )
+                if competitor is not None:
+                    competing = receiver_wallet.call(
+                        "create_onyx_standard_program_call", competitor
+                    )
+                    competing_response = rpc_response(
+                        onyx_b.rpc_port,
+                        "send_transaction",
+                        {"binary_transaction": competing["binary_transaction"]},
+                    )
+                    if (
+                        transaction_known(onyx_b, competing["transaction_hash"])
+                        or not transaction_known(onyx_b, transaction["transaction_hash"])
+                        or onyx_b.statistics()["transaction_pool_count"] != 1
+                    ):
+                        raise RuntimeError(
+                            f"node admitted competing {label} transition: {competing_response!r}"
+                        )
+                mine_blocks(
+                    minerd,
+                    root,
+                    f"{label}-confirmation",
+                    onyx_c_rpc,
+                    MINING_ADDRESS_A,
+                    1,
+                    timeout=1800,
+                )
+                final_height += 1
+                profile_commitments += 1
+                wait_until(
+                    f"{label} state and wallet convergence",
+                    lambda: all(
+                        node.status()["top_block_height"] >= final_height
+                        for node in (onyx_a, onyx_b, onyx_c)
+                    )
+                    and wallet.status()["top_block_height"] >= final_height
+                    and receiver_wallet.status()["top_block_height"] >= final_height,
+                    nodes + [wallet, receiver_wallet],
+                    timeout=1800,
+                )
+                states = [
+                    rpc_call(
+                        node.rpc_port,
+                        "get_onyx_standard_program_state",
+                        {
+                            "program_id": parameters["program_id"],
+                            "application": parameters["application"],
+                        },
+                    )
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ]
+                if states[1:] != states[:-1] or any(
+                    not state.get("found")
+                    or state.get("state") != expected_state
+                    or state.get("block_height") != final_height
+                    for state in states
+                ):
+                    raise RuntimeError(f"{label} state did not converge: {states!r}")
+                if "error" not in rpc_response(
+                    onyx_a.rpc_port,
+                    "send_transaction",
+                    {"binary_transaction": transaction["binary_transaction"]},
+                ):
+                    raise RuntimeError(f"node accepted confirmed {label} replay")
+                audits = [
+                    rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ]
+                if audits[1:] != audits[:-1] or (
+                    audits[0].get("total_fees") != 500003
+                    or audits[0].get("circulating_supply") != receiver_native_balance
+                    or audits[0].get("commitment_count") != profile_commitments
+                    or audits[0].get("program_count") != profile_program_count
+                ):
+                    raise RuntimeError(f"{label} supply or convergence failed: {audits!r}")
+                final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+                final_tip = final_statuses[0]["top_block_hash"]
+                return {
+                    "transaction_hash": transaction["transaction_hash"],
+                    "call_height": final_height,
+                    "application": parameters["application"],
+                    "prior_state": parameters["prior_state"],
+                    "next_state": expected_state,
+                }
+
+            vesting_unlock_height = final_height + 2
+            vesting_application = standard_application(
+                2, canonical_field(31), canonical_field(32), vesting_unlock_height
+            )
+            vesting_parameters = {
+                "program_id": profile_deployments["vesting"]["program_id"],
+                "valid_from_height": 0,
+                "expiry_height": 0,
+                "application": vesting_application,
+                "prior_state": "8c500ced3490ef5572811134add0e7a1c217e22e9c3c97d25318c1d8f7d3413c",
+                "next_state": canonical_field(902),
+                "witness": canonical_field(33),
+            }
+            expect_profile_call_error("early vesting release", vesting_parameters)
+            mine_blocks(
+                minerd,
+                root,
+                "vesting-unlock-boundary",
+                onyx_a_rpc,
+                MINING_ADDRESS_A,
+                1,
+            )
+            final_height += 1
+            wait_until(
+                "vesting unlock boundary convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= final_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and receiver_wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            vesting_result = confirm_profile_call(
+                "vesting-release", vesting_parameters, canonical_field(902)
+            )
+
+            zero_field = canonical_field(0)
+            multisig_commitments = [
+                "c82160714387a90d8abeae20442ac97c944ade58aa4f937c6d2e0fd279101d2f",
+                "70627f0b52bf30c28c5d0a5249a5b9988fdc2b9b009ce20157cfd2b2976efa1c",
+            ] + [zero_field] * 14
+            multisig_approvals = [1, 1] + [0] * 14
+            multisig_secrets = [51, 52] + [0] * 14
+            multisig_witness = "".join(
+                multisig_commitments
+                + [canonical_field(value) for value in multisig_approvals]
+                + [canonical_field(value) for value in multisig_secrets]
+            )
+            insufficient_multisig_witness = "".join(
+                multisig_commitments
+                + [canonical_field(value) for value in ([1, 0] + [0] * 14)]
+                + [canonical_field(value) for value in ([51, 0] + [0] * 14)]
+            )
+            multisig_parameters = {
+                "program_id": profile_deployments["multisig"]["program_id"],
+                "valid_from_height": 0,
+                "expiry_height": 0,
+                "application": standard_application(
+                    3,
+                    "6c503e555962442bf542c81afca64a04a13259878adf417f2a970f649cf65c3a",
+                    canonical_field(41),
+                    2,
+                    2,
+                ),
+                "prior_state": "e536882a61d34006a6cde79cad51f50151e8897337a3602078b1df6adccb7e30",
+                "next_state": canonical_field(903),
+                "witness": multisig_witness,
+            }
+            invalid_multisig_parameters = dict(multisig_parameters)
+            invalid_multisig_parameters["witness"] = insufficient_multisig_witness
+            expect_profile_call_error(
+                "multisig authorization below threshold", invalid_multisig_parameters
+            )
+            multisig_result = confirm_profile_call(
+                "multisig-authorization", multisig_parameters, canonical_field(903)
+            )
+
+            claim_timeout_height = final_height + 1
+            swap_claim_parameters = {
+                "program_id": profile_deployments["swap"]["program_id"],
+                "valid_from_height": 0,
+                "expiry_height": 0,
+                "application": standard_application(
+                    4,
+                    canonical_field(61),
+                    "61f9aa40c1fb7a42dc7e3355a41927b77e54c46c4d2ab64d6caf72d3e26fb33f",
+                    claim_timeout_height,
+                    0,
+                ),
+                "prior_state": "150307817ffa73f9df0517796ac95c91ab6e39b8bbb35e337143b355fa53942d",
+                "next_state": canonical_field(904),
+                "witness": canonical_field(62),
+            }
+            invalid_swap_claim = dict(swap_claim_parameters)
+            invalid_swap_claim["witness"] = canonical_field(63)
+            expect_profile_call_error("swap claim with wrong preimage", invalid_swap_claim)
+            competing_swap_refund = dict(swap_claim_parameters)
+            competing_swap_refund["application"] = standard_application(
+                4,
+                canonical_field(61),
+                "61f9aa40c1fb7a42dc7e3355a41927b77e54c46c4d2ab64d6caf72d3e26fb33f",
+                claim_timeout_height,
+                1,
+            )
+            competing_swap_refund["next_state"] = canonical_field(905)
+            competing_swap_refund["witness"] = zero_field
+            swap_claim_result = confirm_profile_call(
+                "swap-preimage-claim",
+                swap_claim_parameters,
+                canonical_field(904),
+                competing_swap_refund,
+            )
+
+            refund_timeout_height = final_height + 2
+            swap_refund_parameters = {
+                "program_id": profile_deployments["swap"]["program_id"],
+                "valid_from_height": 0,
+                "expiry_height": 0,
+                "application": standard_application(
+                    4,
+                    canonical_field(63),
+                    "6c439f28a7e457913d43998a33fc039d20c814d974fc19e41b8d1565089d5111",
+                    refund_timeout_height,
+                    1,
+                ),
+                "prior_state": "dd749507333a18668d486f568f7f19d3368db588beef3052f8c62373037ffc09",
+                "next_state": canonical_field(906),
+                "witness": zero_field,
+            }
+            expect_profile_call_error("early swap refund", swap_refund_parameters)
+            mine_blocks(
+                minerd,
+                root,
+                "swap-refund-timeout-boundary",
+                onyx_b_rpc,
+                MINING_ADDRESS_A,
+                1,
+            )
+            final_height += 1
+            wait_until(
+                "swap refund timeout convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= final_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and receiver_wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            swap_refund_result = confirm_profile_call(
+                "swap-timeout-refund", swap_refund_parameters, canonical_field(906)
+            )
+            print(
+                "vesting, multisig, and swap profiles passed activation, timelock, threshold, "
+                "preimage/refund, pending-conflict, replay, state, wallet, and supply checks"
+            )
 
             foreign = Node(
                 binary,
@@ -1649,6 +2063,17 @@ def main():
                     "pending_private_token_spend_reservation": "passed",
                     "private_token_transfer_replay_rejection": "passed",
                     "private_token_two_wallet_balance_recovery": "passed",
+                    "vesting_program_deployment_and_release": "passed",
+                    "vesting_early_release_rejection": "passed",
+                    "multisig_program_deployment_and_authorization": "passed",
+                    "multisig_threshold_rejection": "passed",
+                    "swap_program_deployment": "passed",
+                    "swap_preimage_claim": "passed",
+                    "swap_wrong_preimage_rejection": "passed",
+                    "swap_early_refund_rejection": "passed",
+                    "swap_timeout_refund": "passed",
+                    "pending_swap_branch_conflict_rejection": "passed",
+                    "remaining_standard_profile_state_convergence": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -1700,9 +2125,35 @@ def main():
                     "transfer_fee": token_transfer_fee,
                     "issuer_token_balance": sender_token_balance,
                     "recipient_token_balance": token_transfer_amount,
-                    "issuer_native_balance": receiver_native_balance,
+                    "issuer_native_balance": private_token_issuer_native_balance,
                     "deployment_funding_circuit_k": 16,
                     "program_execution_circuit_k": 14,
+                },
+                "remaining_standard_profiles": {
+                    "deployment_fee_each": profile_deployment_fee,
+                    "final_native_balance": receiver_native_balance,
+                    "final_commitment_count": profile_commitments,
+                    "final_program_count": profile_program_count,
+                    "vesting": {
+                        **profile_deployments["vesting"],
+                        **vesting_result,
+                        "unlock_height": vesting_unlock_height,
+                    },
+                    "multisig": {
+                        **profile_deployments["multisig"],
+                        **multisig_result,
+                        "threshold": 2,
+                        "participant_count": 2,
+                    },
+                    "swap_claim": {
+                        **profile_deployments["swap"],
+                        **swap_claim_result,
+                        "timeout_height": claim_timeout_height,
+                    },
+                    "swap_refund": {
+                        **swap_refund_result,
+                        "timeout_height": refund_timeout_height,
+                    },
                 },
             }
             if args.report:
