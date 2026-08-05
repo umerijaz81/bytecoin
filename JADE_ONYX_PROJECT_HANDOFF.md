@@ -686,6 +686,19 @@ Validation performed before commit:
 - Functional qualification does not close valid-proof DoS risk. The `k=20` attempt exceeded 1800
   seconds near 3.2 GB RSS; `k=16` cold verification approached/exceeded 30 minutes; even the passing
   `k=14` route takes minutes per cold peer and needs measured backpressure, prewarming, and load tests.
+- Commit `3da16ad` qualifies vesting, multisig, and swap with real release binaries. Deployments were
+  mined at heights 51, 52, and 53 and activated at 71, 72, and 73. Early vesting release failed and
+  the valid release was mined at 75; one-of-two multisig failed and two-of-two authorization was mined
+  at 76; wrong-preimage swap claim failed, the valid claim was mined at 77, a valid competing refund
+  branch was excluded by the stable state key, early refund failed, and timeout refund was mined at 79.
+- The expanded report is `build/codex-zk/onyx-standard-profiles-qualification.json`. All nodes ended
+  at height 79 on `63e8b4f97fb494cd3dacbb82aeb9f188b728116f451b4bd41a937f5b937cbc83`
+  with root `6d3606e4b912bb42f48205ed2401d1bf0483b542f036574ca8ca6fa42fd63b1a`,
+  `742000` bridged, `500003` fees, `241997` circulating, 21 commitments, and five programs.
+- Valid program calls took roughly two minutes to construct and minutes per peer to admit/apply.
+  Confirmed replays and pending state-key conflicts also incurred proof verification before rejection.
+  Treat cheap conflict/replay prechecks plus bounded verifier queues as the immediate DoS work; never
+  turn a precheck into a substitute for consensus verification.
 
 Validation not yet completed:
 
@@ -835,7 +848,6 @@ Implemented:
 
 Remaining:
 
-- Stateful vesting, multisig, and swap deployments/calls.
 - Program-state reorganization, rollback, alternate-node wallet recovery, and reopen qualification.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - A longer local run and the independently operated 14-day public soak.

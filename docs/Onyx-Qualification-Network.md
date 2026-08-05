@@ -134,8 +134,27 @@ for the issuer and 400 for the recipient.
 Eleven commitments are required. The mixed transfer creates three outputs: recipient token, issuer
 token change, and issuer native change after the fee. An earlier functional run converged at height 50
 but failed its report assertion because it expected 10; the audited 11-count assertion then passed in
-a clean rerun. Cold verifier initialization/backpressure, stateful vesting/multisig/swap calls,
-program-state reorganization and rollback, and alternate-node recovery are still open.
+a clean rerun.
+
+Commit `3da16ad` extends the release-binary rehearsal through every remaining pinned stateful profile.
+Vesting, multisig, and swap deployments were mined at heights 51, 52, and 53 and activated at 71, 72,
+and 73. The harness rejected early vesting release and accepted release at 75; rejected a one-of-two
+multisig witness and accepted two-of-two authorization at 76; rejected a wrong swap preimage, accepted
+the claim and excluded a competing valid refund branch at 77; then rejected an early refund and
+accepted the separate timeout refund at 79. Every valid transition required exact three-node state,
+tip, commitment, program-count, fee, and circulating-supply equality plus wallet synchronization and
+confirmed replay rejection.
+
+The passing report is `build/codex-zk/onyx-standard-profiles-qualification.json`, marked
+`local-ci-not-release-evidence`. Its final block is
+`63e8b4f97fb494cd3dacbb82aeb9f188b728116f451b4bd41a937f5b937cbc83`; its commitment root is
+`6d3606e4b912bb42f48205ed2401d1bf0483b542f036574ca8ca6fa42fd63b1a`. All nodes report `742000`
+bridged, `500003` fees, `241997` circulating native units, 21 commitments, and five programs.
+
+The run also measured minutes of CPU per peer for valid program proof admission/application. Confirmed
+replays and pending stable-key competitors reached proof verification before cheap conflict rejection.
+Cold/warm verifier initialization, bounded admission/backpressure, program-state reorganization and
+rollback, reopen behavior, and alternate-node recovery are still open.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not

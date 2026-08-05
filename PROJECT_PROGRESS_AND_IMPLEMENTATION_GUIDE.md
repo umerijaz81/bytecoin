@@ -38,7 +38,7 @@ Current overall status:
 | O2 private transfers | Implemented and process-qualified locally | Real two-wallet transfer is committed; hosted CI and independent/public qualification remain |
 | O3 wallet and RPC | Implemented in repository | Needs real hardware-wallet and multi-operator acceptance |
 | O4 legacy migration | Implemented and committed | Local three-node migration passes; public supply evidence and incident drill remain |
-| O5 programs/compiler/SDKs | Substantially implemented; NFT and capped-token lifecycles are committed and locally process-qualified | Qualify vesting/multisig/swap, rollback/recovery, performance/DoS limits, hosted CI, and public operation |
+| O5 programs/compiler/SDKs | Substantially implemented; NFT, capped-token, vesting, multisig, and swap lifecycles are committed and locally process-qualified | Qualify rollback/recovery, performance/DoS limits, hosted CI, and public operation |
 | O6 network/PoW/release | Major components implemented | Real Tor/I2P, long soaks, platform measurements, audits, and ceremony remain |
 | External release gates | Not complete | Must be independently performed; must never be fabricated in repository JSON |
 
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `db044e5` on this branch.
+- **Committed**: present at or before Git revision `3da16ad` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -451,10 +451,10 @@ protocol requiring its own threat model, supply proof, activation rules, tests, 
 
 ## 12. O5 — standard programs, compiler, and SDKs
 
-Status: **substantially implemented; real pinned NFT deployment, one stateful NFT call, and the capped
-token deployment/issuance/private-transfer lifecycle are committed and locally process-qualified
-through `db044e5`. Vesting, multisig, swap, program-state rollback/recovery, bounded verifier
-performance, hosted CI, and independent/public qualification remain.**
+Status: **substantially implemented; real pinned NFT deployment/call and the capped-token,
+vesting, multisig, and swap lifecycles are committed and locally process-qualified through
+`3da16ad`. Program-state rollback/recovery, bounded verifier performance, hosted CI, and
+independent/public qualification remain.**
 
 Implemented program consensus:
 
@@ -665,17 +665,56 @@ This is local functional qualification only. Cold verifier initialization and tr
 still need explicit bounded-performance work; lower `k` is an important mitigation, not a complete
 admission-control design.
 
-### Next implementation: private-token and remaining standard-profile qualification
+### Completed implementation: remaining standard-profile qualification
 
-The capped-token milestone is committed. Keep each remaining scenario deterministic and bounded in
-this order:
+Commit `3da16ad` extends the same release-binary three-node/two-wallet process harness through all
+remaining pinned profiles. The deterministic continuation after the capped-token transfer is:
 
-1. **Remaining pinned profiles**: deploy and call vesting, multisig, and swap one at a time; include
-   their most important invalid transitions and stable-state conflicts.
-2. **Rollback/recovery**: force a short reorg after each transaction class and prove program roots,
-   sequences, balances, supply, wallet recovery, and mempool eligibility restore exactly.
-3. **Evidence**: record transaction hashes, heights, state commitments, balances, fees, and supply
-   audits without logging seeds, passwords, spend keys, signatures, or auth tokens.
+1. Deploy vesting, multisig, and swap at heights 51, 52, and 53, paying `100000` native units for
+   each deployment. Their activation heights are 71, 72, and 73.
+2. Reject vesting release before its unlock height; mine the boundary and accept release at height 75.
+3. Reject a one-of-two multisig witness; accept the pinned two-of-two authorization at height 76.
+4. Reject a swap claim with the wrong preimage. At height 77, construct two individually valid claim
+   and refund branches sharing the same stable state key, admit the claim, and reject the competing
+   refund while retaining exactly one pool entry.
+5. For a separate swap instance, reject refund before timeout, mine boundary height 78, and accept
+   the timeout refund at height 79.
+6. After every accepted call, require exact state equality on all nodes, confirmed replay rejection,
+   both wallets synchronized, and exact supply-audit equality.
+
+The clean run exited zero and wrote
+`build/codex-zk/onyx-standard-profiles-qualification.json`, marked
+`local-ci-not-release-evidence`. All three nodes finished at height 79 on block
+`63e8b4f97fb494cd3dacbb82aeb9f188b728116f451b4bd41a937f5b937cbc83`, with commitment root
+`6d3606e4b912bb42f48205ed2401d1bf0483b542f036574ca8ca6fa42fd63b1a`, `742000` bridged,
+`500003` fees, `241997` circulating native units, 21 commitments, and five programs.
+
+Exact profile evidence:
+
+| Profile | Program id | Deploy/activate/call | Transaction | Result |
+|---|---|---|---|---|
+| Vesting | `e4e51abf57263caa36f948af5067182b49e45407c74bfbba44b892b0e54aa5b2` | 51 / 71 / 75 | `d00747e9b85c6f60b0e09c6f05c4bfe13493e058b993c5a7146732e56ad9aeb9` | Early release rejected; state advanced to canonical field 902 at unlock 75 |
+| Multisig | `2f6464de478dcc47c162f2181e0e0f802692e1b7921bbff207e91786c4d54b35` | 52 / 72 / 76 | `767381c27748a8c430553a80902479121f47cec4a8d27ca8a4b7d3979933b145` | One-of-two rejected; two-of-two advanced state to field 903 |
+| Swap claim | `5775b7e698fd801084b1bb5d9c265fc69563066e8cdd7dcdfb024381b11285af` | 53 / 73 / 77 | `41927336ec5c64cb134cbefec3a541870fa83d8e4a281ea5ff2b0ec6486b70fa` | Wrong preimage and competing refund rejected; claim advanced state to field 904 |
+| Swap refund | same swap program | separate key, timeout/call 79 | `0c0ed581f51c3d94a63a58ea3849405e7791444b4973272311c6567f4b24ecab` | Early refund rejected; timeout refund advanced state to field 906 |
+
+Observed performance is not a release pass. Program proof creation took roughly two minutes per call
+on this Windows host, and each peer independently consumed minutes verifying/admitting or applying a
+valid proof. Confirmed replays and pending stable-key competitors also reached expensive verification
+before their cheap state conflict was returned. Those are concrete CPU-amplification findings for the
+performance/DoS milestone; optimize ordering without skipping consensus verification.
+
+### Next implementation: program-state rollback and recovery
+
+Keep the next scenarios deterministic and bounded in this order:
+
+1. **Rollback/recovery**: force short competing branches across deployment, token issuance/transfer,
+   NFT call, vesting, multisig, swap claim, and swap refund. Prove program roots, sequences, balances,
+   commitment roots/counts, supply, and mempool eligibility restore exactly.
+2. **Reopen/recovery**: stop and reopen every node around rollback, restore a wallet through an
+   alternate node, and compare reconstructed native/token/program state with the pre-recorded oracle.
+3. **Evidence**: record branch tips, transaction hashes, heights, state commitments, balances, fees,
+   and audits without logging seeds, passwords, spend keys, signatures, or auth tokens.
 
 Acceptance criteria:
 
@@ -927,12 +966,12 @@ unrelated user file enters the commit.
 ### Step 2 — implement standard-program multi-process qualification
 
 Status: **pinned NFT deployment is committed in `1a82773`, its stateful NFT call is committed in
-`060b691`, and capped-token deployment, issuance, transfer, plus the split funding/program/transfer
-circuit APIs are committed and locally process-qualified in `db044e5`. Vesting, multisig, swap, and
-program-state rollback/recovery remain.**
+`060b691`, capped-token deployment/issuance/transfer and split circuit APIs are committed in
+`db044e5`, and vesting/multisig/swap process qualification is committed in `3da16ad`. Program-state
+rollback/recovery remains.**
 
-Follow the detailed scenario in section 12. Test vesting, multisig, and swap next, followed by
-reorg/recovery. Avoid combining all profiles into one opaque commit.
+Follow the exact results and next scenario in section 12. Implement reorg/recovery next, retaining
+per-transition branch tips and state/audit oracles.
 
 Exit criterion: real wallets and three nodes prove valid transitions, invalid mutation rejection,
 rollback, recovery, fee/supply correctness, and bounded runtime.
