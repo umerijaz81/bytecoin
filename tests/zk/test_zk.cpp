@@ -123,14 +123,14 @@ void test_zk() {
 		Halo2ProofSystem::VerifiedTransferDelta stale_delta;
 		stale_delta.fee = 99;
 		stale_delta.nullifiers.resize(1);
-		invariant(!Halo2ProofSystem::verify_and_extract_transfer(malformed, 32, 20, &stale_delta),
+		invariant(!Halo2ProofSystem::verify_and_extract_transfer(malformed, 32, 20, 20, &stale_delta),
 		    "malformed transfer extraction must fail");
 		invariant(stale_delta.fee == 0 && stale_delta.nullifiers.empty(),
 		    "failed transfer extraction left a stale delta");
 		BinaryArray next_snapshot{0xff};
 		uint64_t fee = 99;
 		std::array<uint8_t, 16> network{};
-		invariant(!Halo2ProofSystem::verify_apply_transfer(BinaryArray{}, 100, malformed, 32, 20,
+		invariant(!Halo2ProofSystem::verify_apply_transfer(BinaryArray{}, 100, malformed, 32, 20, 20,
 		              network, 1, &next_snapshot, &fee),
 		    "malformed state transition must fail");
 		invariant(next_snapshot.empty() && fee == 0, "failed state transition modified outputs");
@@ -145,7 +145,7 @@ void test_zk() {
 		scan.balance = 99;
 		scan.note_count = 99;
 		next_snapshot.assign(1, 0xff);
-		invariant(!Halo2ProofSystem::wallet_scan(BinaryArray{}, seed, network, 0, 1, 20, malformed,
+		invariant(!Halo2ProofSystem::wallet_scan(BinaryArray{}, seed, network, 0, 1, 20, 20, malformed,
 		              &next_snapshot, &scan),
 		    "malformed wallet scan input must fail");
 		invariant(next_snapshot.empty() && scan.balance == 0 && scan.note_count == 0,
@@ -153,7 +153,8 @@ void test_zk() {
 		scan.balance = 99;
 		next_snapshot.assign(1, 0xff);
 		invariant(!Halo2ProofSystem::wallet_scan_viewing(BinaryArray{},
-		              BinaryArray(viewing_key.begin(), viewing_key.end()), 0, 1, 20, malformed, &next_snapshot, &scan),
+		              BinaryArray(viewing_key.begin(), viewing_key.end()), 0, 1, 20, 20, malformed,
+		              &next_snapshot, &scan),
 		    "malformed viewing-wallet scan input must fail");
 		invariant(next_snapshot.empty() && scan.balance == 0,
 		    "failed viewing-wallet scan left stale outputs");
@@ -176,7 +177,7 @@ void test_zk() {
 		              1, 9, 10, 0, 20, 100000, 16, &deployment, &program_id),
 		    "standard NFT deployment proving failed through C++ adapter");
 		Halo2ProofSystem::VerifiedProgramDeployment verified_deployment;
-		invariant(Halo2ProofSystem::verify_program_deployment(deployment, 32, 16, &verified_deployment),
+		invariant(Halo2ProofSystem::verify_program_deployment(deployment, 32, 16, 20, &verified_deployment),
 		    "C++ adapter produced an invalid standard-program deployment");
 		invariant(verified_deployment.program_id == program_id,
 		    "deployment prover and verifier disagreed on program id");
@@ -243,7 +244,7 @@ void test_zk() {
 		Halo2ProofSystem::WalletScanResult viewing_result;
 		invariant(Halo2ProofSystem::wallet_scan_viewing(BinaryArray{},
 		              BinaryArray(recipient_viewing_key.begin(), recipient_viewing_key.end()),
-		              parameters::ONYX_TYPE_TRANSFER, 10, 16, payment, &viewing_snapshot, &viewing_result),
+		              parameters::ONYX_TYPE_TRANSFER, 10, 16, 16, payment, &viewing_snapshot, &viewing_result),
 		    "positive viewing-only scan failed");
 		invariant(!viewing_snapshot.empty() && viewing_result.balance == 1 &&
 		              viewing_result.note_count == 1,

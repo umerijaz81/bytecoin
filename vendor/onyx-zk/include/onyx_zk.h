@@ -72,10 +72,12 @@ int onyx_toy_verify(const uint8_t *vk, size_t vk_len,
 int onyx_verify_authorized_transfer(const uint8_t *encoded, size_t encoded_len,
                                     uint32_t merkle_depth, uint32_t circuit_k);
 
-/* Verify once and, only on success, extract the public state delta. Capacities are counts of
- * 32-byte entries (not byte lengths). Returns -4 for insufficient output capacity. */
+/* Verify once and, only on success, extract the public state delta. The authenticated backend id
+ * selects native_k or token_k. Capacities are counts of 32-byte entries (not byte lengths).
+ * Returns -4 for insufficient output capacity. */
 int onyx_verify_and_extract_transfer(
-    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth,
+    uint32_t native_k, uint32_t token_k,
     uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out, uint64_t *fee_out,
     uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
 	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
@@ -85,7 +87,8 @@ int onyx_verify_and_extract_transfer(
  * returned snapshot must be released with onyx_free. -5 denotes a state-policy violation. */
 int onyx_verify_apply_transfer(
     const uint8_t *snapshot, size_t snapshot_len, uint64_t anchor_window_blocks,
-    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth,
+    uint32_t native_k, uint32_t token_k,
     const uint8_t expected_network[16], uint64_t block_height,
     uint8_t **snapshot_out, size_t *snapshot_len_out, uint64_t *fee_out);
 
@@ -101,9 +104,12 @@ int onyx_verify_apply_bridge(
     uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
     uint8_t ownership_signature_out[64], uint64_t *fee_out);
 
-/* Verify and extract a fee-funded standard-program deployment envelope. */
+/* Verify and extract a fee-funded standard-program deployment envelope. The funding circuit and
+ * registered token-program execution circuit are independently pinned. Pinned non-token programs
+ * ignore program_circuit_k after validating their committed artifact. */
 int onyx_verify_program_deployment(
-    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth,
+    uint32_t funding_circuit_k, uint32_t program_circuit_k,
     uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out,
     uint64_t *fee_out, uint8_t program_id_out[32], uint8_t *nullifiers_out,
     size_t nullifier_capacity, size_t *nullifier_count_out, uint8_t *commitments_out,
@@ -112,7 +118,8 @@ int onyx_verify_program_deployment(
 /* Verify, fee-fund, and atomically register a standard program in the state snapshot. */
 int onyx_verify_apply_program_deployment(
     const uint8_t *snapshot, size_t snapshot_len, uint64_t anchor_window_blocks,
-    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth,
+    uint32_t funding_circuit_k, uint32_t program_circuit_k,
     const uint8_t expected_network[16], uint64_t block_height,
     uint8_t **snapshot_out, size_t *snapshot_len_out, uint64_t *fee_out,
     uint8_t program_id_out[32]);
@@ -189,18 +196,19 @@ int onyx_full_viewing_key(const uint8_t seed[32], const uint8_t network[16],
                           uint8_t viewing_key_out[177]);
 
 /* Scan one confirmed transfer (type 0) or bridge (type 1), append every commitment, recover owned
- * notes, mark spends, and return a canonical wallet snapshot. */
+ * notes, mark spends, and return a canonical wallet snapshot. program_k is used to reconstruct a
+ * program-deployment artifact independently from its funding-transfer circuit_k. */
 int onyx_wallet_scan(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
     const uint8_t expected_network[16], uint8_t envelope_type, uint64_t block_height,
-    uint32_t circuit_k,
+    uint32_t circuit_k, uint32_t program_k,
     const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out,
     uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
 int onyx_wallet_scan_viewing(
     const uint8_t *snapshot, size_t snapshot_len,
     const uint8_t *viewing_key, size_t viewing_key_len, uint8_t envelope_type,
-    uint64_t block_height, uint32_t circuit_k,
+    uint64_t block_height, uint32_t circuit_k, uint32_t program_k,
     const uint8_t *encoded, size_t encoded_len,
     uint8_t **snapshot_out, size_t *snapshot_len_out,
     uint64_t *balance_out, size_t *note_count_out, uint8_t root_out[32]);
@@ -246,13 +254,15 @@ int onyx_wallet_finalize_bridge(
     const uint8_t *unsigned_bridge, size_t unsigned_bridge_len,
     const uint8_t ownership_signature[64], uint8_t **bridge_out, size_t *bridge_len_out);
 /* Build a fee-funded deployment for the capped standard private-token program. A zero
- * deactivation height means no scheduled deactivation. */
+ * deactivation height means no scheduled deactivation. Funding and registered token execution
+ * use separately pinned circuit domains. */
 int onyx_wallet_create_program_deployment(
     const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
     const uint8_t seed[32], uint64_t max_supply,
     const uint8_t *metadata, size_t metadata_len,
     uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
-    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k,
+    uint64_t expiry_height, uint64_t fee, uint32_t funding_circuit_k,
+    uint32_t program_circuit_k,
     uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
 /* Build a fee-funded deployment for a pinned standard program. kind is 1=Nft,
  * 2=Vesting, 3=Multisig, or 4=Swap. Standard programs require circuit k=16. */

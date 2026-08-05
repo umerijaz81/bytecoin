@@ -182,7 +182,7 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 			zk::Halo2ProofSystem::VerifiedTransferDelta delta;
 			if (!zk::Halo2ProofSystem::verify_and_extract_transfer(
 			        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH,
-			        parameters::ONYX_TRANSFER_CIRCUIT_K, &delta))
+			        parameters::ONYX_TRANSFER_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K, &delta))
 				return false;
 			*fee = delta.fee;
 			return true;
@@ -198,7 +198,8 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 		if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
 			zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
 			if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
-			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K, &deployment))
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K,
+			        parameters::ONYX_TOKEN_CIRCUIT_K, &deployment))
 				return false;
 			*fee = deployment.funding.fee;
 			return true;
@@ -206,7 +207,7 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 		if (tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
 			zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
 			if (!zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
-			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_CIRCUIT_K, &issuance))
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, &issuance))
 				return false;
 			*fee = 0;
 			return true;

@@ -68,7 +68,7 @@ bool Halo2ProofSystem::verify_authorized_transfer(
 }
 
 bool Halo2ProofSystem::verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
-    uint32_t circuit_k, VerifiedTransferDelta *delta) {
+    uint32_t native_circuit_k, uint32_t token_circuit_k, VerifiedTransferDelta *delta) {
 	if (delta != nullptr)
 		*delta = VerifiedTransferDelta{};
 	if (encoded.empty() || delta == nullptr)
@@ -78,7 +78,8 @@ bool Halo2ProofSystem::verify_and_extract_transfer(const BinaryArray &encoded, u
 	size_t nullifier_count = 0;
 	size_t commitment_count = 0;
 	VerifiedTransferDelta result;
-	const int rc = onyx_verify_and_extract_transfer(encoded.data(), encoded.size(), merkle_depth, circuit_k,
+	const int rc = onyx_verify_and_extract_transfer(encoded.data(), encoded.size(), merkle_depth,
+	    native_circuit_k, token_circuit_k,
 	    result.network.data(), result.anchor.data(), &result.expiry_height, &result.fee,
 	    nullifiers.data(), 16, &nullifier_count, commitments.data(), 16, &commitment_count);
 	if (rc != 1 || nullifier_count > 16 || commitment_count > 16)
@@ -95,7 +96,8 @@ bool Halo2ProofSystem::verify_and_extract_transfer(const BinaryArray &encoded, u
 }
 
 bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
-    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t native_circuit_k,
+    uint32_t token_circuit_k,
     const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
     BinaryArray *next_snapshot, uint64_t *fee) {
 	if (fee != nullptr)
@@ -112,8 +114,8 @@ bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64
 	OnyxBuffer next;
 	uint64_t next_fee = 0;
 	const int rc      = onyx_verify_apply_transfer(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(),
-	    anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, circuit_k, expected_network.data(),
-	    block_height, &next.data, &next.size, &next_fee);
+	    anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, native_circuit_k,
+	    token_circuit_k, expected_network.data(), block_height, &next.data, &next.size, &next_fee);
 	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
@@ -125,7 +127,7 @@ bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64
 }
 
 bool Halo2ProofSystem::verify_program_deployment(const BinaryArray &encoded, uint32_t merkle_depth,
-    uint32_t circuit_k, VerifiedProgramDeployment *deployment) {
+    uint32_t funding_circuit_k, uint32_t program_circuit_k, VerifiedProgramDeployment *deployment) {
 	if (deployment != nullptr)
 		*deployment = VerifiedProgramDeployment{};
 	if (encoded.empty() || deployment == nullptr)
@@ -139,8 +141,9 @@ bool Halo2ProofSystem::verify_program_deployment(const BinaryArray &encoded, uin
 	std::array<uint8_t, 32 * 16> commitments{};
 	size_t nullifier_count  = 0;
 	size_t commitment_count = 0;
-	const int rc = onyx_verify_program_deployment(encoded.data(), encoded.size(), merkle_depth, circuit_k,
-	    network.data(), anchor.data(), &expiry_height, &fee, program_id.data(), nullifiers.data(), 16,
+	const int rc = onyx_verify_program_deployment(encoded.data(), encoded.size(), merkle_depth,
+	    funding_circuit_k, program_circuit_k, network.data(), anchor.data(), &expiry_height, &fee,
+	    program_id.data(), nullifiers.data(), 16,
 	    &nullifier_count, commitments.data(), 16, &commitment_count);
 	if (rc != 1 || nullifier_count > 16 || commitment_count > 16)
 		return false;
@@ -163,7 +166,8 @@ bool Halo2ProofSystem::verify_program_deployment(const BinaryArray &encoded, uin
 }
 
 bool Halo2ProofSystem::verify_apply_program_deployment(const BinaryArray &snapshot,
-    uint64_t anchor_window_blocks, const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+    uint64_t anchor_window_blocks, const BinaryArray &encoded, uint32_t merkle_depth,
+    uint32_t funding_circuit_k, uint32_t program_circuit_k,
     const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
     BinaryArray *next_snapshot, uint64_t *fee, std::array<uint8_t, 32> *program_id) {
 	if (fee != nullptr)
@@ -183,8 +187,9 @@ bool Halo2ProofSystem::verify_apply_program_deployment(const BinaryArray &snapsh
 	uint64_t next_fee = 0;
 	std::array<uint8_t, 32> next_program{};
 	const int rc = onyx_verify_apply_program_deployment(snapshot.empty() ? nullptr : snapshot.data(),
-	    snapshot.size(), anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth, circuit_k,
-	    expected_network.data(), block_height, &next.data, &next.size, &next_fee, next_program.data());
+	    snapshot.size(), anchor_window_blocks, encoded.data(), encoded.size(), merkle_depth,
+	    funding_circuit_k, program_circuit_k, expected_network.data(), block_height, &next.data,
+	    &next.size, &next_fee, next_program.data());
 	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
 		next_snapshot->clear();
 		return false;
@@ -431,7 +436,7 @@ bool Halo2ProofSystem::full_viewing_key(const std::array<uint8_t, 32> &seed,
 
 bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
     const std::array<uint8_t, 16> &network, uint8_t envelope_type, uint64_t block_height,
-    uint32_t circuit_k,
+    uint32_t circuit_k, uint32_t program_k,
     const BinaryArray &encoded,
     BinaryArray *next_snapshot, WalletScanResult *result) {
 	if (result != nullptr)
@@ -448,7 +453,7 @@ bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array
 	OnyxBuffer next;
 	WalletScanResult scanned;
 	const int rc = onyx_wallet_scan(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(), seed.data(),
-	    network.data(), envelope_type, block_height, circuit_k,
+	    network.data(), envelope_type, block_height, circuit_k, program_k,
 	    encoded.data(), encoded.size(), &next.data, &next.size, &scanned.balance,
 	    &scanned.note_count, scanned.root.data());
 	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
@@ -462,7 +467,8 @@ bool Halo2ProofSystem::wallet_scan(const BinaryArray &snapshot, const std::array
 }
 
 bool Halo2ProofSystem::wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
-    uint8_t envelope_type, uint64_t block_height, uint32_t circuit_k, const BinaryArray &encoded,
+    uint8_t envelope_type, uint64_t block_height, uint32_t circuit_k, uint32_t program_k,
+    const BinaryArray &encoded,
     BinaryArray *next_snapshot, WalletScanResult *result) {
 	if (result != nullptr)
 		*result = WalletScanResult{};
@@ -478,7 +484,7 @@ bool Halo2ProofSystem::wallet_scan_viewing(const BinaryArray &snapshot, const Bi
 	OnyxBuffer next;
 	WalletScanResult scanned;
 	const int rc = onyx_wallet_scan_viewing(snapshot.empty() ? nullptr : snapshot.data(), snapshot.size(),
-	    viewing_key.data(), viewing_key.size(), envelope_type, block_height, circuit_k,
+	    viewing_key.data(), viewing_key.size(), envelope_type, block_height, circuit_k, program_k,
 	    encoded.data(), encoded.size(), &next.data,
 	    &next.size, &scanned.balance, &scanned.note_count, scanned.root.data());
 	if (rc != 1 || !next.valid_nonempty(ONYX_ZK_MAX_STATE_SNAPSHOT_BYTES)) {
@@ -635,7 +641,8 @@ bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge
 bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &wallet_snapshot,
     const std::array<uint8_t, 32> &seed, uint64_t max_supply, const BinaryArray &metadata,
     uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
-    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
+    uint64_t expiry_height, uint64_t fee, uint32_t funding_circuit_k, uint32_t program_circuit_k,
+    BinaryArray *deployment,
     std::array<uint8_t, 32> *program_id) {
 	if (deployment == nullptr || program_id == nullptr) {
 		if (deployment != nullptr)
@@ -653,7 +660,8 @@ bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &walle
 	std::array<uint8_t, 32> next_program{};
 	const int rc = onyx_wallet_create_program_deployment(wallet_snapshot.data(), wallet_snapshot.size(),
 	    seed.data(), max_supply, metadata.data(), metadata.size(), inclusion_height, activation_height,
-	    deactivation_height, expiry_height, fee, circuit_k, &encoded.data, &encoded.size, next_program.data());
+	    deactivation_height, expiry_height, fee, funding_circuit_k, program_circuit_k, &encoded.data,
+	    &encoded.size, next_program.data());
 	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_PROGRAM_DEPLOYMENT_BYTES)) {
 		deployment->clear();
 		program_id->fill(0);

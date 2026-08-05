@@ -284,13 +284,31 @@ fn verify_transfer_dispatch(
     }
 }
 
+fn transfer_circuit_k(
+    transaction: &transaction::AuthorizedTransaction,
+    native_k: u32,
+    token_k: u32,
+) -> Result<u32, ()> {
+    if !(10..=20).contains(&native_k) || !(10..=20).contains(&token_k) {
+        return Err(());
+    }
+    Ok(
+        if transaction.backend_id == token_program::TOKEN_PROGRAM_BACKEND {
+            token_k
+        } else {
+            native_k
+        },
+    )
+}
+
 fn verify_program_deployment_dispatch(
     deployment: &program_deployment::AuthorizedProgramDeployment,
     merkle_depth: u32,
-    circuit_k: u32,
+    funding_k: u32,
+    program_k: u32,
     block_height: Option<u64>,
 ) -> Result<program::ProgramEntry, ()> {
-    if !(10..=20).contains(&circuit_k) {
+    if !(10..=20).contains(&funding_k) || !(10..=20).contains(&program_k) {
         return Err(());
     }
     let height = match block_height {
@@ -303,41 +321,41 @@ fn verify_program_deployment_dispatch(
         deployment.funding.preimage.outputs.len(),
     );
     let result = match shape {
-        (2, 1, 1) => {
-            program_deployment::verify_standard_deployment::<2, 1, 1>(circuit_k, deployment, height)
-        }
-        (2, 1, 2) => {
-            program_deployment::verify_standard_deployment::<2, 1, 2>(circuit_k, deployment, height)
-        }
-        (2, 2, 1) => {
-            program_deployment::verify_standard_deployment::<2, 2, 1>(circuit_k, deployment, height)
-        }
-        (2, 2, 2) => {
-            program_deployment::verify_standard_deployment::<2, 2, 2>(circuit_k, deployment, height)
-        }
-        (4, 1, 1) => {
-            program_deployment::verify_standard_deployment::<4, 1, 1>(circuit_k, deployment, height)
-        }
-        (4, 1, 2) => {
-            program_deployment::verify_standard_deployment::<4, 1, 2>(circuit_k, deployment, height)
-        }
-        (4, 2, 1) => {
-            program_deployment::verify_standard_deployment::<4, 2, 1>(circuit_k, deployment, height)
-        }
-        (4, 2, 2) => {
-            program_deployment::verify_standard_deployment::<4, 2, 2>(circuit_k, deployment, height)
-        }
+        (2, 1, 1) => program_deployment::verify_standard_deployment::<2, 1, 1>(
+            funding_k, program_k, deployment, height,
+        ),
+        (2, 1, 2) => program_deployment::verify_standard_deployment::<2, 1, 2>(
+            funding_k, program_k, deployment, height,
+        ),
+        (2, 2, 1) => program_deployment::verify_standard_deployment::<2, 2, 1>(
+            funding_k, program_k, deployment, height,
+        ),
+        (2, 2, 2) => program_deployment::verify_standard_deployment::<2, 2, 2>(
+            funding_k, program_k, deployment, height,
+        ),
+        (4, 1, 1) => program_deployment::verify_standard_deployment::<4, 1, 1>(
+            funding_k, program_k, deployment, height,
+        ),
+        (4, 1, 2) => program_deployment::verify_standard_deployment::<4, 1, 2>(
+            funding_k, program_k, deployment, height,
+        ),
+        (4, 2, 1) => program_deployment::verify_standard_deployment::<4, 2, 1>(
+            funding_k, program_k, deployment, height,
+        ),
+        (4, 2, 2) => program_deployment::verify_standard_deployment::<4, 2, 2>(
+            funding_k, program_k, deployment, height,
+        ),
         (32, 1, 1) => program_deployment::verify_standard_deployment::<32, 1, 1>(
-            circuit_k, deployment, height,
+            funding_k, program_k, deployment, height,
         ),
         (32, 1, 2) => program_deployment::verify_standard_deployment::<32, 1, 2>(
-            circuit_k, deployment, height,
+            funding_k, program_k, deployment, height,
         ),
         (32, 2, 1) => program_deployment::verify_standard_deployment::<32, 2, 1>(
-            circuit_k, deployment, height,
+            funding_k, program_k, deployment, height,
         ),
         (32, 2, 2) => program_deployment::verify_standard_deployment::<32, 2, 2>(
-            circuit_k, deployment, height,
+            funding_k, program_k, deployment, height,
         ),
         _ => return Err(()),
     };
@@ -436,7 +454,8 @@ pub extern "C" fn onyx_verify_and_extract_transfer(
     encoded: *const u8,
     encoded_len: usize,
     merkle_depth: u32,
-    circuit_k: u32,
+    native_k: u32,
+    token_k: u32,
     network_out: *mut u8,
     anchor_out: *mut u8,
     expiry_height_out: *mut u64,
@@ -471,13 +490,14 @@ pub extern "C" fn onyx_verify_and_extract_transfer(
             *nullifier_count_out = 0;
             *commitment_count_out = 0;
         }
-        if !(10..=20).contains(&circuit_k) {
-            return -3;
-        }
         let bytes = unsafe { slice::from_raw_parts(encoded, encoded_len) };
         let transaction = match transaction::AuthorizedTransaction::decode(bytes) {
             Ok(transaction) => transaction,
             Err(_) => return -2,
+        };
+        let circuit_k = match transfer_circuit_k(&transaction, native_k, token_k) {
+            Ok(circuit_k) => circuit_k,
+            Err(_) => return -3,
         };
         if nullifier_capacity < transaction.preimage.spends.len()
             || commitment_capacity < transaction.preimage.outputs.len()
@@ -528,7 +548,8 @@ pub extern "C" fn onyx_verify_program_deployment(
     encoded: *const u8,
     encoded_len: usize,
     merkle_depth: u32,
-    circuit_k: u32,
+    funding_k: u32,
+    program_k: u32,
     network_out: *mut u8,
     anchor_out: *mut u8,
     expiry_height_out: *mut u64,
@@ -577,11 +598,16 @@ pub extern "C" fn onyx_verify_program_deployment(
         {
             return -4;
         }
-        let entry =
-            match verify_program_deployment_dispatch(&deployment, merkle_depth, circuit_k, None) {
-                Ok(entry) => entry,
-                Err(_) => return 0,
-            };
+        let entry = match verify_program_deployment_dispatch(
+            &deployment,
+            merkle_depth,
+            funding_k,
+            program_k,
+            None,
+        ) {
+            Ok(entry) => entry,
+            Err(_) => return 0,
+        };
         let program_id = match entry.id() {
             Ok(program_id) => program_id,
             Err(_) => return 0,
@@ -650,7 +676,8 @@ pub extern "C" fn onyx_verify_apply_program_deployment(
     encoded: *const u8,
     encoded_len: usize,
     merkle_depth: u32,
-    circuit_k: u32,
+    funding_k: u32,
+    program_k: u32,
     expected_network: *const u8,
     block_height: u64,
     snapshot_out: *mut *mut u8,
@@ -694,7 +721,8 @@ pub extern "C" fn onyx_verify_apply_program_deployment(
         let entry = match verify_program_deployment_dispatch(
             &deployment,
             merkle_depth,
-            circuit_k,
+            funding_k,
+            program_k,
             Some(block_height),
         ) {
             Ok(entry) => entry,
@@ -982,7 +1010,8 @@ pub extern "C" fn onyx_verify_apply_transfer(
     encoded: *const u8,
     encoded_len: usize,
     merkle_depth: u32,
-    circuit_k: u32,
+    native_k: u32,
+    token_k: u32,
     expected_network: *const u8,
     block_height: u64,
     snapshot_out: *mut *mut u8,
@@ -1007,14 +1036,15 @@ pub extern "C" fn onyx_verify_apply_transfer(
             *snapshot_len_out = 0;
             *fee_out = 0;
         }
-        if !(10..=20).contains(&circuit_k) {
-            return -3;
-        }
         let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
             slice::from_raw_parts(encoded, encoded_len)
         }) {
             Ok(transaction) => transaction,
             Err(_) => return -2,
+        };
+        let circuit_k = match transfer_circuit_k(&transaction, native_k, token_k) {
+            Ok(circuit_k) => circuit_k,
+            Err(_) => return -3,
         };
         let network = unsafe { slice::from_raw_parts(expected_network, 16) };
         if transaction.preimage.network_id.as_slice() != network
@@ -1739,6 +1769,7 @@ pub extern "C" fn onyx_wallet_scan(
     envelope_type: u8,
     block_height: u64,
     circuit_k: u32,
+    program_k: u32,
     encoded: *const u8,
     encoded_len: usize,
     snapshot_out: *mut *mut u8,
@@ -1769,6 +1800,7 @@ pub extern "C" fn onyx_wallet_scan(
             || encoded_len == 0
             || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
             || !(10..=20).contains(&circuit_k)
+            || !(10..=20).contains(&program_k)
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || (snapshot.is_null() && snapshot_len != 0)
         {
@@ -1809,7 +1841,7 @@ pub extern "C" fn onyx_wallet_scan(
                 .map_err(|_| ())
                 .and_then(|deployment| {
                     wallet
-                        .record_program_deployment(&deployment, block_height, circuit_k)
+                        .record_program_deployment(&deployment, block_height, program_k)
                         .map_err(|_| ())?;
                     wallet
                         .scan_transfer(&keys, &deployment.funding)
@@ -1868,6 +1900,7 @@ pub extern "C" fn onyx_wallet_scan_viewing(
     envelope_type: u8,
     block_height: u64,
     circuit_k: u32,
+    program_k: u32,
     encoded: *const u8,
     encoded_len: usize,
     snapshot_out: *mut *mut u8,
@@ -1898,6 +1931,7 @@ pub extern "C" fn onyx_wallet_scan_viewing(
             || encoded_len == 0
             || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
             || !(10..=20).contains(&circuit_k)
+            || !(10..=20).contains(&program_k)
             || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
             || (snapshot.is_null() && snapshot_len != 0)
         {
@@ -1932,7 +1966,7 @@ pub extern "C" fn onyx_wallet_scan_viewing(
                 .map_err(|_| ())
                 .and_then(|deployment| {
                     wallet
-                        .record_program_deployment(&deployment, block_height, circuit_k)
+                        .record_program_deployment(&deployment, block_height, program_k)
                         .map_err(|_| ())?;
                     wallet
                         .scan_transfer(&keys, &deployment.funding)
@@ -2677,7 +2711,8 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
     deactivation_height: u64,
     expiry_height: u64,
     fee: u64,
-    circuit_k: u32,
+    funding_k: u32,
+    program_k: u32,
     deployment_out: *mut *mut u8,
     deployment_len_out: *mut usize,
     program_id_out: *mut u8,
@@ -2706,7 +2741,8 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
             || expiry_height < inclusion_height
             || expiry_height - inclusion_height > MAX_EXPIRY_DISTANCE_BLOCKS
             || fee < program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE
-            || !(10..=20).contains(&circuit_k)
+            || !(10..=20).contains(&funding_k)
+            || !(10..=20).contains(&program_k)
         {
             return -1;
         }
@@ -2745,13 +2781,20 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
             deactivation,
             expiry_height,
             fee,
-            circuit_k,
+            program_k,
+            funding_k,
         ) {
             Ok(deployment) => deployment,
             Err(_) => return -5,
         };
-        if verify_program_deployment_dispatch(&deployment, 32, circuit_k, Some(inclusion_height))
-            .is_err()
+        if verify_program_deployment_dispatch(
+            &deployment,
+            32,
+            funding_k,
+            program_k,
+            Some(inclusion_height),
+        )
+        .is_err()
         {
             return -2;
         }
@@ -2845,8 +2888,14 @@ pub extern "C" fn onyx_wallet_create_standard_program_deployment(
             Ok(deployment) => deployment,
             Err(_) => return -5,
         };
-        if verify_program_deployment_dispatch(&deployment, 32, circuit_k, Some(inclusion_height))
-            .is_err()
+        if verify_program_deployment_dispatch(
+            &deployment,
+            32,
+            circuit_k,
+            circuit_k,
+            Some(inclusion_height),
+        )
+        .is_err()
         {
             return -2;
         }
@@ -3540,6 +3589,7 @@ mod tests {
                 0,
                 0,
                 9,
+                9,
                 std::ptr::null(),
                 0,
                 &mut snapshot_out,
@@ -3924,6 +3974,7 @@ mod tests {
                 malformed.len(),
                 32,
                 21,
+                21,
                 network.as_mut_ptr(),
                 anchor.as_mut_ptr(),
                 &mut expiry,
@@ -3954,6 +4005,7 @@ mod tests {
                 malformed.as_ptr(),
                 malformed.len(),
                 32,
+                20,
                 20,
                 network.as_mut_ptr(),
                 anchor.as_mut_ptr(),
@@ -4100,6 +4152,7 @@ mod tests {
                 malformed.as_ptr(),
                 malformed.len(),
                 32,
+                21,
                 21,
                 expected_network.as_ptr(),
                 1,

@@ -46,8 +46,9 @@ def rpc_response(port, method, params=None, authorization=None):
         method="POST",
     )
     # Real Halo2 proving and independent node verification are intentionally exercised by this
-    # harness and can exceed short control-plane timeouts on slower qualification workers.
-    with urllib.request.urlopen(request, timeout=360) as response:
+    # harness. Cold token-program artifact generation can take substantially longer than ordinary
+    # control-plane requests on qualification workers.
+    with urllib.request.urlopen(request, timeout=1800) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -215,7 +216,7 @@ def transaction_known(node, transaction_hash):
     )
 
 
-def mine_blocks(minerd, root, name, rpc_port, wallet_address, count):
+def mine_blocks(minerd, root, name, rpc_port, wallet_address, count, timeout=180):
     data = root / f"{name}-miner-data"
     data.mkdir()
     result = subprocess.run(
@@ -230,7 +231,7 @@ def mine_blocks(minerd, root, name, rpc_port, wallet_address, count):
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=timeout,
     )
     if result.returncode != 0 or result.stdout.count("Block submitted") < count:
         raise RuntimeError(
@@ -926,7 +927,7 @@ def main():
                 and receiver_wallet.call("get_onyx_status")["balance"]
                 == post_deployment_balance,
                 nodes + [wallet, receiver_wallet],
-                timeout=360,
+                timeout=1800,
             )
             replay_deployment_response = rpc_response(
                 onyx_c.rpc_port,
@@ -1063,7 +1064,7 @@ def main():
                     for node in (onyx_a, onyx_b, onyx_c)
                 ),
                 nodes + [wallet, receiver_wallet],
-                timeout=360,
+                timeout=1800,
             )
             competing_call = receiver_wallet.call(
                 "create_onyx_standard_program_call",
@@ -1114,7 +1115,7 @@ def main():
                 )
                 == 1,
                 nodes + [wallet, receiver_wallet],
-                timeout=360,
+                timeout=1800,
             )
             wait_until(
                 "standard-program call wallet accounting",
@@ -1122,7 +1123,7 @@ def main():
                 and receiver_wallet.call("get_onyx_status")["balance"]
                 == post_deployment_balance,
                 nodes + [wallet, receiver_wallet],
-                timeout=360,
+                timeout=1800,
             )
             final_program_states = [
                 rpc_call(
@@ -1189,6 +1190,372 @@ def main():
             print(
                 "independent wallet executed a stateful NFT call with activation, tamper, "
                 "pending-conflict, stable-key, replay, state, and supply checks"
+            )
+
+            # Deploy a capped private-token program with independently pinned funding and execution
+            # circuit parameters. Funding uses k=16 and token execution fits k=14; keeping the
+            # parameters separate prevents
+            # deployment/issuance drift if either circuit family changes later.
+            token_cap = 5000
+            token_metadata = "QTK/2"
+            token_deployment_fee = 100000
+            token_deployment = receiver_wallet.call(
+                "create_onyx_program_deployment",
+                {
+                    "max_supply": token_cap,
+                    "metadata": token_metadata,
+                    "activation_height": 0,
+                    "deactivation_height": 0,
+                    "fee": token_deployment_fee,
+                    "expiry_height": 0,
+                },
+            )
+            tampered_token_deployment = token_deployment["binary_transaction"][:-2] + (
+                "00" if token_deployment["binary_transaction"][-2:] != "00" else "01"
+            )
+            if "error" not in rpc_response(
+                onyx_b.rpc_port,
+                "send_transaction",
+                {"binary_transaction": tampered_token_deployment},
+            ):
+                raise RuntimeError("node accepted a capped-token deployment with tampered proof data")
+            receiver_wallet.call(
+                "send_transaction",
+                {"binary_transaction": token_deployment["binary_transaction"]},
+            )
+            pending_token_deployment = rpc_response(
+                receiver_wallet.rpc_port,
+                "create_onyx_program_deployment",
+                {
+                    "max_supply": token_cap,
+                    "metadata": token_metadata,
+                    "activation_height": 0,
+                    "deactivation_height": 0,
+                    "fee": token_deployment_fee,
+                    "expiry_height": 0,
+                },
+                WALLET_AUTH,
+            )
+            if "error" not in pending_token_deployment:
+                raise RuntimeError(
+                    "wallet did not reserve capped-token deployment funding spends: "
+                    f"{pending_token_deployment!r}"
+                )
+            wait_until(
+                "capped-token deployment propagation",
+                lambda: all(
+                    transaction_known(node, token_deployment["transaction_hash"])
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "capped-token-deployment-confirmation",
+                onyx_a_rpc,
+                MINING_ADDRESS_A,
+                1,
+                timeout=1800,
+            )
+            token_deployment_height = final_height + 1
+            post_token_deployment_balance = post_deployment_balance - token_deployment_fee
+            wait_until(
+                "capped-token deployment convergence and wallet accounting",
+                lambda: all(
+                    node.status()["top_block_height"] >= token_deployment_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and receiver_wallet.status()["top_block_height"] >= token_deployment_height
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == post_token_deployment_balance,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            if "error" not in rpc_response(
+                onyx_c.rpc_port,
+                "send_transaction",
+                {"binary_transaction": token_deployment["binary_transaction"]},
+            ):
+                raise RuntimeError("node accepted a confirmed capped-token deployment replay")
+            token_status = receiver_wallet.call(
+                "get_onyx_program_status", {"program_id": token_deployment["program_id"]}
+            )
+            token_activation_height = token_deployment_height + 20
+            if (
+                token_status["max_supply"] != token_cap
+                or token_status["issued_supply"] != 0
+                or token_status["remaining_supply"] != token_cap
+                or token_status["next_sequence"] != 0
+                or token_status["activation_height"] != token_activation_height
+                or token_status["active"]
+                or bytes.fromhex(token_status["metadata"]).decode("ascii") != token_metadata
+            ):
+                raise RuntimeError(f"capped-token program status mismatch: {token_status!r}")
+
+            mine_blocks(
+                minerd,
+                root,
+                "capped-token-activation",
+                onyx_b_rpc,
+                MINING_ADDRESS_A,
+                token_activation_height - token_deployment_height,
+            )
+            wait_until(
+                "capped-token activation convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= token_activation_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and wallet.status()["top_block_height"] >= token_activation_height
+                and receiver_wallet.status()["top_block_height"] >= token_activation_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            foreign_issuer = rpc_response(
+                wallet.rpc_port,
+                "create_onyx_token_issuance",
+                {
+                    "address": recovered_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": 1,
+                    "expiry_height": 0,
+                    "memo": "foreign issuer must fail",
+                },
+                WALLET_AUTH,
+            )
+            if "error" not in foreign_issuer:
+                raise RuntimeError(f"non-issuer wallet created token issuance: {foreign_issuer!r}")
+
+            issued_amount = 1000
+            issuance = receiver_wallet.call(
+                "create_onyx_token_issuance",
+                {
+                    "address": receiver_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": issued_amount,
+                    "expiry_height": 0,
+                    "memo": "qualification issuance sequence zero",
+                },
+            )
+            if issuance["sequence"] != 0:
+                raise RuntimeError(f"first issuance did not use sequence zero: {issuance!r}")
+            tampered_issuance = issuance["binary_transaction"][:-2] + (
+                "00" if issuance["binary_transaction"][-2:] != "00" else "01"
+            )
+            if "error" not in rpc_response(
+                onyx_a.rpc_port,
+                "send_transaction",
+                {"binary_transaction": tampered_issuance},
+            ):
+                raise RuntimeError("node accepted token issuance with tampered proof data")
+            receiver_wallet.call(
+                "send_transaction", {"binary_transaction": issuance["binary_transaction"]}
+            )
+            duplicate_issuance = rpc_response(
+                receiver_wallet.rpc_port,
+                "create_onyx_token_issuance",
+                {
+                    "address": receiver_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": 1,
+                    "expiry_height": 0,
+                    "memo": "pending sequence conflict",
+                },
+                WALLET_AUTH,
+            )
+            if "error" not in duplicate_issuance:
+                raise RuntimeError(f"wallet reused a pending issuance sequence: {duplicate_issuance!r}")
+            wait_until(
+                "token issuance propagation",
+                lambda: all(
+                    transaction_known(node, issuance["transaction_hash"])
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "token-issuance-confirmation",
+                onyx_c_rpc,
+                MINING_ADDRESS_A,
+                1,
+                timeout=1800,
+            )
+            issuance_height = token_activation_height + 1
+            token_balance_request = {
+                "program_id": token_deployment["program_id"],
+                "asset_id": token_deployment["program_id"],
+            }
+            wait_until(
+                "token issuance convergence and wallet recovery",
+                lambda: all(
+                    node.status()["top_block_height"] >= issuance_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and receiver_wallet.status()["top_block_height"] >= issuance_height
+                and receiver_wallet.call("get_onyx_asset_balance", token_balance_request)["balance"]
+                == issued_amount,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            issued_status = receiver_wallet.call(
+                "get_onyx_program_status", {"program_id": token_deployment["program_id"]}
+            )
+            if (
+                issued_status["issued_supply"] != issued_amount
+                or issued_status["remaining_supply"] != token_cap - issued_amount
+                or issued_status["next_sequence"] != 1
+                or not issued_status["active"]
+            ):
+                raise RuntimeError(f"confirmed token issuance status mismatch: {issued_status!r}")
+            if "error" not in rpc_response(
+                onyx_b.rpc_port,
+                "send_transaction",
+                {"binary_transaction": issuance["binary_transaction"]},
+            ):
+                raise RuntimeError("node accepted a confirmed token issuance replay")
+            zero_issuance = rpc_response(
+                receiver_wallet.rpc_port,
+                "create_onyx_token_issuance",
+                {
+                    "address": receiver_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": 0,
+                    "expiry_height": 0,
+                    "memo": "zero must fail",
+                },
+                WALLET_AUTH,
+            )
+            over_cap_issuance = rpc_response(
+                receiver_wallet.rpc_port,
+                "create_onyx_token_issuance",
+                {
+                    "address": receiver_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": token_cap,
+                    "expiry_height": 0,
+                    "memo": "cap must fail",
+                },
+                WALLET_AUTH,
+            )
+            if "error" not in zero_issuance or "error" not in over_cap_issuance:
+                raise RuntimeError(
+                    f"invalid issuance accepted: zero={zero_issuance!r} cap={over_cap_issuance!r}"
+                )
+
+            token_transfer_amount = 400
+            token_transfer_fee = 1
+            token_transfer = receiver_wallet.call(
+                "create_onyx_token_transaction",
+                {
+                    "address": recovered_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": token_transfer_amount,
+                    "fee": token_transfer_fee,
+                    "expiry_height": 0,
+                    "memo": "qualified private token transfer",
+                },
+            )
+            tampered_token_transfer = token_transfer["binary_transaction"][:-2] + (
+                "00" if token_transfer["binary_transaction"][-2:] != "00" else "01"
+            )
+            if "error" not in rpc_response(
+                onyx_c.rpc_port,
+                "send_transaction",
+                {"binary_transaction": tampered_token_transfer},
+            ):
+                raise RuntimeError("node accepted a private token transfer with tampered proof data")
+            receiver_wallet.call(
+                "send_transaction", {"binary_transaction": token_transfer["binary_transaction"]}
+            )
+            pending_token_transfer = rpc_response(
+                receiver_wallet.rpc_port,
+                "create_onyx_token_transaction",
+                {
+                    "address": recovered_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": 1,
+                    "fee": token_transfer_fee,
+                    "expiry_height": 0,
+                    "memo": "pending token spend must fail",
+                },
+                WALLET_AUTH,
+            )
+            if "error" not in pending_token_transfer:
+                raise RuntimeError(
+                    f"wallet reused pending token/native spends: {pending_token_transfer!r}"
+                )
+            wait_until(
+                "private token transfer propagation",
+                lambda: all(
+                    transaction_known(node, token_transfer["transaction_hash"])
+                    for node in (onyx_a, onyx_b, onyx_c)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "private-token-transfer-confirmation",
+                onyx_a_rpc,
+                MINING_ADDRESS_A,
+                1,
+                timeout=1800,
+            )
+            token_transfer_height = issuance_height + 1
+            sender_token_balance = issued_amount - token_transfer_amount
+            receiver_native_balance = post_token_deployment_balance - token_transfer_fee
+            wait_until(
+                "private token transfer convergence and two-wallet recovery",
+                lambda: all(
+                    node.status()["top_block_height"] >= token_transfer_height
+                    for node in (onyx_a, onyx_b, onyx_c)
+                )
+                and wallet.status()["top_block_height"] >= token_transfer_height
+                and receiver_wallet.status()["top_block_height"] >= token_transfer_height
+                and receiver_wallet.call("get_onyx_asset_balance", token_balance_request)["balance"]
+                == sender_token_balance
+                and wallet.call("get_onyx_asset_balance", token_balance_request)["balance"]
+                == token_transfer_amount
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == receiver_native_balance,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            if "error" not in rpc_response(
+                onyx_a.rpc_port,
+                "send_transaction",
+                {"binary_transaction": token_transfer["binary_transaction"]},
+            ):
+                raise RuntimeError("node accepted a confirmed private token transfer replay")
+            audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c)
+            ]
+            if audits[1:] != audits[:-1] or (
+                audits[0].get("total_bridged") != migration_output["amount"]
+                or audits[0].get("total_fees")
+                != migration_fee
+                + transfer_fee
+                + deployment_fee
+                + token_deployment_fee
+                + token_transfer_fee
+                or audits[0].get("circulating_supply") != receiver_native_balance
+                or audits[0].get("commitment_count") != 11
+                or audits[0].get("program_count") != 2
+            ):
+                raise RuntimeError(f"private-token final supply or convergence failed: {audits!r}")
+            final_height = token_transfer_height
+            final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+            final_tip = final_statuses[0]["top_block_hash"]
+            print(
+                "capped-token deployment, issuance, and private transfer passed activation, "
+                "issuer/cap, tamper, pending-conflict, replay, balance, and supply checks"
             )
 
             foreign = Node(
@@ -1265,6 +1632,23 @@ def main():
                     "pending_standard_program_state_conflict_rejection": "passed",
                     "standard_program_call_replay_rejection": "passed",
                     "standard_program_state_query_convergence": "passed",
+                    "capped_token_program_deployment": "passed",
+                    "separate_deployment_funding_and_program_circuits": "passed",
+                    "capped_token_deployment_tamper_rejection": "passed",
+                    "pending_capped_token_deployment_reservation": "passed",
+                    "capped_token_deployment_replay_rejection": "passed",
+                    "capped_token_activation": "passed",
+                    "token_issuer_authorization_rejection": "passed",
+                    "private_token_issuance": "passed",
+                    "token_issuance_tamper_rejection": "passed",
+                    "pending_token_issuance_sequence_rejection": "passed",
+                    "token_issuance_replay_rejection": "passed",
+                    "zero_and_over_cap_issuance_rejection": "passed",
+                    "private_token_transfer": "passed",
+                    "private_token_transfer_tamper_rejection": "passed",
+                    "pending_private_token_spend_reservation": "passed",
+                    "private_token_transfer_replay_rejection": "passed",
+                    "private_token_two_wallet_balance_recovery": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -1300,6 +1684,25 @@ def main():
                     "prior_state": prior_state,
                     "next_state": next_state,
                     "receiver_balance": post_deployment_balance,
+                },
+                "private_token": {
+                    "program_id": token_deployment["program_id"],
+                    "metadata": token_metadata,
+                    "cap": token_cap,
+                    "deployment_fee": token_deployment_fee,
+                    "deployment_height": token_deployment_height,
+                    "activation_height": token_activation_height,
+                    "issuance_height": issuance_height,
+                    "issued_amount": issued_amount,
+                    "issuance_sequence": issuance["sequence"],
+                    "transfer_height": token_transfer_height,
+                    "transfer_amount": token_transfer_amount,
+                    "transfer_fee": token_transfer_fee,
+                    "issuer_token_balance": sender_token_balance,
+                    "recipient_token_balance": token_transfer_amount,
+                    "issuer_native_balance": receiver_native_balance,
+                    "deployment_funding_circuit_k": 16,
+                    "program_execution_circuit_k": 14,
                 },
             }
             if args.report:

@@ -81,6 +81,10 @@ const uint32_t ONYX_TRANSFER_CIRCUIT_K  = 16;
 // Program deployments and the four pinned stateful standard programs are committed and exercised at
 // k=16. Their full-depth C ABI fixtures prove both deployment funding and an NFT call at this domain.
 const uint32_t ONYX_PROGRAM_CIRCUIT_K   = 16;
+// Capped-token deployment artifacts, issuance, and mixed token/native-fee transfers fit at k=14.
+// k controls circuit capacity, not cryptographic strength; cold k=20 construction and k=16 peer
+// verification both exceeded 30 minutes and exposed wallet/RPC DoS risk without adding constraints.
+const uint32_t ONYX_TOKEN_CIRCUIT_K     = 14;
 // Bridge is an independent, substantially smaller circuit whose committed shape is proven and
 // tested at k=13. Keeping it separate avoids 128x over-allocation during proving and verification.
 const uint32_t ONYX_BRIDGE_CIRCUIT_K    = 13;

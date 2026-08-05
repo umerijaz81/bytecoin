@@ -82,7 +82,7 @@ void onyx_deployment_parse(const cn::BinaryArray &msg) {
 	uint8_t nullifiers[64] = {}, commitments[64] = {};
 	uint64_t expiry = 0, fee = 0;
 	size_t nullifier_count = 0, commitment_count = 0;
-	sideeffect(onyx_verify_program_deployment(msg.data(), msg.size(), 32, 20, network, anchor,
+	sideeffect(onyx_verify_program_deployment(msg.data(), msg.size(), 32, 20, 20, network, anchor,
 	               &expiry, &fee, program_id, nullifiers, 2, &nullifier_count, commitments, 2,
 	               &commitment_count) == 1);
 }

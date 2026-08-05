@@ -107,9 +107,11 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	Currency currency(config);
 	invariant(parameters::ONYX_TRANSFER_CIRCUIT_K == 16 &&
 	              parameters::ONYX_PROGRAM_CIRCUIT_K == 16 &&
+	              parameters::ONYX_TOKEN_CIRCUIT_K == 14 &&
 	              parameters::ONYX_BRIDGE_CIRCUIT_K == 13 &&
 	              parameters::ONYX_TRANSFER_CIRCUIT_K < parameters::ONYX_CIRCUIT_K &&
-	              parameters::ONYX_PROGRAM_CIRCUIT_K < parameters::ONYX_CIRCUIT_K,
+	              parameters::ONYX_PROGRAM_CIRCUIT_K < parameters::ONYX_CIRCUIT_K &&
+	              parameters::ONYX_TOKEN_CIRCUIT_K < parameters::ONYX_CIRCUIT_K,
 	    "Onyx circuit-specific consensus domains changed unexpectedly");
 	const uint8_t jade = currency.jade_block_version;
 	std::string what;

@@ -579,16 +579,23 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         deactivation_height: Option<u64>,
         expiry_height: u64,
         fee: u64,
-        circuit_k: u32,
+        program_k: u32,
+        funding_k: u32,
     ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
+        // Reject an unavailable funding spend before constructing the comparatively expensive token
+        // artifact. In particular, a wallet-side pending reservation must fail in bounded time rather
+        // than rebuilding proving/verifying keys only to discover the same insufficient balance in
+        // build_native_transfer below.
+        let required = fee.checked_add(1).ok_or(WalletBuildError::InvalidValue)?;
+        select_asset_note_indices(&self.notes, required, &[0; 32], &NATIVE_ASSET_ID)?;
         let entry = standard_token_program::<DEPTH>(
-            circuit_k,
+            program_k,
             &token_manifest,
             activation_height,
             deactivation_height,
         )
         .map_err(|_| WalletBuildError::InvalidValue)?;
-        self.build_program_deployment_entry(keys, entry, expiry_height, fee, circuit_k)
+        self.build_program_deployment_entry(keys, entry, expiry_height, fee, funding_k)
     }
 
     pub fn build_standard_program_deployment(
@@ -1734,7 +1741,8 @@ mod tests {
     #[test]
     fn program_deployment_builder_binds_manifest_call_and_fee() {
         const DEPTH: usize = 2;
-        const K: u32 = 14;
+        const FUNDING_K: u32 = 10;
+        const PROGRAM_K: u32 = 14;
         let network = [19; NETWORK_ID_BYTES];
         let sender = MasterSeed::new([41; 32]).derive(network).unwrap();
         let wallet = funded_wallet::<DEPTH>(
@@ -1750,7 +1758,8 @@ mod tests {
                 Some(100),
                 20,
                 crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE,
-                K,
+                PROGRAM_K,
+                FUNDING_K,
             )
             .unwrap();
         assert_eq!(deployment.funding.preimage.programs.len(), 1);
@@ -1758,16 +1767,47 @@ mod tests {
             deployment.funding.preimage.programs[0].public_data_hash,
             deployment.deployment_hash()
         );
-        let entry =
-            crate::program_deployment::verify_standard_deployment::<DEPTH, 1, 1>(K, &deployment, 9)
-                .unwrap();
+        let entry = crate::program_deployment::verify_standard_deployment::<DEPTH, 1, 1>(
+            FUNDING_K,
+            PROGRAM_K,
+            &deployment,
+            9,
+        )
+        .unwrap();
+        assert!(
+            crate::program_deployment::verify_standard_deployment::<DEPTH, 1, 1>(
+                FUNDING_K,
+                FUNDING_K,
+                &deployment,
+                9,
+            )
+            .is_err()
+        );
         assert_eq!(
             entry.id().unwrap(),
             deployment.funding.preimage.programs[0].program_id
         );
+        let mut reserved = wallet.clone();
+        let sender_view = sender.full_viewing_key().unwrap();
+        reserved
+            .reserve_transfer_spends(&sender_view, &deployment.funding)
+            .unwrap();
+        assert!(matches!(
+            reserved.build_program_deployment(
+                &sender,
+                b"onyx.standard.private-fungible-token/v1".to_vec(),
+                10,
+                Some(100),
+                20,
+                crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE,
+                PROGRAM_K,
+                FUNDING_K,
+            ),
+            Err(WalletBuildError::InsufficientFunds)
+        ));
         let mut tracked = wallet.clone();
         tracked
-            .record_program_deployment(&deployment, 9, K)
+            .record_program_deployment(&deployment, 9, PROGRAM_K)
             .unwrap();
         let restored =
             WalletState::<DEPTH>::decode_snapshot(&tracked.encode_snapshot().unwrap()).unwrap();
@@ -1857,7 +1897,8 @@ mod tests {
     #[test]
     fn mixed_token_builder_conserves_each_asset_and_pays_native_fee() {
         const DEPTH: usize = 4;
-        const K: u32 = 16;
+        const K: u32 = 14;
+        const NATIVE_K: u32 = 13;
         let network = [18; NETWORK_ID_BYTES];
         let sender = MasterSeed::new([31; 32]).derive(network).unwrap();
         let recipient_keys = MasterSeed::new([32; 32]).derive(network).unwrap();
@@ -1954,6 +1995,7 @@ mod tests {
                 encoded.as_ptr(),
                 encoded.len(),
                 DEPTH as u32,
+                NATIVE_K,
                 K,
                 network.as_ptr(),
                 1,
@@ -2134,6 +2176,7 @@ mod tests {
                 0,
                 1,
                 20,
+                20,
                 encoded_transaction.as_ptr(),
                 encoded_transaction.len(),
                 &mut ffi_snapshot_ptr,
@@ -2169,6 +2212,7 @@ mod tests {
                 viewing_bytes.len(),
                 0,
                 1,
+                20,
                 20,
                 encoded_transaction.as_ptr(),
                 encoded_transaction.len(),

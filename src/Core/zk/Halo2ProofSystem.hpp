@@ -101,15 +101,17 @@ public:
 	static bool verify_authorized_transfer(
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k);
 	static bool verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
-	    uint32_t circuit_k, VerifiedTransferDelta *delta);
+	    uint32_t native_circuit_k, uint32_t token_circuit_k, VerifiedTransferDelta *delta);
 	static bool verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
-	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t native_circuit_k,
+	    uint32_t token_circuit_k,
 	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
 	    BinaryArray *next_snapshot, uint64_t *fee);
 	static bool verify_program_deployment(const BinaryArray &encoded, uint32_t merkle_depth,
-	    uint32_t circuit_k, VerifiedProgramDeployment *deployment);
+	    uint32_t funding_circuit_k, uint32_t program_circuit_k, VerifiedProgramDeployment *deployment);
 	static bool verify_apply_program_deployment(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
-	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t funding_circuit_k,
+	    uint32_t program_circuit_k,
 	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
 	    BinaryArray *next_snapshot, uint64_t *fee, std::array<uint8_t, 32> *program_id);
 	static bool verify_token_issuance(const BinaryArray &encoded, uint32_t merkle_depth,
@@ -139,10 +141,10 @@ public:
 	    const std::array<uint8_t, 16> &network, std::array<uint8_t, 177> *viewing_key);
 	static bool wallet_scan(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
 	    const std::array<uint8_t, 16> &network, uint8_t envelope_type, uint64_t block_height,
-	    uint32_t circuit_k, const BinaryArray &encoded,
+	    uint32_t circuit_k, uint32_t program_k, const BinaryArray &encoded,
 	    BinaryArray *next_snapshot, WalletScanResult *result);
 	static bool wallet_scan_viewing(const BinaryArray &snapshot, const BinaryArray &viewing_key,
-	    uint8_t envelope_type, uint64_t block_height, uint32_t circuit_k,
+	    uint8_t envelope_type, uint64_t block_height, uint32_t circuit_k, uint32_t program_k,
 	    const BinaryArray &encoded, BinaryArray *next_snapshot,
 	    WalletScanResult *result);
 	static bool wallet_reserve_spends(const BinaryArray &snapshot, const std::array<uint8_t, 32> &seed,
@@ -167,7 +169,8 @@ public:
 	static bool wallet_create_program_deployment(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, uint64_t max_supply, const BinaryArray &metadata,
 	    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
-	    uint64_t expiry_height, uint64_t fee, uint32_t circuit_k, BinaryArray *deployment,
+	    uint64_t expiry_height, uint64_t fee, uint32_t funding_circuit_k, uint32_t program_circuit_k,
+	    BinaryArray *deployment,
 	    std::array<uint8_t, 32> *program_id);
 	static bool wallet_create_standard_program_deployment(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, uint8_t kind, uint64_t inclusion_height,

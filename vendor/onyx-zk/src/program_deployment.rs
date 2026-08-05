@@ -234,7 +234,8 @@ impl AuthorizedProgramDeployment {
 }
 
 pub fn verify_standard_deployment<const DEPTH: usize, const SPENDS: usize, const OUTPUTS: usize>(
-    k: u32,
+    funding_k: u32,
+    program_k: u32,
     deployment: &AuthorizedProgramDeployment,
     block_height: u64,
 ) -> Result<ProgramEntry, ProgramDeploymentError> {
@@ -256,7 +257,7 @@ pub fn verify_standard_deployment<const DEPTH: usize, const SPENDS: usize, const
     {
         return Err(ProgramDeploymentError::InvalidCall);
     }
-    let entry = deployment.program_entry::<DEPTH>(k)?;
+    let entry = deployment.program_entry::<DEPTH>(program_k)?;
     let program_id = entry
         .id()
         .map_err(|_| ProgramDeploymentError::InvalidCall)?;
@@ -266,7 +267,7 @@ pub fn verify_standard_deployment<const DEPTH: usize, const SPENDS: usize, const
     verify_authorized_transaction(&deployment.funding)?;
     let mut proof_statement = deployment.funding.clone();
     proof_statement.preimage.programs.clear();
-    verify_multi_transfer_proof::<DEPTH, SPENDS, OUTPUTS>(k, &proof_statement)?;
+    verify_multi_transfer_proof::<DEPTH, SPENDS, OUTPUTS>(funding_k, &proof_statement)?;
     Ok(entry)
 }
 
@@ -430,7 +431,7 @@ mod tests {
         current_height.activation_height = 10;
         rebind_call(&mut current_height);
         assert_eq!(
-            verify_standard_deployment::<2, 1, 1>(14, &current_height, 10).err(),
+            verify_standard_deployment::<2, 1, 1>(14, 14, &current_height, 10).err(),
             Some(ProgramDeploymentError::InvalidActivation)
         );
 
@@ -439,7 +440,7 @@ mod tests {
         too_far.deactivation_height = None;
         rebind_call(&mut too_far);
         assert_eq!(
-            verify_standard_deployment::<2, 1, 1>(14, &too_far, 1).err(),
+            verify_standard_deployment::<2, 1, 1>(14, 14, &too_far, 1).err(),
             Some(ProgramDeploymentError::InvalidActivation)
         );
 
@@ -634,6 +635,7 @@ mod tests {
                 encoded.len(),
                 DEPTH as u32,
                 K,
+                K,
                 extracted_network.as_mut_ptr(),
                 extracted_anchor.as_mut_ptr(),
                 &mut extracted_expiry,
@@ -689,6 +691,7 @@ mod tests {
                 encoded.len(),
                 DEPTH as u32,
                 K,
+                K,
                 network.as_ptr(),
                 2,
                 &mut snapshot_ptr,
@@ -721,6 +724,7 @@ mod tests {
                 encoded.as_ptr(),
                 encoded.len(),
                 DEPTH as u32,
+                K,
                 K,
                 network.as_ptr(),
                 2,
