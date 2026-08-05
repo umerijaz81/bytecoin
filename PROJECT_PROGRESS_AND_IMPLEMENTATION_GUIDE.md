@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx Project Progress and Implementation Guide
 
-Last reconciled: **2026-08-04**  
+Last reconciled: **2026-08-05**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Committed revision at reconciliation: `060b691` (`Qualify stateful Onyx NFT calls`)
+Implementation revision documented: `db044e5` (`Qualify private Onyx token lifecycle`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -38,7 +38,7 @@ Current overall status:
 | O2 private transfers | Implemented and process-qualified locally | Real two-wallet transfer is committed; hosted CI and independent/public qualification remain |
 | O3 wallet and RPC | Implemented in repository | Needs real hardware-wallet and multi-operator acceptance |
 | O4 legacy migration | Implemented and committed | Local three-node migration passes; public supply evidence and incident drill remain |
-| O5 programs/compiler/SDKs | Substantially implemented; NFT deployment/call process-qualified locally | Issuance, token transfer, remaining profiles, rollback/recovery, and public qualification remain |
+| O5 programs/compiler/SDKs | Substantially implemented; NFT and capped-token lifecycles are committed and locally process-qualified | Qualify vesting/multisig/swap, rollback/recovery, performance/DoS limits, hosted CI, and public operation |
 | O6 network/PoW/release | Major components implemented | Real Tor/I2P, long soaks, platform measurements, audits, and ceremony remain |
 | External release gates | Not complete | Must be independently performed; must never be fabricated in repository JSON |
 
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `060b691` on this branch.
+- **Committed**: present at or before Git revision `db044e5` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -62,14 +62,16 @@ Never convert “implemented” into “secure” without evidence. Never conver
 
 ## 3. Workspace and Git state that must be preserved
 
-At reconciliation, the worktree contains both user-owned changes and active implementation work:
+At reconciliation, the worktree contains both user-owned changes and active implementation work.
+Always obtain a fresh `git status --short --branch`; the following is the ownership map, not a promise
+that every listed file is still modified:
 
 ```text
  M .gitignore
 A  Bytecoin_Onyx_Security_Review.md
  M JADE_ONYX_PROJECT_HANDOFF.md
- M docs/Onyx-Qualification-Network.md
  M PROJECT_PROGRESS_AND_IMPLEMENTATION_GUIDE.md
+ M docs/Onyx-Qualification-Network.md
 ```
 
 Important ownership rules:
@@ -81,8 +83,8 @@ Important ownership rules:
 - Do not run `git add -A`, `git reset --hard`, broad checkout/restore commands, or destructive cleanup.
 - Recheck `git status --short` before and after every commit.
 
-This guide itself is a new documentation file and should be committed separately from cryptographic or
-consensus changes unless the user deliberately requests a combined commit.
+This guide is tracked documentation and should normally be committed separately from cryptographic or
+consensus changes so the code commit remains independently reviewable.
 
 ## 4. Authoritative documentation and precedence
 
@@ -449,8 +451,10 @@ protocol requiring its own threat model, supply proof, activation rules, tests, 
 
 ## 12. O5 — standard programs, compiler, and SDKs
 
-Status: **substantially implemented; real pinned NFT deployment and one stateful NFT call are locally
-process-qualified through `060b691`**.
+Status: **substantially implemented; real pinned NFT deployment, one stateful NFT call, and the capped
+token deployment/issuance/private-transfer lifecycle are committed and locally process-qualified
+through `db044e5`. Vesting, multisig, swap, program-state rollback/recovery, bounded verifier
+performance, hosted CI, and independent/public qualification remain.**
 
 Implemented program consensus:
 
@@ -499,8 +503,8 @@ Primary files:
 
 Process qualification implemented in `1a82773`:
 
-- Introduces `ONYX_PROGRAM_CIRCUIT_K=16` for all program deployments and the four pinned stateful
-  standard programs. Token issuance and mixed token transfer remain on the separate general domain.
+- Introduces `ONYX_PROGRAM_CIRCUIT_K=16` for pinned stateful standard-program deployments and calls.
+  The later uncommitted token work separates token execution from deployment funding; see below.
 - Routes semantic validation, fee extraction, mempool dry-run, block apply/undo, conflict eviction,
   wallet construction and type-aware wallet scanning through the program-specific domain.
 - The first real production-path attempt at the unrelated general `k=20` domain exceeded the
@@ -548,21 +552,129 @@ The complete three-node process run passed locally against the release ZK binari
 `git diff --check` also passed. This is strong functional regression evidence, not public or
 independent release evidence.
 
+### Locally qualified capped-token implementation and circuit-domain split (`db044e5`)
+
+The token scenario exposed an architectural coupling that must be understood before changing any
+proof API. A program-deployment transaction contains two different objects:
+
+1. a native funding transfer that pays the deployment fee and creates change; and
+2. a registered program artifact whose verifier shape is later reused by issuance and token transfer.
+
+The original C ABI accepted one `circuit_k` for both objects. Using `k=16` for funding and deployment
+made pinned programs practical, but a token artifact created at that value could not later be used by
+the old issuance path, which expected the generic `ONYX_CIRCUIT_K=20`. Using `k=20` for the entire
+deployment was functionally consistent but operationally unacceptable: a real wallet RPC remained in
+proof construction for more than 30 minutes and grew to several gigabytes of resident memory.
+
+The committed implementation therefore makes the domains explicit:
+
+| Domain | Constant | Current value | Purpose |
+|---|---:|---:|---|
+| Generic/legacy Onyx | `ONYX_CIRCUIT_K` | 20 | Existing generic compatibility domain; do not use automatically for every transaction |
+| Native transfer | `ONYX_TRANSFER_CIRCUIT_K` | 16 | Private native spends and outputs |
+| Stateful standard program | `ONYX_PROGRAM_CIRCUIT_K` | 16 | Pinned NFT, vesting, multisig, and swap calls and their funding transfers |
+| Capped token execution | `ONYX_TOKEN_CIRCUIT_K` | 14 | Token program artifact, issuance, and mixed token/native-fee transfer |
+| Bridge | `ONYX_BRIDGE_CIRCUIT_K` | 13 | One-way legacy-to-Onyx migration |
+
+`k` is the Halo2 circuit capacity exponent. Reducing it does not reduce the Pasta curve's
+cryptographic strength; it prevents allocating rows that the fixed token constraint system does not
+use. The full token function set fits at `k=14`, which is pinned by a Jade consensus test. A future
+constraint change that no longer fits must fail tests and receive explicit migration/activation
+design; silently increasing `k` is not an acceptable performance fix.
+
+The API change is cross-layer and must stay atomic:
+
+- Rust `build_program_deployment` and `verify_standard_deployment` now take `program_k` and
+  `funding_k` independently.
+- The exported C functions for create, verify, and verify/apply deployment expose both values.
+- `vendor/onyx-zk/include/onyx_zk.h` documents the split, and the C++ `Halo2ProofSystem` adapter
+  forwards both values.
+- Consensus admission, mempool dry-run, block apply/undo, wallet construction, wallet scanning, ZK
+  tests, and fuzz entry points pass the correct pair rather than relying on a hidden default.
+- The wallet scan C ABI also carries both values. This is essential: the first height-28 process run
+  proved consensus acceptance but exposed that a one-parameter scanner reconstructed the token
+  artifact at funding `k=16`, refused to commit the block, and retained the pre-deployment balance.
+  The split scanner now records the artifact at token `k=14` while scanning its funding transfer,
+  including in viewing-only wallets.
+- Transfer verification/application likewise accepts native and token domains independently. The
+  authenticated proof backend selects `ONYX_TRANSFER_CIRCUIT_K=16` for native transfers and
+  `ONYX_TOKEN_CIRCUIT_K=14` for token/mixed transfers. The first height-49 issuance run caught the
+  old one-domain path when a wallet-created mixed transfer was rejected as an invalid authorized
+  transfer. A release-mode Rust proof/apply regression now uses deliberately different values and
+  passes, preventing an unauthenticated caller hint or fallback-order ambiguity.
+- Pinned standard deployments pass `k=16` for both arguments. Capped-token deployments pass funding
+  `k=16` and program `k=14`; issuance and token transfers use token `k=14`.
+- The Rust wallet regression creates a funding proof at `k=10` and token artifact at `k=14`, verifies
+  the correct pair, and rejects verification when the wrong program domain is supplied.
+- Before constructing a token artifact, the wallet now performs the same native-note availability
+  selection needed for the one-unit self-output plus fee. A pending duplicate deployment therefore
+  returns `InsufficientFunds` before rebuilding token proving/verifying material.
+
+Measured qualification history, all local and non-release:
+
+- Token `k=20`: wallet-side capped-token deployment construction exceeded the 1,800-second RPC
+  deadline while the wallet stayed alive at roughly 3.2 GB RSS. This is valid-request DoS evidence.
+- Token `k=16`: construction completed in roughly 10–12 minutes, but independent cold-node
+  verification approached or exceeded 30 minutes. This was still unsuitable for bounded admission.
+- Token `k=14`: native binaries build, the full C++ `--zk` suite passes, and the Jade consensus suite
+  passes. Deployment construction measured about six minutes on this Windows host. Intermediate
+  process runs exposed the scanner and mixed-transfer dispatch defects described above. After both
+  fixes, a clean three-node/two-wallet run exited zero through height 50 and wrote the report described
+  below. Cold verification still takes minutes and remains a release-blocking DoS/backpressure task.
+
+The extended process harness in `tests/network/test_onyx_qualification_process.py` performs the
+following deterministic scenario after the committed NFT call at height 27:
+
+1. Deploy a capped token with cap `5000`, metadata `QTK/2`, fee `100000`, funding `k=16`, and token
+   execution `k=14`; reject tampering and a second wallet construction while funding is reserved.
+2. Mine deployment at height 28, assert issuer/cap/metadata/zero issued supply, reject confirmed
+   replay, then mine the 20-block delay to activation height 48.
+3. Reject issuance by the non-issuer wallet. Issue `1000` units at sequence zero to the independent
+   receiver; reject proof tampering and pending sequence reuse; mine at height 49.
+4. Reject confirmed issuance replay, zero issuance, and a `5000`-unit over-cap issuance after the
+   first `1000` units are issued.
+5. Transfer `400` token units back to the original wallet while paying a one-unit native fee; reject
+   tampering and pending token/native-spend reuse; mine at height 50 and reject replay.
+6. Require all nodes and both wallets to converge. Expected final token balances are `600` at the
+   issuer wallet and `400` at the recipient; expected native balances are `541997` at the issuer and
+   zero at the recipient.
+7. Require final native audits of `742000` bridged, `200003` fees, `541997` circulating, eleven
+   commitments, and two registered programs. Require token issued supply `1000`, remaining cap
+   `4000`, and next issuance sequence `1`.
+8. Write `build/codex-zk/onyx-private-token-qualification.json`, marked
+   `local-ci-not-release-evidence`, with hashes/heights/state totals but no wallet secrets.
+
+The clean run exited zero and wrote
+`build/codex-zk/onyx-private-token-qualification.json` with scope
+`local-ci-not-release-evidence`. Its final block is
+`dde2b74470ed0d0a82cb6aeb45365f66594000f91e16b2048d6874de63dc4e11` at height 50. All three nodes
+reported the same commitment root
+`3e4c4f8a6f509942186fac0025db2d50fadd9e30ceafe0c0309aa338fcb9c221`, `742000` bridged,
+`200003` fees, `541997` circulating native units, 11 commitments, two programs, and block program
+cost `378000`. The token program id is
+`730901bd595a8732a5c85343b80b350f02baa3e7f2c928f4d4d7795c573d8b5e`.
+
+The final count is 11, not 10: the mixed transfer spends one token note and one native note, then
+creates three commitments (400 token to the recipient, 600 token change to the issuer, and 541997
+native change after the one-unit fee). The first complete functional run reached identical height-50
+state on every node but correctly failed its report assertion because the harness expected 10. The
+assertion was audited and corrected, and the subsequent clean run passed. Do not weaken this to a
+range or suppress an unexpected commitment-count change.
+
+This is local functional qualification only. Cold verifier initialization and transaction propagation
+still need explicit bounded-performance work; lower `k` is an important mitigation, not a complete
+admission-control design.
+
 ### Next implementation: private-token and remaining standard-profile qualification
 
-Keep each scenario deterministic and bounded. Recommended order:
+The capped-token milestone is committed. Keep each remaining scenario deterministic and bounded in
+this order:
 
-1. **Capped token deployment**: construct through wallet RPC; test tampering and duplicate pending
-   deployment; mine; verify issuer, cap, activation, metadata, fee, and program state.
-2. **Private issuance**: test valid issuance plus wrong issuer, wrong sequence, zero amount, over-cap,
-   tampered proof, duplicate pending issuance, exact cap/sequence state, and wallet recognition.
-3. **Private token transfer**: use independent wallets; assert token balances, native fee changes,
-   pending nullifier reservation, tamper rejection, replay rejection, and three-node convergence.
-4. **Remaining pinned profiles**: deploy and call vesting, multisig, and swap one at a time; include
+1. **Remaining pinned profiles**: deploy and call vesting, multisig, and swap one at a time; include
    their most important invalid transitions and stable-state conflicts.
-5. **Rollback/recovery**: force a short reorg after each transaction class and prove program roots,
+2. **Rollback/recovery**: force a short reorg after each transaction class and prove program roots,
    sequences, balances, supply, wallet recovery, and mempool eligibility restore exactly.
-6. **Evidence**: record transaction hashes, heights, state commitments, balances, fees, and supply
+3. **Evidence**: record transaction hashes, heights, state commitments, balances, fees, and supply
    audits without logging seeds, passwords, spend keys, signatures, or auth tokens.
 
 Acceptance criteria:
@@ -814,11 +926,13 @@ unrelated user file enters the commit.
 
 ### Step 2 — implement standard-program multi-process qualification
 
-Status: **pinned NFT deployment is committed in `1a82773` and a stateful NFT call is committed in
-`060b691`; issuance, token transfer, the other pinned profiles, and rollback/recovery remain.**
+Status: **pinned NFT deployment is committed in `1a82773`, its stateful NFT call is committed in
+`060b691`, and capped-token deployment, issuance, transfer, plus the split funding/program/transfer
+circuit APIs are committed and locally process-qualified in `db044e5`. Vesting, multisig, swap, and
+program-state rollback/recovery remain.**
 
-Follow the detailed scenario in section 12. Start with capped token deployment/issuance/transfer, then
-the four pinned profiles, then reorg/recovery. Avoid combining all profiles into one opaque commit.
+Follow the detailed scenario in section 12. Test vesting, multisig, and swap next, followed by
+reorg/recovery. Avoid combining all profiles into one opaque commit.
 
 Exit criterion: real wallets and three nodes prove valid transitions, invalid mutation rejection,
 rollback, recovery, fee/supply correctness, and bounded runtime.

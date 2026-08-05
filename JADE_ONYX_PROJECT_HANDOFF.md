@@ -1,9 +1,9 @@
 # Jade/Onyx Project Progress and Implementation Handoff
 
-Last reviewed: 2026-08-04  
+Last reviewed: 2026-08-05
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last committed revision reviewed: `060b691` (`Qualify stateful Onyx NFT calls`)
+Last implementation revision reviewed: `db044e5` (`Qualify private Onyx token lifecycle`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `060b691`.
+- **Implemented and committed** means the code is in the branch history at or before `db044e5`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -319,6 +319,22 @@ Implemented:
 - Real stateful NFT call after activation, with tamper/replay rejection, exact transaction-hash
   propagation, same-stable-key pending conflict rejection, state-query convergence, wallet accounting,
   and exact final supply/fee reconciliation (`060b691`).
+- Committed, locally process-qualified capped-token lifecycle with a split deployment ABI: funding remains on the native
+  `k=16` circuit, while the token artifact, issuance, and mixed token/native-fee transfer use the
+  dedicated `ONYX_TOKEN_CIRCUIT_K=14` domain. The harness covers activation, issuer/sequence/cap,
+  tamper, pending conflicts, replay, two-wallet balances, registry, commitments, and exact native
+  supply. The exit-zero report is `build/codex-zk/onyx-private-token-qualification.json` and remains
+  explicitly `local-ci-not-release-evidence` (`db044e5`).
+- A wallet-side funding-availability precheck rejects a pending duplicate capped-token deployment
+  before constructing expensive token artifacts. This is bounded-failure hardening, not a substitute
+  for node admission backpressure and cold/warm performance qualification.
+- Deployment wallet scanning and viewing-only scanning carry funding and program circuit domains
+  independently. This was added after a real height-28 run showed all nodes accepting the token
+  deployment while the receiver wallet refused to commit the block when it reconstructed the token
+  artifact with funding `k=16` instead of token `k=14`.
+- Authorized-transfer extraction and application select native `k=16` or token `k=14` from the
+  authenticated backend id. This closes the mismatch found after a real issuance reached height 49
+  and the subsequent wallet-created mixed token/native-fee transfer was routed to the native domain.
 
 Primary locations:
 
@@ -659,6 +675,17 @@ Validation performed before commit:
   admission verdict. Exact transaction lookup plus pool count now proves pending conflict behavior.
 - The passing report is `build/codex-zk/onyx-stateful-nft-qualification.json`, marked
   `local-ci-not-release-evidence`; it records identical final tips and supply audits on all three nodes.
+- The capped-token extension passed locally through height 50. It deployed at height 28 with native
+  funding `k=16` and token execution `k=14`, activated at height 48, issued 1000 units at height 49,
+  and transferred 400 units with a one-unit native fee at height 50. The issuer finished with 600
+  token units and 541997 native units; the recipient finished with 400 token units and zero native.
+- All nodes ended at block `dde2b74470ed0d0a82cb6aeb45365f66594000f91e16b2048d6874de63dc4e11`
+  with commitment root `3e4c4f8a6f509942186fac0025db2d50fadd9e30ceafe0c0309aa338fcb9c221`,
+  `742000` bridged, `200003` fees, `541997` circulating, 11 commitments and two programs. Eleven is
+  exact: the mixed transfer creates recipient token, token change, and native change commitments.
+- Functional qualification does not close valid-proof DoS risk. The `k=20` attempt exceeded 1800
+  seconds near 3.2 GB RSS; `k=16` cold verification approached/exceeded 30 minutes; even the passing
+  `k=14` route takes minutes per cold peer and needs measured backpressure, prewarming, and load tests.
 
 Validation not yet completed:
 
@@ -772,13 +799,15 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 
 Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`,
 migration-qualified in `6ee5247`, native-transfer-qualified in `dd9755e`, pinned NFT deployment
-qualified in `1a82773`, and stateful NFT call qualified in `060b691`.**
+qualified in `1a82773`, stateful NFT call qualified in `060b691`, and capped-token lifecycle qualified
+in `db044e5`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
 report, wallet recovery, real migration, independent-wallet native transfer, pinned NFT deployment,
-and one stateful NFT call are implemented through `060b691`.**
+one stateful NFT call, and the capped-token deployment/issuance/private-transfer lifecycle are
+implemented and locally process-qualified through `db044e5`.**
 
 Implemented:
 
@@ -798,12 +827,15 @@ Implemented:
   convergence, wallet scanning, and exact deployment-fee/supply accounting.
 - Real stateful NFT call with activation, exact-hash propagation, tamper/replay rejection, same-state
   pending conflict rejection, stable-key query equivalence, and exact cross-node state/supply checks.
+- Real capped-token deployment, activation, issuer/sequence/cap enforcement, private issuance,
+  mixed token/native-fee transfer, pending-conflict/tamper/replay rejection, two-wallet balance
+  recovery, and exact three-node registry/commitment/supply equality.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Capped-token issuance, private token transfers, and stateful vesting/multisig/swap calls.
+- Stateful vesting, multisig, and swap deployments/calls.
 - Program-state reorganization, rollback, alternate-node wallet recovery, and reopen qualification.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - A longer local run and the independently operated 14-day public soak.

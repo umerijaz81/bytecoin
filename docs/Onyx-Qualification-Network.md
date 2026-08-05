@@ -50,9 +50,12 @@ ZK-enabled processes:
 11. construct a second valid proof whose mutable NFT nonce differs but whose stable state key is the
    same, require the competitor hash to remain absent while the original hash remains in the pool,
    mine the original call, and require identical state and supply on all three nodes;
-12. reject confirmed call replay, prove a testnet daemon cannot cross the network-identity/genesis
-   boundary; and
-13. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
+12. reject confirmed call replay; deploy a capped token with separate native-funding and token-program
+   circuit domains; reject tampered, duplicate, replayed, foreign-issuer, zero, and over-cap operations;
+13. activate the token, issue 1000 units, transfer 400 units between independent wallets while paying
+   a native fee, and reconcile exact token/native balances, registry state, commitments, and supply;
+14. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
+15. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
    supply-audit snapshot and the nonsensitive wallet qualification results.
 
 Example:
@@ -95,9 +98,44 @@ admission returns false. Tests must establish admission using the exact transact
 `get_raw_transaction` and, where useful, the transaction-pool count. `transaction_pool_version` is a
 change counter and must not be treated as proof that a particular transaction is present.
 
-The unrelated general token issuance/transfer domain remains `k=20` until it receives the same
-circuit-specific process qualification. Stateful vesting, multisig and swap calls, program-state
-reorganization/rollback, and alternate-node recovery are also still open.
+The capped-token path is separated from the generic `k=20` domain in `db044e5`. Program
+deployment now carries independent funding and program circuit parameters: native deployment funding
+remains `k=16`, while the fixed token artifact, issuance, and mixed token/native-fee transfer use
+`ONYX_TOKEN_CIRCUIT_K=14`. This is a capacity selection, not a reduction in curve security. A real
+`k=20` deployment exceeded a 1,800-second wallet RPC deadline, and cold `k=16` verification also
+approached or exceeded 30 minutes. The token constraint set fits at `k=14`; consensus tests pin that
+relationship so future growth fails visibly.
+
+The extended local harness deploys a capped token, waits for activation, issues to an independent
+wallet, transfers part of the balance back while paying a native fee, and checks issuer, sequence,
+cap, tamper, pending-conflict, replay, balance, registry, commitment, and native-supply invariants.
+Deployment creation, verification, and wallet scanning all carry funding and program domains
+separately. A one-domain scanner was caught because it accepted the height-28 chain tip but retained
+the height-27 wallet balance; that scanner ABI has been split and its rebuilt ZK/Jade suites pass.
+Pending duplicate construction also performs a cheap funding-note precheck before token artifact
+construction.
+Transfer verification and state application receive both native and token values and select one from
+the authenticated backend id. This was added after deployment, activation, and issuance reached
+height 49 but a mixed token/native-fee transfer built at token `k=14` was presented to the native
+`k=16` verifier. The release-mode Rust proof/apply regression pins different values for the two
+domains and passes.
+
+The clean release-binary rehearsal exited zero and wrote
+`build/codex-zk/onyx-private-token-qualification.json`, marked
+`local-ci-not-release-evidence`. Deployment was mined at height 28, activation reached height 48,
+issuance was mined at height 49, and the mixed transfer was mined at height 50. All three nodes ended
+on `dde2b74470ed0d0a82cb6aeb45365f66594000f91e16b2048d6874de63dc4e11` with commitment root
+`3e4c4f8a6f509942186fac0025db2d50fadd9e30ceafe0c0309aa338fcb9c221`, `742000` bridged,
+`200003` fees, `541997` circulating native units, 11 commitments, two programs, and block program cost
+`378000`. The token id is
+`730901bd595a8732a5c85343b80b350f02baa3e7f2c928f4d4d7795c573d8b5e`; final token balances are 600
+for the issuer and 400 for the recipient.
+
+Eleven commitments are required. The mixed transfer creates three outputs: recipient token, issuer
+token change, and issuer native change after the fee. An earlier functional run converged at height 50
+but failed its report assertion because it expected 10; the audited 11-count assertion then passed in
+a clean rerun. Cold verifier initialization/backpressure, stateful vesting/multisig/swap calls,
+program-state reorganization and rollback, and alternate-node recovery are still open.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
