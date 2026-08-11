@@ -3,10 +3,12 @@
 
 import argparse
 import base64
+import contextlib
 import datetime
 import json
 import os
 import pathlib
+import sqlite3
 import socket
 import subprocess
 import tempfile
@@ -371,6 +373,8 @@ def main():
         onyx_a_p2p, onyx_a_rpc = unused_port(), unused_port()
         onyx_b_p2p, onyx_b_rpc = unused_port(), unused_port()
         onyx_c_p2p, onyx_c_rpc = unused_port(), unused_port()
+        rollback_p2p, rollback_rpc = unused_port(), unused_port()
+        rollback_isolation_port = unused_port()
         foreign_p2p, foreign_rpc = unused_port(), unused_port()
         wallet_rpc = unused_port()
         receiver_wallet_rpc = unused_port()
@@ -1324,6 +1328,7 @@ def main():
                 onyx_b_rpc,
                 MINING_ADDRESS_A,
                 token_activation_height - token_deployment_height,
+                timeout=1800,
             )
             wait_until(
                 "capped-token activation convergence",
@@ -1699,6 +1704,8 @@ def main():
                 if "error" not in response:
                     raise RuntimeError(f"wallet constructed invalid {label}: {response!r}")
 
+            confirmed_profile_transactions = {}
+
             def confirm_profile_call(label, parameters, expected_state, competitor=None):
                 nonlocal final_height, profile_commitments, audits, final_statuses, final_tip
                 initial = [
@@ -1717,6 +1724,7 @@ def main():
                 transaction = receiver_wallet.call(
                     "create_onyx_standard_program_call", parameters
                 )
+                confirmed_profile_transactions[label] = transaction
                 receiver_wallet.call(
                     "send_transaction",
                     {"binary_transaction": transaction["binary_transaction"]},
@@ -1964,12 +1972,311 @@ def main():
                 nodes + [wallet, receiver_wallet],
                 timeout=1800,
             )
+            pre_refund_audit = rpc_call(onyx_c.rpc_port, "get_onyx_supply_audit")
+            pre_refund_tip = onyx_c.status()["top_block_hash"]
+            # get_status reports the in-memory tip, while the blockchain transaction is committed
+            # on the daemon's periodic persistence timer. Wait for an explicit commit of this exact
+            # boundary before asking SQLite for a backup; otherwise a perfectly consistent backup
+            # can legitimately reopen one block behind the RPC-visible chain.
+            wait_until(
+                "durable height-78 refund boundary",
+                lambda: f"db_commit started... tip_height={final_height} "
+                in onyx_c.read_log(),
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            rollback_snapshot = root / "onyx-rollback-height-78-data"
+            rollback_snapshot.mkdir()
+            # subprocess.terminate() maps to a forceful process termination on Windows and can
+            # leave the newest SQLite transaction in a rollback journal. A raw directory copy can
+            # therefore reopen one block behind even though get_status reported the boundary tip.
+            # SQLite's online backup API captures a transactionally consistent committed image
+            # while the source node remains live.
+            # sqlite3.Connection.__exit__ commits or rolls back but does not close the handle.
+            # Explicit closing is required so Windows can remove the qualification directory.
+            with contextlib.closing(
+                sqlite3.connect(onyx_c.data / "blockchain.sqlite")
+            ) as source_db:
+                with contextlib.closing(
+                    sqlite3.connect(rollback_snapshot / "blockchain.sqlite")
+                ) as snapshot_db:
+                    source_db.backup(snapshot_db)
+            onyx_c_data = onyx_c.data
+            onyx_c.stop()
+            nodes.remove(onyx_c)
+            onyx_c = Node(
+                binary,
+                root,
+                "onyx-c-refund-confirmation",
+                "onyx",
+                onyx_c_p2p,
+                onyx_c_rpc,
+                onyx_b_p2p,
+                onyx_c_data,
+            )
+            nodes.append(onyx_c)
+            wait_until(
+                "node C reopen at refund boundary",
+                lambda: onyx_c.status()["top_block_height"] >= final_height
+                and onyx_c.status()["top_block_hash"] == pre_refund_tip,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
             swap_refund_result = confirm_profile_call(
                 "swap-timeout-refund", swap_refund_parameters, canonical_field(906)
             )
+
+            # Reopen a closed height-78 snapshot as an isolated branch, extend it past the
+            # height-79 refund, and force every qualification node to undo the program call.
+            # This exercises database undo, program-state rollback, commitment restoration,
+            # wallet alternate-node synchronization, and mempool eligibility restoration.
+            rollback_fork = Node(
+                binary,
+                root,
+                "onyx-refund-rollback-fork",
+                "onyx",
+                rollback_p2p,
+                rollback_rpc,
+                rollback_isolation_port,
+                data=rollback_snapshot,
+            )
+            nodes.append(rollback_fork)
+            wait_until(
+                "height-78 rollback fork reopen",
+                lambda: rollback_fork.status()["top_block_height"] == 78
+                and rollback_fork.status()["top_block_hash"] == pre_refund_tip,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "refund-rollback-longer-branch",
+                rollback_rpc,
+                MINING_ADDRESS_A,
+                2,
+                timeout=1800,
+            )
+            rollback_height = 80
+            rollback_tip = wait_until(
+                "isolated refund rollback branch height",
+                lambda: (
+                    rollback_fork.status()["top_block_hash"]
+                    if rollback_fork.status()["top_block_height"] >= rollback_height
+                    else None
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+
+            primary_data = (onyx_a.data, onyx_b.data, onyx_c.data)
+            for node in (onyx_a, onyx_b, onyx_c):
+                node.stop()
+                nodes.remove(node)
+            onyx_a = Node(
+                binary,
+                root,
+                "onyx-a-refund-rollback",
+                "onyx",
+                onyx_a_p2p,
+                onyx_a_rpc,
+                rollback_p2p,
+                primary_data[0],
+            )
+            onyx_b = Node(
+                binary,
+                root,
+                "onyx-b-refund-rollback",
+                "onyx",
+                onyx_b_p2p,
+                onyx_b_rpc,
+                rollback_p2p,
+                primary_data[1],
+            )
+            onyx_c = Node(
+                binary,
+                root,
+                "onyx-c-refund-rollback",
+                "onyx",
+                onyx_c_p2p,
+                onyx_c_rpc,
+                rollback_p2p,
+                primary_data[2],
+            )
+            nodes.extend((onyx_a, onyx_b, onyx_c))
+            wait_until(
+                "refund rollback, node reopen, and wallet convergence",
+                lambda: all(
+                    node.status()["top_block_height"] >= rollback_height
+                    and node.status()["top_block_hash"] == rollback_tip
+                    for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+                )
+                and wallet.status()["top_block_height"] >= rollback_height
+                and receiver_wallet.status()["top_block_height"] >= rollback_height
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == receiver_native_balance
+                and receiver_wallet.call(
+                    "get_onyx_asset_balance", token_balance_request
+                )["balance"]
+                == sender_token_balance
+                and wallet.call("get_onyx_asset_balance", token_balance_request)["balance"]
+                == token_transfer_amount,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            rolled_back_states = [
+                rpc_call(
+                    node.rpc_port,
+                    "get_onyx_standard_program_state",
+                    {
+                        "program_id": swap_refund_parameters["program_id"],
+                        "application": swap_refund_parameters["application"],
+                    },
+                )
+                for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+            ]
+            if rolled_back_states[1:] != rolled_back_states[:-1] or any(
+                state.get("found") for state in rolled_back_states
+            ):
+                raise RuntimeError(
+                    f"refund program state survived rollback: {rolled_back_states!r}"
+                )
+            rollback_audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+            ]
+            restored_fields = (
+                "total_bridged",
+                "total_fees",
+                "circulating_supply",
+                "commitment_count",
+                "commitment_root",
+                "program_count",
+            )
+            if rollback_audits[1:] != rollback_audits[:-1] or any(
+                rollback_audits[0].get(field) != pre_refund_audit.get(field)
+                for field in restored_fields
+            ):
+                raise RuntimeError(
+                    "refund rollback did not restore the exact pre-call audit: "
+                    f"before={pre_refund_audit!r} after={rollback_audits!r}"
+                )
+
+            receiver_before_alternate_reopen = receiver_wallet.call("get_onyx_status")
+            receiver_token_before_alternate_reopen = receiver_wallet.call(
+                "get_onyx_asset_balance", token_balance_request
+            )
+            receiver_wallet.stop()
+            receiver_wallet = WalletProcess(
+                walletd,
+                root,
+                receiver_file,
+                receiver_data,
+                receiver_wallet_rpc,
+                onyx_c_rpc,
+                WALLET_PASSWORD,
+                name="shielded-receiver-rollback-wallet",
+            )
+            wait_until(
+                "receiver wallet reopen through alternate node C",
+                lambda: receiver_wallet.status()["top_block_height"] >= rollback_height
+                and receiver_wallet.call("get_onyx_status")
+                == receiver_before_alternate_reopen
+                and receiver_wallet.call(
+                    "get_onyx_asset_balance", token_balance_request
+                )
+                == receiver_token_before_alternate_reopen,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+
+            refund_transaction = confirmed_profile_transactions["swap-timeout-refund"]
+            # Nodes that reorganized away the original refund restore it to their pools, but the
+            # isolated fork never saw that transaction. Submitting only to a node that already has
+            # it produces a duplicate response and does not guarantee a fresh broadcast. Submit the
+            # identical binary directly to every node that still lacks it, then require universal
+            # visibility before reconfirmation.
+            for node in (onyx_a, onyx_b, onyx_c, rollback_fork):
+                if transaction_known(node, refund_transaction["transaction_hash"]):
+                    continue
+                response = rpc_response(
+                    node.rpc_port,
+                    "send_transaction",
+                    {"binary_transaction": refund_transaction["binary_transaction"]},
+                )
+                if "error" in response:
+                    raise RuntimeError(
+                        f"{node.name} rejected rolled-back refund resubmission: {response!r}"
+                    )
+            wait_until(
+                "rolled-back refund mempool eligibility",
+                lambda: all(
+                    transaction_known(node, refund_transaction["transaction_hash"])
+                    for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+                ),
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "rolled-back-refund-reconfirmation",
+                rollback_rpc,
+                MINING_ADDRESS_A,
+                1,
+                timeout=1800,
+            )
+            final_height = 81
+            wait_until(
+                "rolled-back refund reconfirmation",
+                lambda: all(
+                    node.status()["top_block_height"] >= final_height
+                    for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+                )
+                and wallet.status()["top_block_height"] >= final_height
+                and receiver_wallet.status()["top_block_height"] >= final_height,
+                nodes + [wallet, receiver_wallet],
+                timeout=1800,
+            )
+            restored_states = [
+                rpc_call(
+                    node.rpc_port,
+                    "get_onyx_standard_program_state",
+                    {
+                        "program_id": swap_refund_parameters["program_id"],
+                        "application": swap_refund_parameters["application"],
+                    },
+                )
+                for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+            ]
+            if restored_states[1:] != restored_states[:-1] or any(
+                not state.get("found")
+                or state.get("state") != canonical_field(906)
+                or state.get("block_height") != final_height
+                for state in restored_states
+            ):
+                raise RuntimeError(
+                    f"refund state did not reconfirm after rollback: {restored_states!r}"
+                )
+            audits = [
+                rpc_call(node.rpc_port, "get_onyx_supply_audit")
+                for node in (onyx_a, onyx_b, onyx_c, rollback_fork)
+            ]
+            if audits[1:] != audits[:-1] or (
+                audits[0].get("total_fees") != 500003
+                or audits[0].get("circulating_supply") != receiver_native_balance
+                or audits[0].get("commitment_count") != profile_commitments
+                or audits[0].get("program_count") != profile_program_count
+            ):
+                raise RuntimeError(
+                    f"refund reconfirmation audit did not converge: {audits!r}"
+                )
+            final_statuses = [onyx_a.status(), onyx_b.status(), onyx_c.status()]
+            final_tip = final_statuses[0]["top_block_hash"]
             print(
                 "vesting, multisig, and swap profiles passed activation, timelock, threshold, "
-                "preimage/refund, pending-conflict, replay, state, wallet, and supply checks"
+                "preimage/refund, pending-conflict, replay, rollback/reopen, state, wallet, and "
+                "supply checks"
             )
 
             foreign = Node(
@@ -2074,6 +2381,11 @@ def main():
                     "swap_timeout_refund": "passed",
                     "pending_swap_branch_conflict_rejection": "passed",
                     "remaining_standard_profile_state_convergence": "passed",
+                    "swap_refund_program_state_rollback": "passed",
+                    "swap_refund_commitment_root_rollback": "passed",
+                    "swap_refund_mempool_eligibility_restoration": "passed",
+                    "swap_refund_reconfirmation_after_node_reopen": "passed",
+                    "swap_refund_alternate_node_wallet_reopen": "passed",
                     "foreign_network_rejection": "passed",
                 },
                 "final_supply_audit": audits[0],
@@ -2153,6 +2465,21 @@ def main():
                     "swap_refund": {
                         **swap_refund_result,
                         "timeout_height": refund_timeout_height,
+                    },
+                    "swap_refund_rollback": {
+                        "pre_refund_height": 78,
+                        "pre_refund_tip": pre_refund_tip,
+                        "first_confirmation_height": 79,
+                        "rollback_height": rollback_height,
+                        "rollback_tip": rollback_tip,
+                        "reconfirmation_height": final_height,
+                        "transaction_hash": refund_transaction["transaction_hash"],
+                        "restored_commitment_root": rollback_audits[0][
+                            "commitment_root"
+                        ],
+                        "restored_commitment_count": rollback_audits[0][
+                            "commitment_count"
+                        ],
                     },
                 },
             }
