@@ -1682,6 +1682,43 @@ mod tests {
             CanonicalField::from_field(output_commitment).bytes()
         );
 
+        extracted_network.fill(0);
+        extracted_anchor.fill(0);
+        extracted_expiry = 0;
+        extracted_fee = 0;
+        extracted_nullifiers.fill(0);
+        extracted_nullifier_count = 0;
+        extracted_commitments.fill(0);
+        extracted_commitment_count = 0;
+        assert_eq!(
+            crate::onyx_extract_authenticated_transfer_delta(
+                encoded.as_ptr(),
+                encoded.len(),
+                extracted_network.as_mut_ptr(),
+                extracted_anchor.as_mut_ptr(),
+                &mut extracted_expiry,
+                &mut extracted_fee,
+                extracted_nullifiers.as_mut_ptr(),
+                1,
+                &mut extracted_nullifier_count,
+                extracted_commitments.as_mut_ptr(),
+                1,
+                &mut extracted_commitment_count,
+            ),
+            1
+        );
+        assert_eq!(extracted_network, [1; NETWORK_ID_BYTES]);
+        assert_eq!(extracted_anchor, anchor.bytes());
+        assert_eq!((extracted_expiry, extracted_fee), (100, 5));
+        assert_eq!(
+            (extracted_nullifier_count, extracted_nullifiers),
+            (1, nullifier)
+        );
+        assert_eq!(
+            (extracted_commitment_count, extracted_commitments),
+            (1, CanonicalField::from_field(output_commitment).bytes())
+        );
+
         // Seed the state with the note being spent. This models its creation in a prior block and
         // gives the verifier an authentic canonical snapshot whose root is the proof anchor.
         let mut prestate = crate::state::ShieldedState::<DEPTH>::new(10);
@@ -1692,6 +1729,16 @@ mod tests {
         prestate.apply_bridge(&funding, [1; 32], 30, 0, 0).unwrap();
         assert_eq!(prestate.root(), anchor);
         let previous_snapshot = prestate.encode_snapshot();
+        assert_eq!(
+            crate::onyx_precheck_authenticated_transfer_state(
+                previous_snapshot.as_ptr(),
+                previous_snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+            ),
+            1
+        );
 
         let mut snapshot_ptr = std::ptr::null_mut();
         let mut snapshot_len = 0usize;
@@ -1721,6 +1768,16 @@ mod tests {
         crate::onyx_free(snapshot_ptr, snapshot_len);
         let restored = crate::state::ShieldedState::<DEPTH>::decode_snapshot(&snapshot).unwrap();
         assert!(restored.is_spent(&Nullifier(nullifier)));
+        assert_eq!(
+            crate::onyx_precheck_authenticated_transfer_state(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+            ),
+            0
+        );
         assert_eq!(restored.leaf_count(), 2);
         assert_ne!(restored.root(), anchor);
         assert_eq!(

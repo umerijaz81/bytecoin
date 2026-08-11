@@ -95,6 +95,47 @@ bool Halo2ProofSystem::verify_and_extract_transfer(const BinaryArray &encoded, u
 	return true;
 }
 
+bool Halo2ProofSystem::extract_authenticated_transfer_delta(
+    const BinaryArray &encoded, VerifiedTransferDelta *delta) {
+	if (delta != nullptr)
+		*delta = VerifiedTransferDelta{};
+	if (encoded.empty() || delta == nullptr)
+		return false;
+	std::array<uint8_t, 16 * 32> nullifiers{};
+	std::array<uint8_t, 16 * 32> commitments{};
+	size_t nullifier_count = 0;
+	size_t commitment_count = 0;
+	VerifiedTransferDelta result;
+	const int rc = onyx_extract_authenticated_transfer_delta(encoded.data(), encoded.size(),
+	    result.network.data(), result.anchor.data(), &result.expiry_height, &result.fee,
+	    nullifiers.data(), 16, &nullifier_count, commitments.data(), 16, &commitment_count);
+	if (rc != 1 || nullifier_count > 16 || commitment_count > 16)
+		return false;
+	result.nullifiers.resize(nullifier_count);
+	result.commitments.resize(commitment_count);
+	for (size_t i = 0; i < nullifier_count; ++i)
+		std::copy(nullifiers.begin() + i * 32, nullifiers.begin() + (i + 1) * 32,
+		    result.nullifiers[i].begin());
+	for (size_t i = 0; i < commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.commitments[i].begin());
+	*delta = std::move(result);
+	return true;
+}
+
+Halo2ProofSystem::AdmissionPrecheck Halo2ProofSystem::precheck_authenticated_transfer_state(
+    const BinaryArray &snapshot, const BinaryArray &encoded, uint32_t merkle_depth) {
+	if (snapshot.empty() || encoded.empty())
+		return AdmissionPrecheck::INVALID;
+	const int rc = onyx_precheck_authenticated_transfer_state(
+	    snapshot.data(), snapshot.size(), encoded.data(), encoded.size(), merkle_depth);
+	if (rc == 1)
+		return AdmissionPrecheck::ELIGIBLE;
+	if (rc == 0)
+		return AdmissionPrecheck::CONFLICT;
+	return AdmissionPrecheck::INVALID;
+}
+
 bool Halo2ProofSystem::verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t merkle_depth, uint32_t native_circuit_k,
     uint32_t token_circuit_k,

@@ -853,7 +853,35 @@ gate: the current synchronous networking architecture can still accumulate reque
 limiter, and sustained sequential valid-proof traffic remains expensive. Live parallel/RSS/load
 qualification and request-rate/backlog bounds are still required.
 
-1. Add authenticated metadata extractors for deployments, issuance, and private token transfers only
+#### Implemented: authenticated private-transfer prechecks and single-proof admission
+
+Native and private-token transfer envelopes now have a state-independent authenticated metadata
+extractor. It decodes the bounded canonical `AuthorizedTransaction`, verifies every spend
+authorization and the binding signature, and only then exposes the signed network, anchor, expiry,
+fee, nullifiers, and commitments. It deliberately does not inspect or trust an unverified Halo2
+proof. The extractor is used by semantic fee calculation and `get_tx_fee()`, so read-only fee paths
+can no longer trigger proof verification.
+
+External mempool admission uses the authenticated nullifiers to reject a pending pool conflict, then
+decodes the rollback-safe snapshot and rejects an already-spent nullifier before Halo2. An eligible
+transaction still executes `verify_apply_transfer`, which verifies the complete proof, network,
+expiry, anchor window, nullifier state, and state transition. The resulting fee must equal the signed
+authenticated fee. Pool bookkeeping uses the authenticated nullifier/commitment delta only after
+that full stateful verifier succeeds.
+
+Before this change, transfer admission verified the same proof during semantic fee extraction,
+`verify_and_extract_transfer`, and state application. It now performs cheap signature authentication
+for metadata and exactly one mandatory stateful Halo2 verification. Block validation retains full
+stateful proof verification through transaction application; the new helper cannot admit a
+transaction or change consensus validity.
+
+Focused validation constructs a real proof-bearing transfer, checks identical metadata from the full
+and authenticated extractors, observes an eligible precheck against the funding snapshot, applies the
+proof, and then observes a conflict against the spent snapshot. Malformed input clears every output
+before returning failure. `cargo check --release`, the optimized proof regression, ZK and non-ZK
+Release daemon/test builds, and both `tests.exe --jade` runs pass.
+
+1. Add authenticated metadata extractors for deployments and issuance only
    where signatures bind every identifier used for early rejection. Never reject from unauthenticated
    program IDs, sequences, anchors, or nullifiers.
 2. Add bounded network backlog/rate policy and cancellation around the fail-fast verifier permit,

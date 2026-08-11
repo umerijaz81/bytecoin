@@ -221,6 +221,13 @@ Contention returns retryable RPC `VERIFIER_BUSY` (`-104`) and is not a P2P ban r
 and empty-source reorg restoration bypass the limiter. Unit coverage and both ZK/non-ZK Release builds
 pass, but a live parallel valid-proof/RSS test is still required before this is release evidence.
 
+Private-transfer admission also authenticates the signed public transaction metadata before Halo2.
+Pending or committed nullifier conflicts therefore fail before proof verification, and fee-only
+queries no longer invoke Halo2. Eligible transfers still execute the complete stateful proof/apply
+operation exactly once before acceptance. The focused optimized regression covers fresh eligibility,
+full application, and the resulting spent-nullifier conflict; live cold/warm and parallel-load
+measurements remain required.
+
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.

@@ -180,9 +180,8 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 	if (tx.version == parameters::TRANSACTION_VERSION_ONYX) {
 		if (tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 			zk::Halo2ProofSystem::VerifiedTransferDelta delta;
-			if (!zk::Halo2ProofSystem::verify_and_extract_transfer(
-			        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH,
-			        parameters::ONYX_TRANSFER_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K, &delta))
+			if (!zk::Halo2ProofSystem::extract_authenticated_transfer_delta(
+			        tx.onyx_envelope, &delta))
 				return false;
 			*fee = delta.fee;
 			return true;

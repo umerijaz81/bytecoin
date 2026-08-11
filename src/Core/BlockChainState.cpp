@@ -173,10 +173,9 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 #ifdef onyx_USE_ZK
 		if (tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 			zk::Halo2ProofSystem::VerifiedTransferDelta verified;
-			if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
-			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TRANSFER_CIRCUIT_K,
-			        parameters::ONYX_TOKEN_CIRCUIT_K, &verified))
-				throw ConsensusError("Invalid Onyx authorized transfer");
+			if (!zk::Halo2ProofSystem::extract_authenticated_transfer_delta(
+			        tx.onyx_envelope, &verified))
+				throw ConsensusError("Invalid Onyx transfer authorization");
 			return verified.fee;
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
@@ -814,8 +813,10 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	const bool is_onyx = tx.version == m_currency.onyx_transaction_version;
 	const bool is_zero_fee_standard_call = is_onyx &&
 	                                           tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
-	// These policy checks precede validate_tx_semantic because transfers, bridges, deployments, and
-	// issuance verify proofs while extracting their fee. Empty sources are internal deterministic
+	zk::Halo2ProofSystem::VerifiedTransferDelta authenticated_transfer_delta;
+	bool has_authenticated_transfer_delta = false;
+	// These policy checks precede validate_tx_semantic because bridges, deployments, and issuance
+	// still verify proofs while extracting metadata. Empty sources are internal deterministic
 	// reorg restoration and deliberately bypass this non-consensus admission limiter.
 	if (is_zero_fee_standard_call &&
 	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
@@ -825,10 +826,27 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		if (!onyx_verifier_permit)
 			throw OnyxVerifierBusy("Onyx verifier admission is busy; retry later");
 	}
+	if (is_onyx && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+		if (!zk::Halo2ProofSystem::extract_authenticated_transfer_delta(
+		        tx.onyx_envelope, &authenticated_transfer_delta))
+			throw ConsensusError("Invalid Onyx transfer authorization");
+		has_authenticated_transfer_delta = true;
+		for (const auto &nullifier : authenticated_transfer_delta.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return false;
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		const auto state_precheck = zk::Halo2ProofSystem::precheck_authenticated_transfer_state(
+		    snapshot, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH);
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::INVALID)
+			throw ConsensusError("Invalid Onyx transfer state precheck");
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
+			throw ConsensusError("Onyx transfer nullifier already spent");
+	}
 #endif
 	const size_t my_size = binary_tx.size();
-	// Validate against the block miners can build next before using the fee for pool ordering. Onyx
-	// fees live in the opaque authorized envelope and cannot be recovered by legacy get_tx_fee().
+	// Validate against the block miners can build next before using the authenticated opaque-envelope
+	// fee for pool ordering.
 	const Height tip_height = get_tip_height();
 	const uint8_t next_block_major_version =
 	    m_currency.get_next_block_major_version(tip_height);
@@ -846,10 +864,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	std::array<uint8_t, 32> onyx_issuance_program_id{};
 	bool has_onyx_issuance_program_id = false;
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
-		if (!zk::Halo2ProofSystem::verify_and_extract_transfer(tx.onyx_envelope,
-		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TRANSFER_CIRCUIT_K,
-		        parameters::ONYX_TOKEN_CIRCUIT_K, &onyx_delta))
-			throw ConsensusError("Invalid Onyx authorized transfer");
+		invariant(has_authenticated_transfer_delta, "authenticated transfer delta missing");
+		onyx_delta = authenticated_transfer_delta;
 		BinaryArray snapshot;
 		read_onyx_snapshot(&snapshot);
 		BinaryArray dry_run_snapshot;
@@ -862,9 +878,6 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		        &dry_run_fee) ||
 		    dry_run_fee != onyx_delta.fee)
 			throw ConsensusError("Onyx transfer rejected against current state");
-		for (const auto &nullifier : onyx_delta.nullifiers)
-			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
-				return false;
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL) {

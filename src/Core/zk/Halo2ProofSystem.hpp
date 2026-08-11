@@ -103,6 +103,11 @@ public:
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k);
 	static bool verify_and_extract_transfer(const BinaryArray &encoded, uint32_t merkle_depth,
 	    uint32_t native_circuit_k, uint32_t token_circuit_k, VerifiedTransferDelta *delta);
+	// Signature-authenticated extraction and state precheck are rejection/bookkeeping helpers only.
+	static bool extract_authenticated_transfer_delta(
+	    const BinaryArray &encoded, VerifiedTransferDelta *delta);
+	static AdmissionPrecheck precheck_authenticated_transfer_state(
+	    const BinaryArray &snapshot, const BinaryArray &encoded, uint32_t merkle_depth);
 	static bool verify_apply_transfer(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t native_circuit_k,
 	    uint32_t token_circuit_k,

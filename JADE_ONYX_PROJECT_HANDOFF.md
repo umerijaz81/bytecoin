@@ -736,6 +736,12 @@ Validation performed before commit:
   non-consensus limiter. Admission also returns its already-verified fee to RPC/P2P, removing the
   former duplicate proof-backed fee extraction outside the permit. ZK and non-ZK Release builds and
   Jade tests pass; live parallel backlog/RSS and sustained sequential-load qualification remain open.
+- Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
+  calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
+  precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
+  before admission. This removes the former three proof verifications in the admission path without
+  weakening block or mempool consensus checks. The optimized real-transfer regression proves fresh
+  eligibility and post-apply conflict behavior; ZK/non-ZK Release builds and Jade tests pass.
 
 Validation not yet completed:
 

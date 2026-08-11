@@ -542,6 +542,88 @@ pub extern "C" fn onyx_verify_and_extract_transfer(
     })
 }
 
+/// Authenticate a canonical transfer envelope and extract its signed public delta without
+/// invoking Halo2. This is suitable for fee calculation, pool bookkeeping, and rejection-only
+/// admission filters; callers must still perform full proof verification before acceptance.
+#[no_mangle]
+pub extern "C" fn onyx_extract_authenticated_transfer_delta(
+    encoded: *const u8,
+    encoded_len: usize,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    fee_out: *mut u64,
+    nullifiers_out: *mut u8,
+    nullifier_capacity: usize,
+    nullifier_count_out: *mut usize,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || fee_out.is_null()
+            || nullifiers_out.is_null()
+            || nullifier_count_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            *fee_out = 0;
+            *nullifier_count_out = 0;
+            *commitment_count_out = 0;
+        }
+        let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(transaction) => transaction,
+            Err(_) => return -2,
+        };
+        if nullifier_capacity < transaction.preimage.spends.len()
+            || commitment_capacity < transaction.preimage.outputs.len()
+        {
+            return -4;
+        }
+        if authorization::verify_authorized_transaction(&transaction).is_err() {
+            return 0;
+        }
+        let preimage = &transaction.preimage;
+        unsafe {
+            std::ptr::copy_nonoverlapping(preimage.network_id.as_ptr(), network_out, 16);
+            std::ptr::copy_nonoverlapping(preimage.anchor.bytes().as_ptr(), anchor_out, 32);
+            *expiry_height_out = preimage.expiry_height;
+            *fee_out = preimage.fee;
+            *nullifier_count_out = preimage.spends.len();
+            *commitment_count_out = preimage.outputs.len();
+            for (index, spend) in preimage.spends.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    spend.nullifier.0.as_ptr(),
+                    nullifiers_out.add(index * 32),
+                    32,
+                );
+            }
+            for (index, output) in preimage.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+        }
+        1
+    })
+}
+
 /// Verify and extract a canonical fee-funded standard-program deployment.
 #[no_mangle]
 pub extern "C" fn onyx_verify_program_deployment(
@@ -1390,6 +1472,62 @@ fn precheck_authenticated_standard_program_state<const DEPTH: usize>(
         }
     }
     Ok(true)
+}
+
+fn precheck_authenticated_transfer_state<const DEPTH: usize>(
+    snapshot: &[u8],
+    transaction: &transaction::AuthorizedTransaction,
+) -> Result<bool, ()> {
+    let state = state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?;
+    Ok(!transaction
+        .preimage
+        .spends
+        .iter()
+        .any(|spend| state.is_spent(&spend.nullifier)))
+}
+
+/// Authenticate a transfer and cheaply reject nullifiers already spent in the snapshot. Full
+/// proof verification and state application remain mandatory after an eligible result.
+#[no_mangle]
+pub extern "C" fn onyx_precheck_authenticated_transfer_state(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+        {
+            return -1;
+        }
+        let transaction = match transaction::AuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(transaction) => transaction,
+            Err(_) => return -2,
+        };
+        if authorization::verify_authorized_transaction(&transaction).is_err() {
+            return -2;
+        }
+        let snapshot = unsafe { slice::from_raw_parts(snapshot, snapshot_len) };
+        let eligible = match merkle_depth {
+            2 => precheck_authenticated_transfer_state::<2>(snapshot, &transaction),
+            4 => precheck_authenticated_transfer_state::<4>(snapshot, &transaction),
+            32 => precheck_authenticated_transfer_state::<32>(snapshot, &transaction),
+            _ => return -3,
+        };
+        match eligible {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => -2,
+        }
+    })
 }
 
 /// Authenticate and decode a contextual standard-program envelope, then reject already-spent
@@ -4070,6 +4208,34 @@ mod tests {
                 &mut second_count,
             ),
             -3
+        );
+        assert_eq!(
+            (network, anchor, expiry, fee, first_count, second_count),
+            ([0; 16], [0; 32], 0, 0, 0, 0)
+        );
+
+        network.fill(0xff);
+        anchor.fill(0xff);
+        expiry = u64::MAX;
+        fee = u64::MAX;
+        first_count = usize::MAX;
+        second_count = usize::MAX;
+        assert_eq!(
+            onyx_extract_authenticated_transfer_delta(
+                malformed.as_ptr(),
+                malformed.len(),
+                network.as_mut_ptr(),
+                anchor.as_mut_ptr(),
+                &mut expiry,
+                &mut fee,
+                rows.as_mut_ptr(),
+                1,
+                &mut first_count,
+                rows.as_mut_ptr(),
+                1,
+                &mut second_count,
+            ),
+            -2
         );
         assert_eq!(
             (network, anchor, expiry, fee, first_count, second_count),

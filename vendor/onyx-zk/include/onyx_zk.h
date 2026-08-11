@@ -82,6 +82,21 @@ int onyx_verify_and_extract_transfer(
     uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
 	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
 
+/* Authenticate a transfer and extract its signed public delta without verifying the Halo2 proof.
+ * This is only for fee calculation, bookkeeping, and rejection filters; full verification remains
+ * mandatory before acceptance. */
+int onyx_extract_authenticated_transfer_delta(
+    const uint8_t *encoded, size_t encoded_len,
+    uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out, uint64_t *fee_out,
+    uint8_t *nullifiers_out, size_t nullifier_capacity, size_t *nullifier_count_out,
+	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
+
+/* Authenticate a transfer and reject nullifiers already spent in the snapshot without invoking
+ * Halo2. Returns 1 eligible, 0 conflicting, or a negative value for malformed input/snapshot. */
+int onyx_precheck_authenticated_transfer_state(
+    const uint8_t *snapshot, size_t snapshot_len,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth);
+
 /* Verify an authorized transfer, enforce network and expiry, and atomically advance the canonical
  * shielded-state snapshot. Pass NULL/0 for the first snapshot and a nonzero anchor window. The
  * returned snapshot must be released with onyx_free. -5 denotes a state-policy violation. */
