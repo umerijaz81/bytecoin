@@ -328,6 +328,22 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         self.programs.len()
     }
 
+    pub fn nullifier_count(&self) -> usize {
+        self.nullifiers.values.len()
+    }
+
+    pub fn anchor_count(&self) -> usize {
+        self.anchors.len()
+    }
+
+    pub fn program_state_count(&self) -> usize {
+        self.program_states.len()
+    }
+
+    pub fn issuance_count(&self) -> usize {
+        self.issuance.len()
+    }
+
     pub fn program_registry(&self) -> &ProgramRegistry {
         &self.programs
     }

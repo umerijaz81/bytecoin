@@ -15,6 +15,7 @@
 #include "common/Invariant.hpp"
 #include "common/StringTools.hpp"
 #include "platform/DB.hpp"
+#include "platform/DBsqlite3.hpp"
 #include "version.hpp"
 
 #include "../tests/crypto/benchmarks.hpp"
@@ -121,6 +122,15 @@ int main(int argc, const char *argv[]) {
 		USAGE += "    " + t.first + "\n";
 	if (cmd.show_help(USAGE.c_str(), cn::app_version()))
 		return 0;
+	const char *db_crash_mode = cmd.get("--db-crash-child");
+	const char *db_crash_path = cmd.get("--db-crash-path");
+	if (db_crash_mode != nullptr || db_crash_path != nullptr) {
+		if (db_crash_mode == nullptr || db_crash_path == nullptr) {
+			std::cerr << "Both --db-crash-child and --db-crash-path are required" << std::endl;
+			return 2;
+		}
+		return platform::DBsqliteKV::run_crash_test_child(db_crash_mode, db_crash_path);
+	}
 
 	int found_on_cmd_line = 0;
 	for (const auto &t : all) {

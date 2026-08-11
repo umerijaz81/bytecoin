@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "DBsqlite3.hpp"
+#include <cstdlib>
 #include <cstdio>
 #include <iostream>
 #include "PathTools.hpp"
@@ -331,6 +332,49 @@ void DBsqliteKV::backup_db(const std::string &path, const std::string &dst_path)
 		std::remove(dst_path_expanded.c_str());
 		throw platform::sqlite::Error("sqlite backup failed: " + detail);
 	}
+}
+
+int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string &path) {
+	const std::string state_key = "Z";
+	const std::string undo_key  = "z" + std::string(32, 'B');
+	const std::string before    = "snapshot-before";
+	const std::string after     = "snapshot-after";
+	if (mode == "prepare") {
+		delete_db(path);
+		DBsqliteKV db(platform::O_CREATE_NEW, path);
+		db.put(state_key, before, false);
+		db.commit_db_txn();
+		return 0;
+	}
+	if (mode == "crash-after-state-write" || mode == "crash-before-commit" ||
+	    mode == "crash-after-commit") {
+		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+		db.put(state_key, after, false);
+		if (mode == "crash-after-state-write")
+			std::_Exit(85);
+		db.put(undo_key, before, true);
+		if (mode == "crash-before-commit")
+			std::_Exit(86);
+		db.commit_db_txn();
+		std::_Exit(87);
+	}
+	DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+	std::string state;
+	std::string undo;
+	if (!db.get(state_key, state))
+		throw sqlite::Error("crash recovery lost the Onyx state key");
+	const bool has_undo = db.get(undo_key, undo);
+	if (mode == "verify-before") {
+		if (state != before || has_undo)
+			throw sqlite::Error("uncommitted Onyx state/undo writes survived process termination");
+		return 0;
+	}
+	if (mode == "verify-after") {
+		if (state != after || !has_undo || undo != before)
+			throw sqlite::Error("committed Onyx state/undo pair was not recovered atomically");
+		return 0;
+	}
+	throw sqlite::Error("unknown DB crash-test child mode: " + mode);
 }
 
 void DBsqliteKV::run_tests() {

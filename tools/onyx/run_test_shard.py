@@ -22,6 +22,7 @@ SHARDS = {
         "program_context",
         "spend_auth_circuit",
         "state",
+        "state_model_tests",
         "tests",
         "transaction",
         "types",

@@ -83,10 +83,16 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DUSE_SQLITE=ON
           -DONYX_ZK=ON
-      - name: Build load node, wallet, and miner
+      - name: Build load node, wallet, miner, and tests
         run: >-
           cmake --build build-onyx-load --parallel 2
-          --target bytecoind walletd minerd
+          --target bytecoind walletd minerd tests
+      - name: Exercise SQLite Onyx state/undo crash boundaries
+        run: >-
+          python3 tests/network/test_onyx_db_crash_process.py
+          --tests build-onyx-load/artifacts/bin/tests
+          --revision "${{ github.sha }}"
+          --report build-onyx-load/onyx-db-crash-process.json
       - name: Run real valid-proof concurrency and post-load progress qualification
         run: >-
           python3 tests/network/test_onyx_verifier_load_process.py
@@ -99,7 +105,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onyx-verifier-load-${{ github.sha }}
-          path: build-onyx-load/onyx-verifier-load-process*.json
+          path: |
+            build-onyx-load/onyx-verifier-load-process*.json
+            build-onyx-load/onyx-db-crash-process.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 90

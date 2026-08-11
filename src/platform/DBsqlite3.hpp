@@ -116,6 +116,7 @@ public:
 	static std::string clean_key(const std::string &key);  // replace invalid chars for printing
 
 	static void run_tests();
+	static int run_crash_test_child(const std::string &mode, const std::string &path);
 	static void delete_db(const std::string &path);
 	static void backup_db(const std::string &path, const std::string &dst_path);
 
