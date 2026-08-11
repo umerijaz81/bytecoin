@@ -240,6 +240,14 @@ anchor, sequence, and cumulative supply before Halo2. Eligible issuance still ru
 proof/application once. Fresh, replay, and corrupted-issuer cases pass in the optimized regression;
 bridge fee extraction and live backlog/RSS/load measurements remain open.
 
+The P2P body-download backlog now has explicit non-consensus bounds: 32 active transaction downloads
+per peer and 128 process-wide. A transaction ID that encounters local Onyx verifier overload is
+suppressed for 30 seconds across alternate-peer retry callbacks and reannouncements. Cooldown memory
+is capped at 1,024 IDs with expiry cleanup and bounded eviction. Duplicate hashes in a descriptor
+message are rejected before state insertion. The policy boundary tests and both
+feature-mode builds pass. These controls must still be exercised under real parallel proofs while
+recording peak RSS, CPU, latency, ordinary wallet progress, and block application progress.
+
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.

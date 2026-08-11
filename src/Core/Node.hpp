@@ -143,6 +143,11 @@ protected:
 	std::map<Hash, DownloadInfo> chain_blocks;
 	void remove_chain_block(std::map<Hash, DownloadInfo>::iterator it);
 	std::map<Hash, P2PProtocolBytecoin *> downloading_transactions;
+	static constexpr size_t MAX_GLOBAL_TRANSACTION_DOWNLOADS = 128;
+	static constexpr size_t MAX_PEER_TRANSACTION_DOWNLOADS = 32;
+	static constexpr size_t MAX_ONYX_VERIFIER_RETRY_COOLDOWNS = 1024;
+	BoundedRetryCooldown<Hash> m_onyx_verifier_retry_cooldown{
+	    MAX_ONYX_VERIFIER_RETRY_COOLDOWNS, std::chrono::seconds(30)};
 
 	class P2PProtocolBytecoin : public P2PProtocolBasic {
 		Node *const m_node;

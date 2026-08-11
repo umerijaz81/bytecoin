@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -69,5 +72,75 @@ private:
 	size_t m_active = 0;
 	std::unordered_map<std::string, size_t> m_active_by_source;
 };
+
+// A bounded non-consensus cooldown for proof-verifier overload. Expired entries are removed lazily;
+// when full, the entry expiring soonest is evicted so attacker-selected transaction ids cannot grow
+// memory without bound.
+template<typename Key> class BoundedRetryCooldown {
+public:
+	using Clock = std::chrono::steady_clock;
+	using TimePoint = Clock::time_point;
+
+	BoundedRetryCooldown(size_t max_entries, Clock::duration cooldown)
+	    : m_max_entries(max_entries), m_cooldown(cooldown) {}
+
+	void defer(const Key &key, TimePoint now = Clock::now()) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		prune(now);
+		if (m_max_entries == 0 || m_cooldown <= Clock::duration::zero())
+			return;
+		auto found = m_entries.find(key);
+		if (found != m_entries.end()) {
+			found->second = now + m_cooldown;
+			return;
+		}
+		if (m_entries.size() >= m_max_entries) {
+			auto earliest = std::min_element(m_entries.begin(), m_entries.end(),
+			    [](const auto &left, const auto &right) { return left.second < right.second; });
+			m_entries.erase(earliest);
+		}
+		m_entries.emplace(key, now + m_cooldown);
+	}
+
+	bool is_deferred(const Key &key, TimePoint now = Clock::now()) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		auto found = m_entries.find(key);
+		if (found == m_entries.end())
+			return false;
+		if (found->second <= now) {
+			m_entries.erase(found);
+			return false;
+		}
+		return true;
+	}
+
+	size_t size(TimePoint now = Clock::now()) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		prune(now);
+		return m_entries.size();
+	}
+
+private:
+	void prune(TimePoint now) {
+		for (auto it = m_entries.begin(); it != m_entries.end();) {
+			if (it->second <= now)
+				it = m_entries.erase(it);
+			else
+				++it;
+		}
+	}
+
+	const size_t m_max_entries;
+	const Clock::duration m_cooldown;
+	std::mutex m_mutex;
+	std::map<Key, TimePoint> m_entries;
+};
+
+inline size_t bounded_transaction_download_admission(size_t candidates, size_t peer_active,
+    size_t global_active, size_t peer_limit, size_t global_limit) {
+	const size_t peer_available = peer_active >= peer_limit ? 0 : peer_limit - peer_active;
+	const size_t global_available = global_active >= global_limit ? 0 : global_limit - global_active;
+	return std::min(candidates, std::min(peer_available, global_available));
+}
 
 }  // namespace cn

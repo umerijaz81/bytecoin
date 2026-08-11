@@ -412,7 +412,27 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		    "Onyx verifier permits leaked or admitted an internal empty source");
 		invariant(api::cnd::SendTransaction::VERIFIER_BUSY == -104,
 		    "retryable Onyx verifier overload RPC code changed");
-		std::cout << "  [onyx] bounded verifier admission and retryable overload code ok" << std::endl;
+
+		using Cooldown = BoundedRetryCooldown<int>;
+		const auto start = Cooldown::TimePoint{};
+		Cooldown cooldown(2, std::chrono::seconds(10));
+		cooldown.defer(1, start);
+		cooldown.defer(2, start + std::chrono::seconds(1));
+		invariant(cooldown.is_deferred(1, start + std::chrono::seconds(2)) && cooldown.size(start) == 2,
+		    "Onyx verifier retry cooldown failed to retain bounded entries");
+		cooldown.defer(3, start + std::chrono::seconds(2));
+		invariant(!cooldown.is_deferred(1, start + std::chrono::seconds(2)) &&
+		              cooldown.is_deferred(2, start + std::chrono::seconds(2)) &&
+		              cooldown.is_deferred(3, start + std::chrono::seconds(2)),
+		    "Onyx verifier retry cooldown did not evict the earliest bounded entry");
+		invariant(cooldown.size(start + std::chrono::seconds(12)) == 0,
+		    "Onyx verifier retry cooldown retained expired entries");
+		invariant(bounded_transaction_download_admission(100, 0, 0, 32, 128) == 32 &&
+		              bounded_transaction_download_admission(100, 31, 127, 32, 128) == 1 &&
+		              bounded_transaction_download_admission(100, 32, 0, 32, 128) == 0 &&
+		              bounded_transaction_download_admission(100, 0, 128, 32, 128) == 0,
+		    "transaction download backlog bounds changed");
+		std::cout << "  [onyx] bounded verifier admission, cooldown, and download backlog ok" << std::endl;
 	}
 
 	// 1. Zero-mixin / undersized ring MUST be rejected under Jade (the loophole is closed).

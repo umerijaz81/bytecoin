@@ -926,11 +926,32 @@ and both Jade suites pass.
 With transfer, deployment, standard-call, and issuance filters complete, bridge metadata is the only
 remaining Onyx fee path that verifies a proof during semantic/read-only fee extraction.
 
-1. Add bounded network backlog/rate policy and cancellation around the fail-fast verifier permit,
-   without consensus divergence or peer bans for local overload.
-2. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
+#### Implemented: bounded P2P download backlog and verifier-overload cooldown
+
+Transaction descriptor messages may advertise up to 1,000 entries, but the node no longer turns an
+entire chunk from every connected peer into simultaneous object downloads. A saturating admission
+calculation limits active transaction-body downloads to 32 per peer and 128 process-wide. Candidates
+remain sorted by fee-per-byte, so the bounded slots go to the highest-priority eligible descriptors.
+These are local resource limits only; they do not affect block validity, transaction validity, or the
+consensus pool ordering rules. Duplicate hashes inside one descriptor message are rejected as a
+protocol violation before insertion, replacing the former invariant-crash path.
+
+When an Onyx transaction reaches the node while the proof-verifier permit is occupied, its
+transaction ID enters a 30-second retry cooldown. Reannouncements and alternate-peer retry callbacks
+consult that table before requesting the body again. The table is capped at 1,024 IDs, removes expired
+entries lazily, and evicts the entry expiring soonest when full, preventing attacker-selected IDs from
+creating unbounded memory. Overload remains a non-ban condition, and a later announcement after the
+cooldown can retry normally.
+
+Deterministic tests cover saturation at every peer/global boundary, cooldown retention and expiry,
+bounded eviction, permit reuse, and the stable retryable RPC code. ZK and non-ZK Release daemon/test
+builds and both Jade suites pass. The caps bound queued transaction bodies and retry metadata; they do
+not yet constitute live evidence for verifier RSS, CPU fairness, or ordinary wallet/block progress
+under parallel proof load.
+
+1. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
    application on named hardware. Pin thresholds only after measuring variance.
-3. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
+2. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
 
 Other remaining O5 work:
 

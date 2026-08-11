@@ -754,6 +754,13 @@ Validation performed before commit:
   verifier once and must reproduce program ID, sequence, and amount. Fee-only reads are proof-free;
   the real issuance regression and both build modes pass. Bridge fee extraction is now the remaining
   proof-backed read path.
+- P2P transaction-body downloads are now capped at 32 active requests per peer and 128 process-wide,
+  regardless of the larger descriptor chunk allowed on the wire. Verifier-overloaded transaction IDs
+  enter a bounded 30-second cooldown; the table holds at most 1,024 IDs and evicts the soonest-expiring
+  entry when full. Alternate peers and reannouncements consult the same cooldown, overload remains a
+  non-ban event, and later announcements may retry. Duplicate hashes within one descriptor message
+  now cause a controlled protocol disconnect rather than an insertion invariant. Deterministic policy tests and both feature-mode
+  builds pass; live parallel proof/RSS/fairness qualification remains open.
 
 Validation not yet completed:
 

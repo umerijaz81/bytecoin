@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include <iostream>
+#include <set>
 #include "Config.hpp"
 #include "CryptoNoteTools.hpp"
 #include "Node.hpp"
@@ -195,7 +196,12 @@ bool Node::P2PProtocolBytecoin::on_transaction_descs(
 	//	Hash previous_hash;
 	// TODO - check that descs are in limits set at request
 	std::vector<TransactionDesc> request_transaction_descs;
+	std::set<Hash> message_hashes;
 	for (const auto &desc : descs) {
+		if (!message_hashes.insert(desc.hash).second) {
+			disconnect("Duplicate transaction descriptor hash");
+			return false;
+		}
 		if (desc.size == 0) {
 			disconnect("SyncPool desc size == 0");
 			return false;
@@ -219,10 +225,16 @@ bool Node::P2PProtocolBytecoin::on_transaction_descs(
 			continue;  // Already have
 		if (m_node->downloading_transactions.count(desc.hash) != 0)
 			continue;  // Already downloading
+		if (m_node->m_onyx_verifier_retry_cooldown.is_deferred(desc.hash))
+			continue;  // Local verifier overload cooldown; a later announcement can retry.
 		request_transaction_descs.push_back(desc);
 	}
 	//	TODO - remove sort when no 3.4.0 version is running in the wild
 	std::sort(request_transaction_descs.begin(), request_transaction_descs.end(), greater_fee_per_byte);
+	const size_t admitted = bounded_transaction_download_admission(request_transaction_descs.size(),
+	    m_downloading_transaction_count, m_node->downloading_transactions.size(),
+	    Node::MAX_PEER_TRANSACTION_DOWNLOADS, Node::MAX_GLOBAL_TRANSACTION_DOWNLOADS);
+	request_transaction_descs.resize(admitted);
 	if (!request_transaction_descs.empty())
 		m_download_transactions_timer.once(m_node->m_config.download_transaction_timeout);
 	m_downloading_transaction_count += request_transaction_descs.size();
@@ -242,6 +254,11 @@ void Node::P2PProtocolBytecoin::transaction_download_finished(const Hash &tid, b
 	auto tit = m_transaction_descs.find(tid);
 	if (tit == m_transaction_descs.end())
 		return;
+	if (!success && m_node->m_onyx_verifier_retry_cooldown.is_deferred(tid)) {
+		m_transaction_descs.erase(tit);
+		m_stem_transaction_hops.erase(tid);
+		return;
+	}
 	if (success) {
 		tit = m_transaction_descs.erase(tit);
 		m_stem_transaction_hops.erase(tid);
@@ -541,6 +558,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 			} catch (const OnyxVerifierBusy &) {
 				// Local non-consensus overload is retryable and never a peer-ban reason.
 				retryable_verifier_overload = true;
+				m_node->m_onyx_verifier_retry_cooldown.defer(tid);
 			} catch (const std::exception &ex) {
 				return disconnect("NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex));
 			}
