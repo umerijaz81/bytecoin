@@ -782,6 +782,13 @@ No parameters.
 | `peer_list_white`                      | `[]Peer`       | Peers `bytecoind` has successfully connected to.         |
 | `peer_list_gray`                       | `[]Peer`       | Peers given by other nodes.                              |
 | `connections`                          | `[]Connection` | Current connections to peers.                            |
+| `onyx_verifier_active`                 | `uint64`       | Active external Onyx mempool verifiers.                  |
+| `onyx_verifier_peak_active`            | `uint64`       | Peak active external Onyx mempool verifiers.             |
+| `onyx_verifier_acquired`               | `uint64`       | Verifier permits acquired since daemon start.            |
+| `onyx_verifier_rejected_global`        | `uint64`       | Requests rejected by the global verifier bound.          |
+| `onyx_verifier_rejected_source`        | `uint64`       | Requests rejected by the per-source verifier bound.      |
+| `transaction_downloads_active`         | `uint64`       | Active P2P transaction-body downloads.                   |
+| `onyx_verifier_retry_cooldowns`        | `uint64`       | IDs currently suppressed after verifier overload.        |
 
 
 #### Example 1

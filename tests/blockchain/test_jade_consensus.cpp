@@ -402,6 +402,11 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		    "Onyx verifier admission did not issue an independent source permit");
 		invariant(admission.try_acquire("peer-c") == nullptr,
 		    "Onyx verifier admission exceeded its global bound");
+		const auto saturated_stats = admission.stats();
+		invariant(saturated_stats.active == 2 && saturated_stats.peak_active == 2 &&
+		              saturated_stats.acquired == 2 && saturated_stats.rejected_source == 1 &&
+		              saturated_stats.rejected_global == 1,
+		    "Onyx verifier observability counters changed at saturation");
 		peer_a.reset();
 		auto peer_c = admission.try_acquire("peer-c");
 		invariant(peer_c != nullptr && admission.active() == 2,

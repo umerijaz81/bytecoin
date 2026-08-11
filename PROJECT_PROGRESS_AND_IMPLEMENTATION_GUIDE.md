@@ -949,6 +949,12 @@ builds and both Jade suites pass. The caps bound queued transaction bodies and r
 not yet constitute live evidence for verifier RSS, CPU fairness, or ordinary wallet/block progress
 under parallel proof load.
 
+The private `get_statistics` response now exposes active and peak verifier count, successful permit
+acquisitions, global/per-source permit rejections, active transaction-body downloads, and current
+retry-cooldown table size. These counters are updated under the same lock as permit state, allowing a
+load report to prove both resource behavior and whether the intended limiter engaged. Optional
+zero-valued fields may be absent from JSON; qualification readers must treat absence as zero.
+
 1. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
    application on named hardware. Pin thresholds only after measuring variance.
 2. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.

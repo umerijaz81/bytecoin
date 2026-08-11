@@ -761,6 +761,10 @@ Validation performed before commit:
   non-ban event, and later announcements may retry. Duplicate hashes within one descriptor message
   now cause a controlled protocol disconnect rather than an insertion invariant. Deterministic policy tests and both feature-mode
   builds pass; live parallel proof/RSS/fairness qualification remains open.
+- Private daemon statistics expose current/peak Onyx verifier concurrency, permit acquisitions,
+  global/per-source overload rejections, active transaction downloads, and current cooldown entries.
+  These are the authoritative limiter-engagement inputs for the pending live load report; absent
+  optional fields mean zero.
 
 Validation not yet completed:
 

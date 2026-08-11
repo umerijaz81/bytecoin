@@ -651,6 +651,14 @@ api::cnd::GetStatistics::Response Node::create_statistics_response(const api::cn
 	res.genesis_block_hash = m_block_chain.get_currency().genesis_block_hash;
 	res.start_time         = m_start_time;
 	m_block_chain.fill_statistics(res);
+	const auto verifier = m_block_chain.get_onyx_verifier_admission_stats();
+	res.onyx_verifier_active = verifier.active;
+	res.onyx_verifier_peak_active = verifier.peak_active;
+	res.onyx_verifier_acquired = verifier.acquired;
+	res.onyx_verifier_rejected_global = verifier.rejected_global;
+	res.onyx_verifier_rejected_source = verifier.rejected_source;
+	res.transaction_downloads_active = downloading_transactions.size();
+	res.onyx_verifier_retry_cooldowns = m_onyx_verifier_retry_cooldown.size();
 	return res;
 }
 

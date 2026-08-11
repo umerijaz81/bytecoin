@@ -18,6 +18,14 @@ namespace cn {
 // consensus state: callers applying blocks or restoring transactions after a reorg bypass it.
 class OnyxVerifierAdmission {
 public:
+	struct Stats {
+		size_t active = 0;
+		size_t peak_active = 0;
+		uint64_t acquired = 0;
+		uint64_t rejected_global = 0;
+		uint64_t rejected_source = 0;
+	};
+
 	class Permit {
 	public:
 		~Permit() { m_owner.release(m_source); }
@@ -43,11 +51,24 @@ public:
 		std::lock_guard<std::mutex> lock(m_mutex);
 		const auto found = m_active_by_source.find(source);
 		const size_t source_active = found == m_active_by_source.end() ? 0 : found->second;
-		if (m_active >= m_global_limit || source_active >= m_per_source_limit)
+		if (m_active >= m_global_limit) {
+			++m_rejected_global;
 			return nullptr;
+		}
+		if (source_active >= m_per_source_limit) {
+			++m_rejected_source;
+			return nullptr;
+		}
 		++m_active;
 		++m_active_by_source[source];
+		++m_acquired;
+		m_peak_active = std::max(m_peak_active, m_active);
 		return std::unique_ptr<Permit>(new Permit(*this, source));
+	}
+
+	Stats stats() const {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		return Stats{m_active, m_peak_active, m_acquired, m_rejected_global, m_rejected_source};
 	}
 
 	size_t active() const {
@@ -70,6 +91,10 @@ private:
 	const size_t m_per_source_limit;
 	mutable std::mutex m_mutex;
 	size_t m_active = 0;
+	size_t m_peak_active = 0;
+	uint64_t m_acquired = 0;
+	uint64_t m_rejected_global = 0;
+	uint64_t m_rejected_source = 0;
 	std::unordered_map<std::string, size_t> m_active_by_source;
 };
 
@@ -114,14 +139,14 @@ public:
 		return true;
 	}
 
-	size_t size(TimePoint now = Clock::now()) {
+	size_t size(TimePoint now = Clock::now()) const {
 		std::lock_guard<std::mutex> lock(m_mutex);
 		prune(now);
 		return m_entries.size();
 	}
 
 private:
-	void prune(TimePoint now) {
+	void prune(TimePoint now) const {
 		for (auto it = m_entries.begin(); it != m_entries.end();) {
 			if (it->second <= now)
 				it = m_entries.erase(it);
@@ -132,8 +157,8 @@ private:
 
 	const size_t m_max_entries;
 	const Clock::duration m_cooldown;
-	std::mutex m_mutex;
-	std::map<Key, TimePoint> m_entries;
+	mutable std::mutex m_mutex;
+	mutable std::map<Key, TimePoint> m_entries;
 };
 
 inline size_t bounded_transaction_download_admission(size_t candidates, size_t peer_active,

@@ -70,6 +70,9 @@ public:
 	Amount minimum_pool_fee_per_byte(bool zero_if_not_full, Hash *minimal_tid = nullptr) const;
 	bool add_transaction(const Hash &tid, const Transaction &, const BinaryArray &binary_tx, bool check_sigs,
 	    const std::string &source_address, Amount *verified_fee = nullptr);
+	OnyxVerifierAdmission::Stats get_onyx_verifier_admission_stats() const {
+		return m_onyx_verifier_admission.stats();
+	}
 	bool get_largest_referenced_height(const TransactionPrefix &tx, Height *block_height) const;
 
 	size_t get_tx_pool_version() const { return m_tx_pool_version; }

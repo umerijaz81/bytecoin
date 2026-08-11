@@ -248,6 +248,11 @@ message are rejected before state insertion. The policy boundary tests and both
 feature-mode builds pass. These controls must still be exercised under real parallel proofs while
 recording peak RSS, CPU, latency, ordinary wallet progress, and block application progress.
 
+The authenticated private `get_statistics` endpoint supplies `onyx_verifier_active`,
+`onyx_verifier_peak_active`, acquisition and rejection counters, active transaction downloads, and
+retry-cooldown count. Load evidence must sample these alongside process RSS/CPU and treat an omitted
+optional zero-valued field as zero.
+
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.

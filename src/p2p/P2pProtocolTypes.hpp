@@ -123,6 +123,13 @@ struct CoreStatistics {
 	Height upgrade_decided_height               = 0;
 	Height upgrade_votes_in_top_block           = 0;
 	uint64_t node_database_size                 = 0;
+	size_t onyx_verifier_active                 = 0;
+	size_t onyx_verifier_peak_active            = 0;
+	uint64_t onyx_verifier_acquired             = 0;
+	uint64_t onyx_verifier_rejected_global      = 0;
+	uint64_t onyx_verifier_rejected_source      = 0;
+	size_t transaction_downloads_active         = 0;
+	size_t onyx_verifier_retry_cooldowns        = 0;
 };
 
 // inline bool operator<(const NetworkAddressLegacy &a, const NetworkAddressLegacy &b) {
