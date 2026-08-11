@@ -849,10 +849,21 @@ fee it already verified, so RPC/P2P descriptor construction no longer calls proo
 and per-source bounds, fail-fast behavior, permit release/reuse, empty-source rejection at the limiter,
 and the stable retryable RPC code. Both ZK and non-ZK Release builds plus `tests.exe --jade` pass.
 
-This closes concurrent in-process verification growth, but it is not yet the complete performance
-gate: the current synchronous networking architecture can still accumulate requests outside the
-limiter, and sustained sequential valid-proof traffic remains expensive. Live parallel/RSS/load
-qualification and request-rate/backlog bounds are still required.
+Commit `585bc4d` moves external HTTP and P2P mempool proof work behind a one-job bounded worker while
+leaving every chain, pool, peer, and relay mutation on the node event loop. Admission captures the
+exact tip, next height, network, envelope, and Onyx snapshot; completion requires that context to
+remain exact and reruns mutable conflict checks before applying the worker-produced next snapshot.
+Busy work is never queued without bound. HTTP disconnect drops response ownership safely, P2P
+disconnect removes the late-completion peer pointer, and block consensus still verifies every proof
+independently.
+
+The real two-node/two-wallet valid-proof harness passed locally: one accepted request, one
+`VERIFIER_BUSY`, 141 successful daemon samples during proof work, zero sampling/transport errors,
+peak verifier activity one, successful asynchronous P2P propagation, both nodes at height 5, and
+exact final commitment/supply equality. Peak daemon RSS was 563,384,320 bytes with 266,223,616 bytes
+growth on this host. This closes the synchronous-dispatch blocker but remains local evidence;
+repeated cold/warm, invalid-proof, mixed-ingress, named-hardware, and sustained campaigns are still
+required before setting release thresholds.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 
@@ -943,8 +954,8 @@ were already fully accepted.
 The optimized real bridge regression compares every structural field with the full stateful verifier.
 Malformed extraction clears every output. `cargo check --release`, both focused Rust tests, ZK and
 non-ZK Release daemon/test builds, both Jade suites, and the complete C++ ZK suite pass. This completes
-proof-free semantic and read-only fee handling for every Onyx transaction family; live valid-proof
-load qualification remains the next performance milestone.
+proof-free semantic and read-only fee handling for every Onyx transaction family. The first live
+HTTP/P2P valid-proof qualification now passes in `585bc4d`; broader repeated qualification remains.
 
 #### Implemented: bounded P2P download backlog and verifier-overload cooldown
 
@@ -965,9 +976,9 @@ cooldown can retry normally.
 
 Deterministic tests cover saturation at every peer/global boundary, cooldown retention and expiry,
 bounded eviction, permit reuse, and the stable retryable RPC code. ZK and non-ZK Release daemon/test
-builds and both Jade suites pass. The caps bound queued transaction bodies and retry metadata; they do
-not yet constitute live evidence for verifier RSS, CPU fairness, or ordinary wallet/block progress
-under parallel proof load.
+builds and both Jade suites pass. The `585bc4d` harness adds one bounded local live measurement of
+RSS, responsiveness, P2P propagation, wallet progress, and block progress; repeated/flood campaigns
+are still required for defensible fairness and resource ceilings.
 
 The private `get_statistics` response now exposes active and peak verifier count, successful permit
 acquisitions, global/per-source permit rejections, active transaction-body downloads, and current

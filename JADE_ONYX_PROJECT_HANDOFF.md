@@ -731,11 +731,11 @@ Validation performed before commit:
   and `0.0` seconds (below timer resolution) for the competing swap branch. Bounded verifier queues
   and the other transaction families remain the immediate DoS work.
 - External Onyx mempool proof work now has a fail-fast RAII bound of one active verifier globally and
-  per source, acquired before semantic fee/proof extraction. Contention returns retryable RPC `-104`;
-  P2P overload is not a ban reason. Blocks and empty-source reorg restoration bypass this
-  non-consensus limiter. Admission also returns its already-verified fee to RPC/P2P, removing the
-  former duplicate proof-backed fee extraction outside the permit. ZK and non-ZK Release builds and
-  Jade tests pass; live parallel backlog/RSS and sustained sequential-load qualification remain open.
+  per source plus, in `585bc4d`, a one-job asynchronous worker shared by HTTP and P2P. The worker
+  verifies against a captured immutable tip/height/snapshot; the event loop rejects stale results,
+  reruns mutable conflicts, and alone mutates chain/pool/peer state. Contention returns retryable RPC
+  `-104`; P2P overload is not a ban reason. Blocks still verify independently. ZK/non-ZK Release
+  builds and Jade tests pass, and the real two-node valid-proof HTTP/P2P harness passes locally.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -763,13 +763,14 @@ Validation performed before commit:
   builds pass; live parallel proof/RSS/fairness qualification remains open.
 - Private daemon statistics expose current/peak Onyx verifier concurrency, permit acquisitions,
   global/per-source overload rejections, active transaction downloads, and current cooldown entries.
-  These are the authoritative limiter-engagement inputs for the pending live load report; absent
-  optional fields mean zero.
+  These are the authoritative limiter-engagement inputs for live load reports; absent optional fields
+  mean zero.
 - `tools/onyx_verifier_load.py` turns distinct prebuilt Onyx transactions into a barrier-synchronized
   local load run, samples process RSS/CPU plus limiter statistics, records response latency and
-  classification, checks post-load RPC health, and atomically emits revision-bound JSON. Its unit
-  tests pass. A real proof-bearing run on named hardware is still required before setting an RSS
-  threshold or treating the report as evidence.
+  classification, checks in-load/post-load RPC health, and atomically emits revision-bound JSON. The
+  `585bc4d` process harness passed with one accepted/one busy response, 141 successful daemon samples,
+  zero sampling/transport errors, verifier peak one, P2P propagation, height-5 progress, and exact
+  two-node supply equality. Its measured RSS remains host-local, not a release threshold.
 - Commit `7e46efb` makes bridge admission use proof-free canonical metadata extraction for semantic fee reads, then
   authenticates that metadata by resolving the legacy output and verifying the ownership ring
   signature before confirmed/pending key-image conflict checks. The ownership sighash binds the
@@ -932,10 +933,11 @@ Implemented:
 
 Remaining:
 
-- Bounded network backlog/rate policy, cancellation, live parallel/RSS qualification, and sustained
-  overload behavior beyond the implemented fail-fast single-verifier permit. Extend cheap rejection
-  to other transaction families only through authenticated metadata extractors.
-- Valid-proof denial-of-service load rather than only malformed/truncated input.
+- Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
+  HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
+- Add live invalid-proof floods, exact-duplicate/conflict load, disconnect/shutdown cancellation,
+  mixed RPC/P2P ingress, and explicit permit-leak/fairness checks. Extend cheap rejection only through
+  authenticated metadata extractors.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

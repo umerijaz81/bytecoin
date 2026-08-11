@@ -1,10 +1,10 @@
 # Bytecoin Jade/Onyx: Complete Project Progress and AI Implementation Handoff
 
-Document date: **2026-08-11**  
-Repository: `https://github.com/umerijaz81/bytecoin.git`  
-Working branch: `kimiK3/jade-onyx-hardening`  
-Committed revision reviewed: `1587b50` (`Document authenticated bridge admission`)
-Audience: a developer or another AI coding tool continuing this project
+- Document date: **2026-08-12**
+- Repository: `https://github.com/umerijaz81/bytecoin.git`
+- Working branch: `kimiK3/jade-onyx-hardening`
+- Committed revision reviewed: `585bc4d` (`Offload Onyx mempool proof verification`)
+- Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
 
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `1587b50` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `585bc4d` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,8 +48,8 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Current local `HEAD`: `1587b50`.
-- The local branch and `origin/kimiK3/jade-onyx-hardening` are synchronized at this revision.
+- Implementation baseline reviewed by this handoff: `585bc4d`; the documentation-only follow-up may
+  be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
 - `codex/jade-onyx-hardening` and `origin/codex/jade-onyx-hardening` are older ancestors of the current
@@ -67,13 +67,12 @@ git merge-base --is-ancestor origin/claude/bytecoin-privacy-analysis-n1nsck HEAD
 
 ### 3.2 Local changes that must be preserved
 
-The latest reviewed worktree contains:
+After committing the asynchronous verifier milestone, the reviewed worktree contains only the two
+pre-existing user-owned changes:
 
 ```text
  M .gitignore
 A  Bytecoin_Onyx_Security_Review.md
- M .github/workflows/onyx-qualification.yml
-?? tests/network/test_onyx_verifier_load_process.py
 ```
 
 Ownership and commit rules:
@@ -83,9 +82,8 @@ Ownership and commit rules:
   accidentally commit it with implementation work.
 - The authenticated bridge code is committed in `7e46efb`, documented in `1587b50`, and described in
   section 13.
-- The workflow edit and process test are an uncommitted diagnostic milestone. They currently expose a
-  real failing liveness/admission condition described in section 15. Do not label or commit them as a
-  passing qualification gate until that condition is fixed.
+- The asynchronous HTTP/P2P verifier boundary, workflow job, and real process harness are committed
+  in `585bc4d` and described in section 15.
 - Never use `git add -A` in this workspace.
 - Prefer `git commit --only <explicit paths>` and inspect `git status --short` before and after every
   commit.
@@ -149,7 +147,7 @@ builds, incident rehearsal, and governance approval for one exact frozen commit.
 | Jade hardening | Committed and locally tested | Independent review, historical compatibility, platform/long-run qualification |
 | O0 ZK foundation | Substantially repository-complete | Independent circuit/FFI audit, long valid/malformed fuzzing, benchmarks |
 | O1 shielded state | Substantially repository-complete | Differential state model, crash injection, independent consensus audit |
-| O2 private transfers | Committed and functionally process-qualified; valid-proof load is blocked on synchronous daemon dispatch | Async proof scheduling, live load evidence, public testnet, independent crypto/wallet audit |
+| O2 private transfers | Committed, functionally process-qualified, and locally valid-proof load-qualified over HTTP and P2P | Cold/warm and sustained load campaigns, public testnet, independent crypto/wallet audit |
 | O3 wallet/RPC | Committed | Hardware-wallet acceptance, multi-operator recovery tests, external review |
 | O4 migration | Committed and locally process-qualified | Public supply evidence, independent review, incident rehearsal |
 | O5 programs/compiler/SDKs | Major profiles committed and locally process-qualified | Load/performance campaign, sustained fuzzing, independent compiler/circuit audit |
@@ -661,7 +659,91 @@ Representative commits:
 - `c4c735c` - private load counters.
 - `8a1bf3a` - standalone load qualification runner and tests.
 
-### 15.2 Valid-proof process harness now exists in the working tree
+### 15.2 Bounded asynchronous proof boundary (committed in `585bc4d`)
+
+The synchronous daemon-dispatch blocker is fixed without making consensus state multithreaded. The
+implementation has an immutable worker phase and an event-loop commit phase:
+
+1. `BlockChainState::begin_onyx_mempool_verification` performs the duplicate check, acquires the
+   existing global/per-source permit, and captures the transaction hash, envelope, exact chain tip,
+   next height, network ID, and complete Onyx snapshot.
+2. `BoundedWorker` owns one background thread and admits at most one occupied job. It has no attacker-
+   controlled waiting queue. Worker exceptions are contained, and completions are queued for the
+   node event loop.
+3. `BlockChainState::verify_onyx_mempool_transaction` runs the complete stateful Halo2 proof/apply
+   operation against the captured immutable snapshot for transfers, standard calls, deployments,
+   issuance, or bridges. It records the typed authenticated result and next snapshot.
+4. HTTP submissions and downloaded P2P transaction bodies share the bounded executor. Busy HTTP
+   requests receive retryable `VERIFIER_BUSY`; P2P overload remains local and non-banning.
+5. Completion returns to the event loop. `add_transaction` requires the same transaction, envelope,
+   tip, next height, and snapshot. A changed state produces a retryable stale/busy result.
+6. Cheap authenticated metadata and every mutable pool conflict are checked again on the event loop.
+   Only then is the worker-produced next snapshot applied.
+7. Mempool admission performs one full proof verification. Block acceptance remains independent and
+   always verifies again; a mempool result is never trusted as a block-consensus cache.
+8. HTTP disconnect drops response ownership while the bounded job may safely finish. Node destruction
+   joins the worker before dependent node/chain state is destroyed.
+9. P2P disconnect nulls the pending source pointer. A valid late result may still enter the pool, but
+   a disconnected peer cannot be dereferenced or banned by completion.
+10. P2P download bookkeeping is released after scheduling, and completion notifies other peers so
+    alternate-download and overload-cooldown state remains coherent.
+
+Primary files are `src/Core/Multicore.*`, `src/Core/BlockChainState.*`, `src/Core/Node.*`, and
+`src/Core/Node_P2PProtocolBytecoin.cpp`. Deterministic Jade coverage checks one-job admission,
+concurrent rejection, event-loop-only completion, exception containment, exact context matching,
+and stale tip/height rejection.
+
+### 15.3 Real two-node valid-proof qualification result
+
+`tests/network/test_onyx_verifier_load_process.py` runs two connected ZK daemons, two wallets, and a
+miner. It mines legacy funds, confirms a real bridge, creates two distinct valid unsubmitted shielded
+transfers spending the same note, submits them concurrently, waits for P2P propagation, mines the
+accepted transaction, and compares both nodes' final supply state.
+
+The successful 2026-08-12 local report is
+`build/codex-zk/onyx-verifier-load-process-p2p.json`. Generated reports are intentionally not tracked
+release evidence. Results were:
+
+| Measurement/check | Result |
+|---|---:|
+| Submission classifications | one `accepted`, one `verifier_busy` |
+| Successful daemon samples during proof | 141 |
+| Daemon sampling errors / transport errors | 0 / 0 |
+| Peak active verifier count | 1 |
+| Peak primary-daemon RSS | 563,384,320 bytes |
+| Primary-daemon RSS growth | 266,223,616 bytes |
+| HTTP responsiveness during proof | passed |
+| P2P asynchronous propagation | passed |
+| Primary and relay final height | 5 |
+| Final circulating supply / bridged / fees | 741,998 / 742,000 / 2 on both nodes |
+| Final commitment root | exact match on both nodes |
+| Overall local harness result | passed |
+
+The report scope is `local-load-not-release-evidence`. It proves the specific event-loop liveness
+failure is fixed on this host; it does not establish cross-platform, cold/warm, sustained-load, or
+public-testnet thresholds. The runner now requires at least two successful in-load daemon samples,
+zero sampling errors, zero submission transport errors, and peak verifier concurrency at most one.
+
+Validation at `585bc4d`: ZK and non-ZK Release `bytecoind`/`tests` builds passed; both
+`tests.exe --jade` runs passed; Python compilation passed; and the load-runner unit suite passed 3/3.
+The complete C++ `--zk` suite passed for the same state/proof refactor before the later P2P dispatch
+addition; future consensus/proof edits must rerun it.
+
+### 15.4 Remaining verifier qualification work
+
+1. Repeat separate cold-start and warm-cache runs on named x86-64 and ARM64 hosts.
+2. Exercise exact duplicates, authenticated conflicts, invalid proofs, source disconnect, node
+   shutdown, and stale-chain completion under deterministic and live conditions.
+3. Run repeated RPC-only, P2P-only, and mixed-ingress campaigns while ordinary RPC, wallet scanning,
+   mining, and block application remain active.
+4. Add malformed-proof and valid-proof floods while proving queue/download/cooldown bounds and no
+   permit leaks.
+5. Establish percentile latency, CPU, and RSS thresholds from repeated measurements rather than the
+   single local run.
+6. Retain hosted CI artifacts for the exact committed revision and complete the independently
+   operated 14-day/10,000-block qualification.
+
+### 15.5 Historical valid-proof harness state before `585bc4d`
 
 `tests/network/test_onyx_verifier_load_process.py` now creates the previously missing real inputs. It:
 
@@ -674,8 +756,9 @@ Representative commits:
 7. if the load gate passes, mines the accepted transaction and checks wallet and supply progress;
 8. writes a wrapper report and preserves the raw load report.
 
-The working-tree workflow adds a scheduled/manual `verifier-valid-proof-load` job that builds the ZK
-daemon, wallet, and miner and runs this process scenario. The job must remain a qualification gate:
+The pre-`585bc4d` working-tree workflow added the scheduled/manual `verifier-valid-proof-load` job
+that is now committed. It builds the ZK daemon, wallet, and miner and runs this process scenario. The
+job must remain a qualification gate:
 do not add `--allow-no-overload`, reinterpret a transport failure as success, or weaken its assertions
 to make CI green.
 
@@ -687,10 +770,10 @@ Static validation completed on 2026-08-11:
 - Non-ZK Release `bytecoind` and `tests` built successfully.
 - ZK and non-ZK `tests.exe --jade` passed.
 
-### 15.3 Exact live-load blocker found on 2026-08-11
+### 15.6 Historical live-load blocker found on 2026-08-11
 
-This milestone is currently **blocked at daemon dispatch**, not at proof correctness or fixture
-generation. Two real runs produced complementary evidence:
+Before `585bc4d`, this milestone was blocked at daemon dispatch rather than proof correctness or
+fixture generation. The following failed runs explain why the asynchronous boundary was required:
 
 - First run, before the working-tree experiment: both concurrent HTTP requests were serialized by the
   daemon event loop. Each call spent about 34.4 seconds and returned `broadcast`; verifier acquisitions
@@ -717,10 +800,10 @@ A one-second post-release cooldown was prototyped and passed a deterministic uni
 run proved it insufficient: it cannot classify a connection that the blocked event loop has not read.
 The experiment was removed rather than retaining a delay that did not solve the liveness boundary.
 
-### 15.4 Required implementation to unblock load qualification
+### 15.7 Historical implementation design (completed in `585bc4d`)
 
-Implement bounded asynchronous external proof admission while preserving single-threaded state
-mutation. A safe decomposition is:
+The bounded asynchronous implementation now follows this design while preserving single-threaded
+state mutation:
 
 1. Parse and size-bound the request on the event loop.
 2. Perform cheap transaction decoding, duplicate/pool-capacity checks, and acquire the existing
@@ -946,15 +1029,15 @@ Exit condition: all Onyx semantic/read-only fee paths are proof-free or protocol
 rejections use only structurally bounded and cryptographically authenticated metadata, and every
 accepted transition retains one mandatory full stateful proof.
 
-### Priority 1 - unblock and execute real verifier-load qualification
+### Priority 1 - broaden verifier-load qualification (async blocker completed)
 
-The valid-transaction generator and process harness exist in the working tree. First implement the
-bounded async verification boundary described in section 15.4. Then run cold/warm concurrent
-workloads, sample RSS/CPU and limiter counters, prove ordinary daemon/wallet/mining progress during
-load, and save a revision-bound report.
+Commit `585bc4d` implements bounded asynchronous HTTP/P2P verification and the real two-node harness
+passes with continuous daemon sampling, deterministic overload, P2P propagation, mining/wallet
+progress, and exact cross-node supply equality. Continue with the cold/warm, disconnect/shutdown,
+invalid-proof, mixed-ingress, repeated-host, and hosted-CI campaigns in section 15.4.
 
-Exit condition: repeated results establish defensible resource thresholds without changing consensus
-validity or skipping verification.
+Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS
+thresholds without changing consensus validity or skipping verification.
 
 ### Priority 2 - deterministic differential state/crash runner
 

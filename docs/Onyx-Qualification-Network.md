@@ -211,16 +211,17 @@ and block consensus is unchanged. The clean rerun recorded the already-built com
 `0.015` seconds and the competing swap branch at `0.0` seconds (below timer resolution), under a
 conservative 30-second ceiling, in `build/codex-zk/onyx-precheck-qualification.json`.
 
-Cold/warm verifier initialization, bounded admission/backpressure, parallel valid-proof load,
-and memory-pressure qualification remain open. Authenticated cheap filters now cover standard calls,
-transfers, deployments, issuance, and bridges. No precheck may become a substitute for full canonical
-consensus verification.
+The first bounded parallel valid-proof HTTP/P2P run now passes in `585bc4d`. Cold/warm repetition,
+named-hardware variance, invalid-proof floods, sustained sequential load, and memory-pressure
+qualification remain open. Authenticated cheap filters cover standard calls, transfers, deployments,
+issuance, and bridges. No precheck may become a substitute for full canonical consensus verification.
 
-The node additionally enforces a non-blocking process-local permit before external Onyx mempool proof
-or fee verification: one active verifier globally and per source, with no internal wait queue.
-Contention returns retryable RPC `VERIFIER_BUSY` (`-104`) and is not a P2P ban reason. Block consensus
-and empty-source reorg restoration bypass the limiter. Unit coverage and both ZK/non-ZK Release builds
-pass, but a live parallel valid-proof/RSS test is still required before this is release evidence.
+The node additionally enforces a non-blocking process-local permit and one-job background worker
+before external Onyx mempool proof verification: one active verifier globally and per source, with no
+internal wait queue. HTTP and P2P share the worker. It verifies only an immutable captured snapshot;
+completion returns to the event loop, which requires an exact tip/height/snapshot match and reruns
+mutable conflicts. Contention returns retryable RPC `VERIFIER_BUSY` (`-104`) and is not a P2P ban
+reason. Block consensus and empty-source reorg restoration bypass the limiter and still verify fully.
 
 Private-transfer admission also authenticates the signed public transaction metadata before Halo2.
 Pending or committed nullifier conflicts therefore fail before proof verification, and fee-only
@@ -282,6 +283,14 @@ polls authenticated limiter statistics, records every response and latency, and 
 RPC health. It fails unless peak verifier concurrency remains at most one, a permit is observed, and
 overload is observed (unless `--allow-no-overload` is explicitly used for a control run). An RSS
 ceiling is enforced only when supplied; do not invent one before measuring the named host.
+
+`tests/network/test_onyx_verifier_load_process.py` constructs the required transactions itself and
+runs a connected primary/relay topology. The 2026-08-12 local run passed with one accepted and one
+busy submission, 141 successful daemon samples during proof work, zero sampling or submission
+transport errors, verifier peak one, successful P2P propagation, both nodes at height 5, and exact
+final commitment-root/supply equality. Peak primary RSS was 563,384,320 bytes and growth was
+266,223,616 bytes on that host. The report is explicitly scoped `local-load-not-release-evidence`;
+these values are observations, not universal ceilings.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
