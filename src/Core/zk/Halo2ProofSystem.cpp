@@ -206,6 +206,35 @@ bool Halo2ProofSystem::verify_program_deployment(const BinaryArray &encoded, uin
 	return true;
 }
 
+bool Halo2ProofSystem::extract_authenticated_program_deployment(const BinaryArray &encoded,
+    uint32_t merkle_depth, uint32_t program_circuit_k, VerifiedProgramDeployment *deployment) {
+	if (deployment != nullptr)
+		*deployment = VerifiedProgramDeployment{};
+	if (encoded.empty() || deployment == nullptr)
+		return false;
+	VerifiedProgramDeployment result;
+	std::array<uint8_t, 32 * 16> nullifiers{};
+	std::array<uint8_t, 32 * 16> commitments{};
+	size_t nullifier_count = 0;
+	size_t commitment_count = 0;
+	const int rc = onyx_extract_authenticated_program_deployment(encoded.data(), encoded.size(),
+	    merkle_depth, program_circuit_k, result.funding.network.data(), result.funding.anchor.data(),
+	    &result.funding.expiry_height, &result.funding.fee, result.program_id.data(),
+	    nullifiers.data(), 16, &nullifier_count, commitments.data(), 16, &commitment_count);
+	if (rc != 1 || nullifier_count > 16 || commitment_count > 16)
+		return false;
+	result.funding.nullifiers.resize(nullifier_count);
+	result.funding.commitments.resize(commitment_count);
+	for (size_t i = 0; i != nullifier_count; ++i)
+		std::copy(nullifiers.begin() + i * 32, nullifiers.begin() + (i + 1) * 32,
+		    result.funding.nullifiers[i].begin());
+	for (size_t i = 0; i != commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.funding.commitments[i].begin());
+	*deployment = std::move(result);
+	return true;
+}
+
 bool Halo2ProofSystem::verify_apply_program_deployment(const BinaryArray &snapshot,
     uint64_t anchor_window_blocks, const BinaryArray &encoded, uint32_t merkle_depth,
     uint32_t funding_circuit_k, uint32_t program_circuit_k,

@@ -196,9 +196,8 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
 			zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
-			if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
-			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K,
-			        parameters::ONYX_TOKEN_CIRCUIT_K, &deployment))
+			if (!zk::Halo2ProofSystem::extract_authenticated_program_deployment(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, &deployment))
 				return false;
 			*fee = deployment.funding.fee;
 			return true;

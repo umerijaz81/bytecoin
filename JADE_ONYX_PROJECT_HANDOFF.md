@@ -742,6 +742,11 @@ Validation performed before commit:
   before admission. This removes the former three proof verifications in the admission path without
   weakening block or mempool consensus checks. The optimized real-transfer regression proves fresh
   eligibility and post-apply conflict behavior; ZK/non-ZK Release builds and Jade tests pass.
+- Program deployment now authenticates the funding transaction and recomputes the canonical pinned
+  manifest program ID before using fee, nullifier, commitment, or program ID metadata. Pending pool
+  conflicts fail before Halo2; eligible deployments still execute the stateful proof/apply verifier
+  once and must return the same fee and program ID. The real deployment proof regression and both
+  feature-mode builds pass. Issuance remains the last proof-backed metadata family.
 
 Validation not yet completed:
 

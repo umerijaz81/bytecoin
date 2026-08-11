@@ -130,6 +130,15 @@ int onyx_verify_program_deployment(
     size_t nullifier_capacity, size_t *nullifier_count_out, uint8_t *commitments_out,
     size_t commitment_capacity, size_t *commitment_count_out);
 
+/* Authenticate deployment funding and recompute its canonical manifest-derived program id without
+ * Halo2. This helper is for fee calculation, bookkeeping, and rejection-only admission filters. */
+int onyx_extract_authenticated_program_deployment(
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t program_k,
+    uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out,
+    uint64_t *fee_out, uint8_t program_id_out[32], uint8_t *nullifiers_out,
+    size_t nullifier_capacity, size_t *nullifier_count_out, uint8_t *commitments_out,
+    size_t commitment_capacity, size_t *commitment_count_out);
+
 /* Verify, fee-fund, and atomically register a standard program in the state snapshot. */
 int onyx_verify_apply_program_deployment(
     const uint8_t *snapshot, size_t snapshot_len, uint64_t anchor_window_blocks,

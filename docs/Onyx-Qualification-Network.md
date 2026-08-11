@@ -228,6 +228,11 @@ operation exactly once before acceptance. The focused optimized regression cover
 full application, and the resulting spent-nullifier conflict; live cold/warm and parallel-load
 measurements remain required.
 
+Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
+canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
+stateful proof/application once and must reproduce the authenticated fee and program ID. The focused
+real-deployment regression passes; issuance metadata and live load measurements remain open.
+
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.

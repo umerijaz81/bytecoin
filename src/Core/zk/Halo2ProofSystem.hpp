@@ -115,6 +115,8 @@ public:
 	    BinaryArray *next_snapshot, uint64_t *fee);
 	static bool verify_program_deployment(const BinaryArray &encoded, uint32_t merkle_depth,
 	    uint32_t funding_circuit_k, uint32_t program_circuit_k, VerifiedProgramDeployment *deployment);
+	static bool extract_authenticated_program_deployment(const BinaryArray &encoded,
+	    uint32_t merkle_depth, uint32_t program_circuit_k, VerifiedProgramDeployment *deployment);
 	static bool verify_apply_program_deployment(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
 	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t funding_circuit_k,
 	    uint32_t program_circuit_k,

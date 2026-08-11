@@ -881,7 +881,26 @@ proof, and then observes a conflict against the spent snapshot. Malformed input 
 before returning failure. `cargo check --release`, the optimized proof regression, ZK and non-ZK
 Release daemon/test builds, and both `tests.exe --jade` runs pass.
 
-1. Add authenticated metadata extractors for deployments and issuance only
+#### Implemented: authenticated program-deployment extraction
+
+Program deployments now receive the same proof-free treatment without trusting a caller-provided
+program identifier. The Rust boundary decodes and structurally validates the complete deployment,
+verifies the signed funding transaction, enforces the bounded 1x1 through 2x2 funding shape and
+backend identity, reconstructs the pinned standard/token program entry for the selected Merkle depth
+and circuit domain, derives its canonical program ID, and requires the signed deployment call to name
+that exact ID. Only then does it expose the funding fee, nullifiers, commitments, and program ID.
+
+Semantic fee reads and `get_tx_fee()` use this authenticated extractor. Mempool admission rejects
+pending funding-nullifier or canonical-program-ID conflicts before Halo2. A non-conflicting
+deployment still executes `verify_apply_program_deployment` exactly once; it must return the same fee
+and program ID before the pool records the authenticated delta. This removes the former semantic,
+extraction, and application proof duplication while retaining full stateful verification.
+
+The optimized real-deployment regression matched the authenticated output to full verification and
+then completed stateful application/replay checks. Cargo check, ZK/non-ZK Release daemon and test
+builds, and both Jade suites pass.
+
+1. Add an authenticated metadata extractor for issuance only
    where signatures bind every identifier used for early rejection. Never reject from unauthenticated
    program IDs, sequences, anchors, or nullifiers.
 2. Add bounded network backlog/rate policy and cancellation around the fail-fast verifier permit,

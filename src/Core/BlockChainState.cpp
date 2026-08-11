@@ -187,10 +187,9 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
 			zk::Halo2ProofSystem::VerifiedProgramDeployment verified;
-			if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
-			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K,
-			        parameters::ONYX_TOKEN_CIRCUIT_K, &verified))
-				throw ConsensusError("Invalid Onyx program deployment");
+			if (!zk::Halo2ProofSystem::extract_authenticated_program_deployment(tx.onyx_envelope,
+			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, &verified))
+				throw ConsensusError("Invalid Onyx program deployment authorization");
 			return verified.funding.fee;
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
@@ -815,7 +814,9 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	                                           tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
 	zk::Halo2ProofSystem::VerifiedTransferDelta authenticated_transfer_delta;
 	bool has_authenticated_transfer_delta = false;
-	// These policy checks precede validate_tx_semantic because bridges, deployments, and issuance
+	zk::Halo2ProofSystem::VerifiedProgramDeployment authenticated_program_deployment;
+	bool has_authenticated_program_deployment = false;
+	// These policy checks precede validate_tx_semantic because bridges and issuance
 	// still verify proofs while extracting metadata. Empty sources are internal deterministic
 	// reorg restoration and deliberately bypass this non-consensus admission limiter.
 	if (is_zero_fee_standard_call &&
@@ -842,6 +843,18 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 			throw ConsensusError("Invalid Onyx transfer state precheck");
 		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
 			throw ConsensusError("Onyx transfer nullifier already spent");
+	}
+	if (is_onyx && tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+		if (!zk::Halo2ProofSystem::extract_authenticated_program_deployment(tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K,
+		        &authenticated_program_deployment))
+			throw ConsensusError("Invalid Onyx program deployment authorization");
+		has_authenticated_program_deployment = true;
+		for (const auto &nullifier : authenticated_program_deployment.funding.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return false;
+		if (m_memory_state_onyx_program_tx.count(authenticated_program_deployment.program_id) != 0)
+			return false;
 	}
 #endif
 	const size_t my_size = binary_tx.size();
@@ -917,11 +930,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
-		zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
-		if (!zk::Halo2ProofSystem::verify_program_deployment(tx.onyx_envelope,
-		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K,
-		        parameters::ONYX_TOKEN_CIRCUIT_K, &deployment))
-			throw ConsensusError("Invalid Onyx program deployment");
+		invariant(has_authenticated_program_deployment, "authenticated program deployment missing");
+		const auto &deployment = authenticated_program_deployment;
 		onyx_delta = deployment.funding;
 		onyx_program_id = deployment.program_id;
 		has_onyx_program_id = true;
@@ -938,11 +948,6 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		        next_block_height, &dry_run_snapshot, &dry_run_fee, &dry_run_program) ||
 		    dry_run_fee != onyx_delta.fee || dry_run_program != deployment.program_id)
 			throw ConsensusError("Onyx program deployment rejected against current state");
-		for (const auto &nullifier : onyx_delta.nullifiers)
-			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
-				return false;
-		if (m_memory_state_onyx_program_tx.count(onyx_program_id) != 0)
-			return false;
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {

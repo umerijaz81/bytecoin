@@ -721,6 +721,129 @@ pub extern "C" fn onyx_verify_program_deployment(
     })
 }
 
+fn authenticated_program_deployment_entry(
+    deployment: &program_deployment::AuthorizedProgramDeployment,
+    merkle_depth: u32,
+    program_k: u32,
+) -> Result<program::ProgramEntry, ()> {
+    if !(10..=20).contains(&program_k) {
+        return Err(());
+    }
+    let spends = deployment.funding.preimage.spends.len();
+    let outputs = deployment.funding.preimage.outputs.len();
+    if !(1..=2).contains(&spends)
+        || !(1..=2).contains(&outputs)
+        || deployment.funding.backend_id != proof::multi_transfer_backend_id(spends, outputs)
+    {
+        return Err(());
+    }
+    authorization::verify_authorized_transaction(&deployment.funding).map_err(|_| ())?;
+    let entry = match merkle_depth {
+        2 => deployment.program_entry::<2>(program_k),
+        4 => deployment.program_entry::<4>(program_k),
+        32 => deployment.program_entry::<32>(program_k),
+        _ => return Err(()),
+    }
+    .map_err(|_| ())?;
+    let program_id = entry.id().map_err(|_| ())?;
+    if deployment.funding.preimage.programs[0].program_id != program_id {
+        return Err(());
+    }
+    Ok(entry)
+}
+
+/// Authenticate deployment funding and recompute its canonical manifest-derived program id without
+/// invoking Halo2. This can drive fee calculation and rejection-only pool conflict checks.
+#[no_mangle]
+pub extern "C" fn onyx_extract_authenticated_program_deployment(
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    program_k: u32,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    fee_out: *mut u64,
+    program_id_out: *mut u8,
+    nullifiers_out: *mut u8,
+    nullifier_capacity: usize,
+    nullifier_count_out: *mut usize,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_deployment::MAX_PROGRAM_DEPLOYMENT_BYTES
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || fee_out.is_null()
+            || program_id_out.is_null()
+            || nullifiers_out.is_null()
+            || nullifier_count_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            *fee_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+            *nullifier_count_out = 0;
+            *commitment_count_out = 0;
+        }
+        let deployment = match program_deployment::AuthorizedProgramDeployment::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(deployment) => deployment,
+            Err(_) => return -2,
+        };
+        let funding = &deployment.funding.preimage;
+        if nullifier_capacity < funding.spends.len() || commitment_capacity < funding.outputs.len()
+        {
+            return -4;
+        }
+        let entry =
+            match authenticated_program_deployment_entry(&deployment, merkle_depth, program_k) {
+                Ok(entry) => entry,
+                Err(_) => return 0,
+            };
+        let program_id = match entry.id() {
+            Ok(program_id) => program_id,
+            Err(_) => return 0,
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(funding.network_id.as_ptr(), network_out, 16);
+            std::ptr::copy_nonoverlapping(funding.anchor.bytes().as_ptr(), anchor_out, 32);
+            *expiry_height_out = funding.expiry_height;
+            *fee_out = funding.fee;
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+            *nullifier_count_out = funding.spends.len();
+            *commitment_count_out = funding.outputs.len();
+            for (index, spend) in funding.spends.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    spend.nullifier.0.as_ptr(),
+                    nullifiers_out.add(index * 32),
+                    32,
+                );
+            }
+            for (index, output) in funding.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+        }
+        1
+    })
+}
+
 fn apply_program_deployment_to_snapshot<const DEPTH: usize>(
     snapshot: &[u8],
     anchor_window_blocks: u64,

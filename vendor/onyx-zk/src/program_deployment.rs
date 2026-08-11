@@ -654,6 +654,44 @@ mod tests {
         assert_eq!(extracted_fee, MIN_PROGRAM_DEPLOYMENT_FEE);
         assert_eq!(extracted_nullifier, nullifier);
 
+        extracted_network.fill(0);
+        extracted_anchor.fill(0);
+        extracted_expiry = 0;
+        extracted_fee = 0;
+        extracted_program.fill(0);
+        extracted_nullifier.fill(0);
+        extracted_nullifier_count = 0;
+        extracted_commitment.fill(0);
+        extracted_commitment_count = 0;
+        assert_eq!(
+            crate::onyx_extract_authenticated_program_deployment(
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                extracted_network.as_mut_ptr(),
+                extracted_anchor.as_mut_ptr(),
+                &mut extracted_expiry,
+                &mut extracted_fee,
+                extracted_program.as_mut_ptr(),
+                extracted_nullifier.as_mut_ptr(),
+                1,
+                &mut extracted_nullifier_count,
+                extracted_commitment.as_mut_ptr(),
+                1,
+                &mut extracted_commitment_count,
+            ),
+            1
+        );
+        assert_eq!(extracted_network, network);
+        assert_eq!(extracted_anchor, anchor.bytes());
+        assert_eq!(extracted_program, program_id);
+        assert_eq!(extracted_fee, MIN_PROGRAM_DEPLOYMENT_FEE);
+        assert_eq!(
+            (extracted_nullifier_count, extracted_nullifier),
+            (1, nullifier)
+        );
+
         let mut state = crate::state::ShieldedState::<DEPTH>::new(10);
         let seed = TransactionPreimage {
             network_id: network,
