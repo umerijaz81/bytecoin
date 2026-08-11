@@ -3,7 +3,7 @@
 Document date: **2026-08-11**  
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Committed revision reviewed: `7e46efb` (`Authenticate Onyx bridge admission`)  
+Committed revision reviewed: `1587b50` (`Document authenticated bridge admission`)
 Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `7e46efb` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `1587b50` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,9 +48,8 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Current local `HEAD`: `7e46efb`.
-- The local branch is 19 commits ahead of `origin/kimiK3/jade-onyx-hardening` at the time of this
-  review.
+- Current local `HEAD`: `1587b50`.
+- The local branch and `origin/kimiK3/jade-onyx-hardening` are synchronized at this revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
 - `codex/jade-onyx-hardening` and `origin/codex/jade-onyx-hardening` are older ancestors of the current
@@ -68,15 +67,13 @@ git merge-base --is-ancestor origin/claude/bytecoin-privacy-analysis-n1nsck HEAD
 
 ### 3.2 Local changes that must be preserved
 
-The reviewed worktree contains:
+The latest reviewed worktree contains:
 
 ```text
  M .gitignore
 A  Bytecoin_Onyx_Security_Review.md
- M JADE_ONYX_PROJECT_HANDOFF.md
- M PROJECT_PROGRESS_AND_IMPLEMENTATION_GUIDE.md
- M docs/Onyx-Qualification-Network.md
-?? AI_PROJECT_PROGRESS_AND_IMPLEMENTATION_HANDOFF.md
+ M .github/workflows/onyx-qualification.yml
+?? tests/network/test_onyx_verifier_load_process.py
 ```
 
 Ownership and commit rules:
@@ -84,8 +81,11 @@ Ownership and commit rules:
 - `.gitignore` is an unrelated user modification. Do not overwrite or include it in another change.
 - `Bytecoin_Onyx_Security_Review.md` is already staged user work. Do not edit, unstage, delete, or
   accidentally commit it with implementation work.
-- The eight bridge code files are committed in `7e46efb` and described in section 13.
-- This newly created handoff is documentation work and should be committed with an explicit path.
+- The authenticated bridge code is committed in `7e46efb`, documented in `1587b50`, and described in
+  section 13.
+- The workflow edit and process test are an uncommitted diagnostic milestone. They currently expose a
+  real failing liveness/admission condition described in section 15. Do not label or commit them as a
+  passing qualification gate until that condition is fixed.
 - Never use `git add -A` in this workspace.
 - Prefer `git commit --only <explicit paths>` and inspect `git status --short` before and after every
   commit.
@@ -149,7 +149,7 @@ builds, incident rehearsal, and governance approval for one exact frozen commit.
 | Jade hardening | Committed and locally tested | Independent review, historical compatibility, platform/long-run qualification |
 | O0 ZK foundation | Substantially repository-complete | Independent circuit/FFI audit, long valid/malformed fuzzing, benchmarks |
 | O1 shielded state | Substantially repository-complete | Differential state model, crash injection, independent consensus audit |
-| O2 private transfers | Committed and locally process-qualified | Live load evidence, public testnet, independent crypto/wallet audit |
+| O2 private transfers | Committed and functionally process-qualified; valid-proof load is blocked on synchronous daemon dispatch | Async proof scheduling, live load evidence, public testnet, independent crypto/wallet audit |
 | O3 wallet/RPC | Committed | Hardware-wallet acceptance, multi-operator recovery tests, external review |
 | O4 migration | Committed and locally process-qualified | Public supply evidence, independent review, incident rehearsal |
 | O5 programs/compiler/SDKs | Major profiles committed and locally process-qualified | Load/performance campaign, sustained fuzzing, independent compiler/circuit audit |
@@ -661,24 +661,94 @@ Representative commits:
 - `c4c735c` - private load counters.
 - `8a1bf3a` - standalone load qualification runner and tests.
 
-### 15.2 What is not yet proven
+### 15.2 Valid-proof process harness now exists in the working tree
 
-The runner exists, but a representative live run still needs at least two distinct valid,
-unsubmitted, proof-bearing transactions prepared for the same live state. Do not fabricate fixtures,
-RSS ceilings, counter evidence, or benchmark numbers.
+`tests/network/test_onyx_verifier_load_process.py` now creates the previously missing real inputs. It:
 
-### 15.3 Next implementation task after bridge admission
+1. starts a minimal local ZK daemon, source wallet, receiver wallet, and miner;
+2. mines spendable legacy funds;
+3. performs and confirms a real legacy-to-Onyx bridge;
+4. creates two distinct valid, unsubmitted shielded transfers that spend the same live note;
+5. invokes `tools/onyx_verifier_load.py` with a barrier-synchronized parallel submission;
+6. requires one acceptance and one retryable `VERIFIER_BUSY` overload response;
+7. if the load gate passes, mines the accepted transaction and checks wallet and supply progress;
+8. writes a wrapper report and preserves the raw load report.
 
-1. Extend the qualification harness to create/export multiple valid transactions without submitting
-   them prematurely.
-2. Keep transactions distinct and state-compatible enough to exercise real verifier contention.
-3. Run separate cold-start and warm-cache processes.
-4. Test valid parallel submissions, exact duplicates, authenticated conflicts, malformed proof floods,
-   and mixed RPC/P2P load.
-5. Continue mining and ordinary wallet RPC during load to prove liveness/fairness.
-6. Record revision, OS, CPU, RAM, compiler, circuit shape, `k`, request count, response timing, CPU,
-   RSS/peak RSS, limiter counters, daemon health, and final chain/root convergence.
-7. Establish thresholds only after repeated measurements show stable variance.
+The working-tree workflow adds a scheduled/manual `verifier-valid-proof-load` job that builds the ZK
+daemon, wallet, and miner and runs this process scenario. The job must remain a qualification gate:
+do not add `--allow-no-overload`, reinterpret a transport failure as success, or weaken its assertions
+to make CI green.
+
+Static validation completed on 2026-08-11:
+
+- Python compilation passed for the process harness, load runner, and full qualification harness.
+- `python -m unittest tests.network.test_onyx_verifier_load_unit -v` passed all three tests.
+- ZK Release `bytecoind`, `walletd`, `minerd`, and `tests` built successfully.
+- Non-ZK Release `bytecoind` and `tests` built successfully.
+- ZK and non-ZK `tests.exe --jade` passed.
+
+### 15.3 Exact live-load blocker found on 2026-08-11
+
+This milestone is currently **blocked at daemon dispatch**, not at proof correctness or fixture
+generation. Two real runs produced complementary evidence:
+
+- First run, before the working-tree experiment: both concurrent HTTP requests were serialized by the
+  daemon event loop. Each call spent about 34.4 seconds and returned `broadcast`; verifier acquisitions
+  rose from 1 to 3, rejection counters stayed at zero, and only one transaction entered the pool due
+  to their state conflict.
+- Second run: one valid transaction was accepted after about 52.0 seconds and the competing HTTP
+  connection was forcibly reset before it reached verifier admission. Acquisitions rose from 1 to 2,
+  peak active verification stayed at 1, rejection counters stayed at zero, the node recovered after
+  load, baseline RSS was about 297 MB, and observed peak RSS was about 571 MB.
+- During the expensive proof, repeated `get_statistics` calls timed out. This demonstrates that
+  ordinary RPC/control-plane progress is not currently maintained while synchronous proof work owns
+  the node event loop.
+- The raw failing report is generated at
+  `build/codex-zk/onyx-verifier-load-process-raw.json`; it is local diagnostic output, not release
+  evidence and is not committed.
+
+The existing `OnyxVerifierAdmission` permit is inside `BlockChainState::add_transaction`. That is too
+late to protect responsiveness when `Node::on_send_transaction` and `http::Server` dispatch the
+request synchronously on the single event loop. A competing request either waits outside the permit
+or reaches its HTTP timeout; therefore the configured one-verifier limit can keep proof concurrency
+at one while still failing to provide prompt, deterministic overload responses.
+
+A one-second post-release cooldown was prototyped and passed a deterministic unit check, but the live
+run proved it insufficient: it cannot classify a connection that the blocked event loop has not read.
+The experiment was removed rather than retaining a delay that did not solve the liveness boundary.
+
+### 15.4 Required implementation to unblock load qualification
+
+Implement bounded asynchronous external proof admission while preserving single-threaded state
+mutation. A safe decomposition is:
+
+1. Parse and size-bound the request on the event loop.
+2. Perform cheap transaction decoding, duplicate/pool-capacity checks, and acquire the existing
+   global/per-source permit before scheduling expensive work.
+3. Copy an immutable verification input: transaction bytes, transaction hash, required Onyx snapshot
+   or authenticated state inputs, source identity, and the chain-tip/state generation being checked.
+4. Run only CPU-heavy cryptographic verification on a bounded worker executor. Never mutate chain,
+   pool, archive, peer, or wallet state from the worker.
+5. Post the result back to the event loop. Recheck chain tip/state generation and every mutable pool
+   conflict before insertion; retry/reverify or reject if the captured state is stale.
+6. Keep the permit alive through the worker job and release it on every success, error, disconnect,
+   shutdown, and cancellation path.
+7. Return `VERIFIER_BUSY` promptly when no worker/permit is available. Do not queue attacker-selected
+   proof jobs in an unbounded container.
+8. Make HTTP client disconnects cancel response delivery safely without abandoning cleanup. Decide
+   explicitly whether already-running cryptography is allowed to finish or uses cooperative
+   cancellation.
+9. Add deterministic tests for busy response, stale-state recheck, disconnect, shutdown, exception,
+   permit leak, and exactly-once pool insertion.
+10. Rerun the real process harness and require RPC sampling plus mining/wallet progress during—not
+    merely after—the proof window.
+
+Do not simply move all of `BlockChainState::add_transaction` to another thread. Its maps, database,
+archive, chain view, relay machinery, and event-loop assumptions are not established as thread-safe.
+
+After the async boundary passes, run separate cold-start and warm-cache processes; exact duplicates;
+authenticated conflicts; malformed-proof floods; RPC and P2P ingress; mixed ordinary RPC/mining load;
+and repeated runs for defensible CPU, latency, and RSS thresholds.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
@@ -866,20 +936,22 @@ behavior, and preserve its report and exact exit result.
 
 ## 19. Prioritized remaining implementation roadmap
 
-### Priority 0 - publish the authenticated bridge milestone
+### Priority 0 - authenticated bridge milestone (completed)
 
-Section 13 is implemented, locally validated, and committed as `7e46efb`. Publish the branch without
-including or altering the user-owned staged security review or `.gitignore` change, then retain hosted
-CI evidence for the exact revision.
+Section 13 is implemented and locally validated in `7e46efb`, documented in `1587b50`, and both
+commits are published on `origin/kimiK3/jade-onyx-hardening`. Retain hosted CI evidence for the exact
+revision without including or altering the user-owned staged security review or `.gitignore` change.
 
 Exit condition: all Onyx semantic/read-only fee paths are proof-free or protocol constants, cheap
 rejections use only structurally bounded and cryptographically authenticated metadata, and every
 accepted transition retains one mandatory full stateful proof.
 
-### Priority 1 - execute real verifier-load qualification
+### Priority 1 - unblock and execute real verifier-load qualification
 
-Create valid fixture transactions safely, run cold/warm concurrent workloads, sample RSS/CPU and
-limiter counters, prove ordinary daemon/wallet/mining progress, and save a revision-bound report.
+The valid-transaction generator and process harness exist in the working tree. First implement the
+bounded async verification boundary described in section 15.4. Then run cold/warm concurrent
+workloads, sample RSS/CPU and limiter counters, prove ordinary daemon/wallet/mining progress during
+load, and save a revision-bound report.
 
 Exit condition: repeated results establish defensible resource thresholds without changing consensus
 validity or skipping verification.
@@ -1028,7 +1100,8 @@ tested, timed-out, and untested work separately. Stop if code/tests/specificatio
 The complete project may be called release-ready only when one frozen revision satisfies all of the
 following:
 
-1. The bridge admission refactor and live verifier-load qualification are complete.
+1. The committed bridge admission refactor remains intact and live verifier-load qualification passes
+   with responsive bounded asynchronous admission.
 2. ZK and non-ZK matrices pass from clean builds on all supported platforms.
 3. Proof, state, wallet, program, compiler, SDK, network, migration, recovery, fuzz, sanitizer, and
    release-tool suites pass without unexplained interruption.
