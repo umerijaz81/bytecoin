@@ -801,11 +801,31 @@ std::vector<TransactionDesc> BlockChainState::sync_pool(
 }
 
 bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, const BinaryArray &binary_tx,
-    bool check_sigs, const std::string &source_address) {
-	if (m_memory_state_tx.count(tid) != 0) {
+    bool check_sigs, const std::string &source_address, Amount *verified_fee) {
+	auto existing = m_memory_state_tx.find(tid);
+	if (existing != m_memory_state_tx.end()) {
+		if (verified_fee != nullptr)
+			*verified_fee = existing->second.fee;
 		m_archive.add(Archive::TRANSACTION, binary_tx, tid, source_address);
 		return false;  // AddTransactionResult::ALREADY_IN_POOL;
 	}
+	std::unique_ptr<OnyxVerifierAdmission::Permit> onyx_verifier_permit;
+#ifdef onyx_USE_ZK
+	const bool is_onyx = tx.version == m_currency.onyx_transaction_version;
+	const bool is_zero_fee_standard_call = is_onyx &&
+	                                           tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
+	// These policy checks precede validate_tx_semantic because transfers, bridges, deployments, and
+	// issuance verify proofs while extracting their fee. Empty sources are internal deterministic
+	// reorg restoration and deliberately bypass this non-consensus admission limiter.
+	if (is_zero_fee_standard_call &&
+	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
+		return false;
+	if (is_onyx && !source_address.empty()) {
+		onyx_verifier_permit = m_onyx_verifier_admission.try_acquire(source_address);
+		if (!onyx_verifier_permit)
+			throw OnyxVerifierBusy("Onyx verifier admission is busy; retry later");
+	}
+#endif
 	const size_t my_size = binary_tx.size();
 	// Validate against the block miners can build next before using the fee for pool ordering. Onyx
 	// fees live in the opaque authorized envelope and cannot be recovered by legacy get_tx_fee().
@@ -815,15 +835,10 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	const Height next_block_height = tip_height + 1;  // Safe after the checked helper above.
 	const Amount my_fee = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
 	    m_config.paranoid_checks || check_sigs, true);
+	if (verified_fee != nullptr)
+		*verified_fee = my_fee;
 	const Amount my_fee_per_byte = my_fee / my_size;
 #ifdef onyx_USE_ZK
-	const bool is_zero_fee_standard_call = tx.version == m_currency.onyx_transaction_version &&
-	                                           tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
-	// Enforce the cheap admission bound before proof verification. Once full, unauthenticated callers
-	// cannot make the node spend more Halo2 verification CPU or pool memory on this zero-fee class.
-	if (is_zero_fee_standard_call &&
-	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
-		return false;
 	zk::Halo2ProofSystem::VerifiedTransferDelta onyx_delta;
 	std::vector<std::array<uint8_t, 32>> onyx_standard_state_keys;
 	std::array<uint8_t, 32> onyx_program_id{};

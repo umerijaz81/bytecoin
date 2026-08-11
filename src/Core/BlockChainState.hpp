@@ -6,6 +6,7 @@
 #include <set>
 #include <unordered_map>
 #include "BlockChain.hpp"
+#include "OnyxVerifierAdmission.hpp"
 #include "crypto/RandomX.hpp"
 #include "Multicore.hpp"
 #include "crypto/hash.hpp"
@@ -48,6 +49,8 @@ public:
 class BlockChainState : public BlockChain, private IBlockChainState {
 public:
 	static constexpr size_t MAX_POOL_ZERO_FEE_STANDARD_CALLS = 256;
+	static constexpr size_t MAX_CONCURRENT_ONYX_MEMPOOL_VERIFIERS = 1;
+	static constexpr size_t MAX_CONCURRENT_ONYX_MEMPOOL_VERIFIERS_PER_SOURCE = 1;
 	static bool can_accept_zero_fee_standard_call(size_t current_count) {
 		return current_count < MAX_POOL_ZERO_FEE_STANDARD_CALLS;
 	}
@@ -66,7 +69,7 @@ public:
 
 	Amount minimum_pool_fee_per_byte(bool zero_if_not_full, Hash *minimal_tid = nullptr) const;
 	bool add_transaction(const Hash &tid, const Transaction &, const BinaryArray &binary_tx, bool check_sigs,
-	    const std::string &source_address);
+	    const std::string &source_address, Amount *verified_fee = nullptr);
 	bool get_largest_referenced_height(const TransactionPrefix &tx, Height *block_height) const;
 
 	size_t get_tx_pool_version() const { return m_tx_pool_version; }
@@ -181,6 +184,8 @@ private:
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_program_tx;
 	std::map<std::array<uint8_t, 32>, Hash> m_memory_state_onyx_issuance_tx;
 	size_t m_memory_state_zero_fee_standard_calls = 0;
+	OnyxVerifierAdmission m_onyx_verifier_admission{MAX_CONCURRENT_ONYX_MEMPOOL_VERIFIERS,
+	    MAX_CONCURRENT_ONYX_MEMPOOL_VERIFIERS_PER_SOURCE};
 	std::set<std::pair<Amount, Hash>> m_memory_state_fee_tx;
 	size_t m_memory_state_total_size = 0;
 

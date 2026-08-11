@@ -730,6 +730,12 @@ Validation performed before commit:
   precheck rerun finished at height 81 and recorded `0.015` seconds for the competing NFT admission
   and `0.0` seconds (below timer resolution) for the competing swap branch. Bounded verifier queues
   and the other transaction families remain the immediate DoS work.
+- External Onyx mempool proof work now has a fail-fast RAII bound of one active verifier globally and
+  per source, acquired before semantic fee/proof extraction. Contention returns retryable RPC `-104`;
+  P2P overload is not a ban reason. Blocks and empty-source reorg restoration bypass this
+  non-consensus limiter. Admission also returns its already-verified fee to RPC/P2P, removing the
+  former duplicate proof-backed fee extraction outside the permit. ZK and non-ZK Release builds and
+  Jade tests pass; live parallel backlog/RSS and sustained sequential-load qualification remain open.
 
 Validation not yet completed:
 
@@ -885,8 +891,9 @@ Implemented:
 
 Remaining:
 
-- Bounded verifier queues, concurrency, memory, cancellation, and overload behavior. Extend cheap
-  rejection to other transaction families only through authenticated metadata extractors.
+- Bounded network backlog/rate policy, cancellation, live parallel/RSS qualification, and sustained
+  overload behavior beyond the implemented fail-fast single-verifier permit. Extend cheap rejection
+  to other transaction families only through authenticated metadata extractors.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.

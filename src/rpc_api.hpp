@@ -690,6 +690,7 @@ struct SendTransaction {
 		// height is reported in conflict_height. If output index > max current index, conflict_height will be set to
 		// currency.max_block_number
 		OUTPUT_ALREADY_SPENT    = -103,  // conflight height reported in error
+		VERIFIER_BUSY           = -104,  // retryable local mempool admission overload; not consensus invalid
 		BYTECOIND_REQUEST_ERROR = -1003  // bytecoind returned error
 	};
 	struct Error : public json_rpc::Error {

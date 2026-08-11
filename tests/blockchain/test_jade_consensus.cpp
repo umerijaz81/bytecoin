@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include "Core/Archive.hpp"
 #include "Core/BlockChainState.hpp"
+#include "Core/OnyxVerifierAdmission.hpp"
 #include "Core/Config.hpp"
 #include "Core/Currency.hpp"
 #include "Core/OnyxWalletPolicy.hpp"
@@ -389,6 +390,30 @@ void test_jade_consensus(common::CommandLine &cmd) {
 	invariant(!BlockChainState::can_accept_zero_fee_standard_call(
 	              BlockChainState::MAX_POOL_ZERO_FEE_STANDARD_CALLS),
 	    "zero-fee standard-call pool accepted at its cap");
+	{
+		OnyxVerifierAdmission admission(2, 1);
+		auto peer_a = admission.try_acquire("peer-a");
+		invariant(peer_a != nullptr && admission.active() == 1,
+		    "Onyx verifier admission did not issue the first permit");
+		invariant(admission.try_acquire("peer-a") == nullptr,
+		    "Onyx verifier admission exceeded its per-source bound");
+		auto peer_b = admission.try_acquire("peer-b");
+		invariant(peer_b != nullptr && admission.active() == 2,
+		    "Onyx verifier admission did not issue an independent source permit");
+		invariant(admission.try_acquire("peer-c") == nullptr,
+		    "Onyx verifier admission exceeded its global bound");
+		peer_a.reset();
+		auto peer_c = admission.try_acquire("peer-c");
+		invariant(peer_c != nullptr && admission.active() == 2,
+		    "released Onyx verifier capacity was not reusable");
+		peer_b.reset();
+		peer_c.reset();
+		invariant(admission.active() == 0 && admission.try_acquire("") == nullptr,
+		    "Onyx verifier permits leaked or admitted an internal empty source");
+		invariant(api::cnd::SendTransaction::VERIFIER_BUSY == -104,
+		    "retryable Onyx verifier overload RPC code changed");
+		std::cout << "  [onyx] bounded verifier admission and retryable overload code ok" << std::endl;
+	}
 
 	// 1. Zero-mixin / undersized ring MUST be rejected under Jade (the loophole is closed).
 	{

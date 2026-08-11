@@ -831,11 +831,33 @@ Focused and process validation:
 Cheap standard-call replay/conflict amplification is closed, but valid proofs and the deployment,
 issuance, and private-transfer families can still consume substantial CPU. The immediate order is:
 
+#### Implemented: fail-fast concurrent mempool verification bound
+
+External Onyx mempool admission now obtains a process-local RAII permit before
+`validate_tx_semantic`, because transfer, bridge, deployment, and issuance fee extraction can itself
+verify a proof. The default bound is one active external Onyx verifier globally and one per source.
+There is no waiting queue: a contending request receives retryable RPC error `-104`
+(`VERIFIER_BUSY`) immediately. P2P treats the same overload as a local non-ban condition.
+
+The limiter is deliberately non-consensus. Block application and internal transaction restoration
+after reorganization use empty sources and bypass it, so local load cannot change block validity or
+prevent deterministic rollback recovery. Exact transaction duplicates and the zero-fee standard-call
+pool cap are checked before acquiring or spending proof resources. `add_transaction` now returns the
+fee it already verified, so RPC/P2P descriptor construction no longer calls proof-backed
+`get_tx_fee()` outside the permit or verifies the same envelope twice. A focused RAII test proves global
+and per-source bounds, fail-fast behavior, permit release/reuse, empty-source rejection at the limiter,
+and the stable retryable RPC code. Both ZK and non-ZK Release builds plus `tests.exe --jade` pass.
+
+This closes concurrent in-process verification growth, but it is not yet the complete performance
+gate: the current synchronous networking architecture can still accumulate requests outside the
+limiter, and sustained sequential valid-proof traffic remains expensive. Live parallel/RSS/load
+qualification and request-rate/backlog bounds are still required.
+
 1. Add authenticated metadata extractors for deployments, issuance, and private token transfers only
    where signatures bind every identifier used for early rejection. Never reject from unauthenticated
    program IDs, sequences, anchors, or nullifiers.
-2. Add bounded verifier queues, per-peer/global concurrency and memory limits, cancellation, and
-   deterministic overload errors without consensus divergence.
+2. Add bounded network backlog/rate policy and cancellation around the fail-fast verifier permit,
+   without consensus divergence or peer bans for local overload.
 3. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
    application on named hardware. Pin thresholds only after measuring variance.
 4. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.

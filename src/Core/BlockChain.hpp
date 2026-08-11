@@ -24,6 +24,13 @@ public:
 	using std::runtime_error::runtime_error;
 };
 
+// Mempool policy overload is neither a consensus-invalid transaction nor a peer-ban reason. Blocks
+// and deterministic reorg restoration never throw this exception.
+class OnyxVerifierBusy : public std::runtime_error {
+public:
+	using std::runtime_error::runtime_error;
+};
+
 class ConsensusErrorOutputDoesNotExist : public ConsensusError {
 public:
 	size_t input_index  = 0;

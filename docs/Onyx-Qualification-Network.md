@@ -215,6 +215,12 @@ Cold/warm verifier initialization, bounded admission/backpressure, parallel vali
 memory-pressure qualification, and authenticated cheap filters for the remaining transaction families
 remain open. No precheck may become a substitute for full canonical consensus verification.
 
+The node additionally enforces a non-blocking process-local permit before external Onyx mempool proof
+or fee verification: one active verifier globally and per source, with no internal wait queue.
+Contention returns retryable RPC `VERIFIER_BUSY` (`-104`) and is not a P2P ban reason. Block consensus
+and empty-source reorg restoration bypass the limiter. Unit coverage and both ZK/non-ZK Release builds
+pass, but a live parallel valid-proof/RSS test is still required before this is release evidence.
+
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.

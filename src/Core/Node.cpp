@@ -965,11 +965,13 @@ bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::R
 	try {
 		seria::from_binary(tx, request.binary_transaction);
 		const Hash tid = get_transaction_hash(tx);
-		if (m_block_chain.add_transaction(tid, tx, request.binary_transaction, true, "json_rpc")) {
+		Amount verified_fee = 0;
+		if (m_block_chain.add_transaction(
+		        tid, tx, request.binary_transaction, true, "json_rpc", &verified_fee)) {
 			TransactionDesc desc;
 			desc.hash                       = tid;
 			desc.size                       = request.binary_transaction.size();
-			desc.fee                        = get_tx_fee(tx);
+			desc.fee                        = verified_fee;
 			Height newest_referenced_height = 0;
 			invariant(m_block_chain.get_largest_referenced_height(tx, &newest_referenced_height), "");
 			invariant(m_block_chain.get_chain(newest_referenced_height, &desc.newest_referenced_block), "");
@@ -985,6 +987,9 @@ bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::R
 	} catch (const ConsensusErrorOutputSpent &ex) {
 		throw api::cnd::SendTransaction::Error(
 		    api::cnd::SendTransaction::OUTPUT_ALREADY_SPENT, common::what(ex), ex.conflict_height);
+	} catch (const OnyxVerifierBusy &ex) {
+		throw api::cnd::SendTransaction::Error(
+		    api::cnd::SendTransaction::VERIFIER_BUSY, common::what(ex), 0);
 	} catch (const std::exception &ex) {
 		std::throw_with_nested(api::cnd::SendTransaction::Error(
 		    api::cnd::SendTransaction::INVALID_TRANSACTION_BINARY_FORMAT, common::what(ex), 0));

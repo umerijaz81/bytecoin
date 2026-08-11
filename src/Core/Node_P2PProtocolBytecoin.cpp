@@ -505,16 +505,19 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		invariant(tit != m_transaction_descs.end(), "");
 		if (tit->second.size != btx.size())
 			return disconnect("Lied about transcation size");
-		Amount my_fee = get_tx_fee(tx);
-		if (tit->second.fee != my_fee)
-			return disconnect("Lied about transcation fee");
+		bool retryable_verifier_overload = false;
 		if (m_node->m_block_chain.in_chain(tit->second.newest_referenced_block)) {
 			Height newest_referenced_height = 0;
 			if (!m_node->m_block_chain.get_largest_referenced_height(tx, &newest_referenced_height) ||
 			    !m_node->m_block_chain.in_chain(newest_referenced_height, tit->second.newest_referenced_block))
 				return disconnect("Lied about newest_referenced_block");
 			try {
-				if (m_node->m_block_chain.add_transaction(tid, tx, btx, true, get_address().to_string())) {
+				Amount my_fee = 0;
+				const bool added = m_node->m_block_chain.add_transaction(
+				    tid, tx, btx, true, get_address().to_string(), &my_fee);
+				if (tit->second.fee != my_fee)
+					return disconnect("Lied about transcation fee");
+				if (added) {
 					TransactionDesc desc;
 					desc.hash                    = tid;
 					desc.size                    = btx.size();
@@ -535,6 +538,9 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 				return disconnect("NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex));
 			} catch (const ConsensusErrorOutputSpent &) {
 				// Not a ban reason
+			} catch (const OnyxVerifierBusy &) {
+				// Local non-consensus overload is retryable and never a peer-ban reason.
+				retryable_verifier_overload = true;
 			} catch (const std::exception &ex) {
 				return disconnect("NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex));
 			}
@@ -546,7 +552,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		m_downloading_transaction_count -= 1;
 		for (auto who : m_node->m_broadcast_protocols)
 			if (who != this)
-				who->transaction_download_finished(tid, true);
+				who->transaction_download_finished(tid, !retryable_verifier_overload);
 	}
 	for (auto &&tid : req.missed_ids) {  // Here should be only transactions, we ask only block peer always has
 		auto cit = m_node->downloading_transactions.find(tid);
