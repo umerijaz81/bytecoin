@@ -500,7 +500,7 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 	}
 	p2p::RelayTransactions::Notify msg_v4;
 	std::vector<std::pair<TransactionDesc, uint8_t>> stem_descs;
-	for (const auto &btx : req.txs) {  // 0 or 1
+	for (auto &btx : req.txs) {  // 0 or 1
 		Transaction tx;
 		try {
 			seria::from_binary(tx, btx);
@@ -529,6 +529,30 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 			    !m_node->m_block_chain.in_chain(newest_referenced_height, tit->second.newest_referenced_block))
 				return disconnect("Lied about newest_referenced_block");
 			try {
+#ifdef onyx_USE_ZK
+				if (tx.version == m_node->m_block_chain.get_currency().onyx_transaction_version) {
+					bool already_in_pool = false;
+					auto verification = m_node->m_block_chain.begin_onyx_mempool_verification(
+					    tid, tx, get_address().to_string(), &already_in_pool);
+					if (!already_in_pool) {
+						const TransactionDesc announced = tit->second;
+						if (!m_node->schedule_onyx_p2p(this, std::move(tx), std::move(btx),
+						        announced, stem_hop, std::move(verification)))
+							throw OnyxVerifierBusy("Onyx verifier worker is busy; retry later");
+						cit = m_node->downloading_transactions.erase(cit);
+						tit = m_transaction_descs.erase(tit);
+						m_stem_transaction_hops.erase(tid);
+						invariant(m_downloading_transaction_count > 0, "");
+						m_downloading_transaction_count -= 1;
+						if (m_downloading_transaction_count != 0)
+							m_download_transactions_timer.once(
+							    m_node->m_config.download_transaction_timeout);
+						else
+							m_download_transactions_timer.cancel();
+						return;
+					}
+				}
+#endif
 				Amount my_fee = 0;
 				const bool added = m_node->m_block_chain.add_transaction(
 				    tid, tx, btx, true, get_address().to_string(), &my_fee);
@@ -614,6 +638,9 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 }
 
 void Node::P2PProtocolBytecoin::on_disconnect(const std::string &ban_reason) {
+#ifdef onyx_USE_ZK
+	m_node->cancel_onyx_p2p_source(this);
+#endif
 	m_node->m_broadcast_protocols.erase(this);
 	m_node->dandelion_peer_disconnected(this);
 

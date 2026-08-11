@@ -798,8 +798,102 @@ std::vector<TransactionDesc> BlockChainState::sync_pool(
 	return result;
 }
 
+std::unique_ptr<BlockChainState::OnyxMempoolVerification> BlockChainState::begin_onyx_mempool_verification(
+    const Hash &tid, const Transaction &tx, const std::string &source_address, bool *already_in_pool) {
+	if (already_in_pool != nullptr)
+		*already_in_pool = false;
+	if (tx.version != m_currency.onyx_transaction_version || source_address.empty())
+		throw ConsensusError("External Onyx verification requires a non-empty source");
+	if (m_memory_state_tx.count(tid) != 0) {
+		if (already_in_pool != nullptr)
+			*already_in_pool = true;
+		return nullptr;
+	}
+#ifdef onyx_USE_ZK
+	auto result = std::make_unique<OnyxMempoolVerification>();
+	result->permit = m_onyx_verifier_admission.try_acquire(source_address);
+	if (!result->permit)
+		throw OnyxVerifierBusy("Onyx verifier admission is busy; retry later");
+	result->transaction_hash = tid;
+	result->tip_hash = get_tip_bid();
+	result->block_height = get_tip_height() + 1;
+	result->envelope_type = tx.onyx_type;
+	result->envelope = tx.onyx_envelope;
+	read_onyx_snapshot(&result->snapshot);
+	std::copy(m_config.network_id.data, m_config.network_id.data + result->network.size(), result->network.begin());
+	return result;
+#else
+	throw ConsensusError("Onyx transaction requires an ONYX_ZK consensus build");
+#endif
+}
+
+void BlockChainState::verify_onyx_mempool_transaction(OnyxMempoolVerification *work) {
+	if (work == nullptr)
+		return;
+	work->proof_valid = false;
+	work->worker_error = nullptr;
+	work->next_snapshot.clear();
+#ifdef onyx_USE_ZK
+	try {
+		switch (work->envelope_type) {
+		case parameters::ONYX_TYPE_TRANSFER: {
+			uint64_t fee = 0;
+			work->proof_valid = zk::Halo2ProofSystem::verify_apply_transfer(work->snapshot,
+			    parameters::ONYX_ANCHOR_WINDOW_BLOCKS, work->envelope, parameters::ONYX_MERKLE_DEPTH,
+			    parameters::ONYX_TRANSFER_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K,
+			    work->network, work->block_height, &work->next_snapshot, &fee);
+			work->transfer.fee = fee;
+			break;
+		}
+		case parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL:
+			work->proof_valid = zk::Halo2ProofSystem::verify_apply_standard_program_transaction(
+			    work->snapshot, work->envelope, parameters::ONYX_MERKLE_DEPTH,
+			    parameters::ONYX_PROGRAM_CIRCUIT_K, work->network, work->block_height,
+			    &work->next_snapshot, &work->transfer);
+			break;
+		case parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT: {
+			uint64_t fee = 0;
+			work->proof_valid = zk::Halo2ProofSystem::verify_apply_program_deployment(work->snapshot,
+			    parameters::ONYX_ANCHOR_WINDOW_BLOCKS, work->envelope, parameters::ONYX_MERKLE_DEPTH,
+			    parameters::ONYX_PROGRAM_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K,
+			    work->network, work->block_height, &work->next_snapshot, &fee,
+			    &work->deployment.program_id);
+			work->deployment.funding.fee = fee;
+			break;
+		}
+		case parameters::ONYX_TYPE_TOKEN_ISSUANCE:
+			work->proof_valid = zk::Halo2ProofSystem::verify_apply_token_issuance(work->snapshot,
+			    work->envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K,
+			    work->network, work->block_height, &work->next_snapshot, &work->issuance);
+			break;
+		case parameters::ONYX_TYPE_BRIDGE:
+			work->proof_valid = zk::Halo2ProofSystem::verify_apply_bridge(work->snapshot,
+			    parameters::ONYX_ANCHOR_WINDOW_BLOCKS, work->envelope,
+			    parameters::ONYX_BRIDGE_CIRCUIT_K, work->network, work->block_height,
+			    &work->next_snapshot, &work->bridge);
+			break;
+		default:
+			break;
+		}
+	} catch (...) {
+		work->worker_error = std::current_exception();
+		work->proof_valid = false;
+		work->next_snapshot.clear();
+	}
+#endif
+}
+
+bool BlockChainState::matches_onyx_mempool_verification(const OnyxMempoolVerification &work,
+    const Hash &tid, const Transaction &tx, const Hash &tip_hash, Height block_height,
+    const BinaryArray &snapshot) {
+	return work.transaction_hash == tid && work.tip_hash == tip_hash &&
+	       work.block_height == block_height && work.envelope_type == tx.onyx_type &&
+	       work.envelope == tx.onyx_envelope && work.snapshot == snapshot;
+}
+
 bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, const BinaryArray &binary_tx,
-    bool check_sigs, const std::string &source_address, Amount *verified_fee) {
+    bool check_sigs, const std::string &source_address, Amount *verified_fee,
+    const OnyxMempoolVerification *preverified) {
 	auto existing = m_memory_state_tx.find(tid);
 	if (existing != m_memory_state_tx.end()) {
 		if (verified_fee != nullptr)
@@ -813,6 +907,17 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	std::unique_ptr<OnyxVerifierAdmission::Permit> onyx_verifier_permit;
 #ifdef onyx_USE_ZK
 	const bool is_onyx = tx.version == m_currency.onyx_transaction_version;
+	if (preverified != nullptr) {
+		if (preverified->worker_error)
+			std::rethrow_exception(preverified->worker_error);
+		if (!is_onyx || !preverified->permit || !preverified->proof_valid)
+			throw ConsensusError("Invalid asynchronous Onyx verification result");
+		BinaryArray current_snapshot;
+		read_onyx_snapshot(&current_snapshot);
+		if (!matches_onyx_mempool_verification(*preverified, tid, tx, get_tip_bid(),
+		        get_tip_height() + 1, current_snapshot))
+			throw OnyxVerifierBusy("Onyx state changed during verification; retry later");
+	}
 	const bool is_zero_fee_standard_call = is_onyx &&
 	                                           tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL;
 	zk::Halo2ProofSystem::VerifiedTransferDelta authenticated_transfer_delta;
@@ -829,7 +934,7 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	if (is_zero_fee_standard_call &&
 	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
 		return false;
-	if (is_onyx && !source_address.empty()) {
+	if (is_onyx && !source_address.empty() && preverified == nullptr) {
 		onyx_verifier_permit = m_onyx_verifier_admission.try_acquire(source_address);
 		if (!onyx_verifier_permit)
 			throw OnyxVerifierBusy("Onyx verifier admission is busy; retry later");
@@ -945,11 +1050,16 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		std::array<uint8_t, 16> network{};
 		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
 		uint64_t dry_run_fee = 0;
-		if (!zk::Halo2ProofSystem::verify_apply_transfer(snapshot, parameters::ONYX_ANCHOR_WINDOW_BLOCKS,
-		        tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TRANSFER_CIRCUIT_K,
-		        parameters::ONYX_TOKEN_CIRCUIT_K, network, next_block_height, &dry_run_snapshot,
-		        &dry_run_fee) ||
-		    dry_run_fee != onyx_delta.fee)
+		if (preverified != nullptr) {
+			dry_run_snapshot = preverified->next_snapshot;
+			dry_run_fee = preverified->transfer.fee;
+		} else if (!zk::Halo2ProofSystem::verify_apply_transfer(snapshot,
+		               parameters::ONYX_ANCHOR_WINDOW_BLOCKS, tx.onyx_envelope,
+		               parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TRANSFER_CIRCUIT_K,
+		               parameters::ONYX_TOKEN_CIRCUIT_K, network, next_block_height,
+		               &dry_run_snapshot, &dry_run_fee))
+			throw ConsensusError("Onyx transfer rejected against current state");
+		if (dry_run_fee != onyx_delta.fee)
 			throw ConsensusError("Onyx transfer rejected against current state");
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
@@ -981,9 +1091,13 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		BinaryArray dry_run_snapshot;
 		std::array<uint8_t, 16> network{};
 		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
-		if (!zk::Halo2ProofSystem::verify_apply_standard_program_transaction(snapshot, tx.onyx_envelope,
-		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K, network, next_block_height,
-		        &dry_run_snapshot, &onyx_delta))
+		if (preverified != nullptr) {
+			dry_run_snapshot = preverified->next_snapshot;
+			onyx_delta = preverified->transfer;
+		} else if (!zk::Halo2ProofSystem::verify_apply_standard_program_transaction(snapshot,
+		               tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH,
+		               parameters::ONYX_PROGRAM_CIRCUIT_K, network, next_block_height,
+		               &dry_run_snapshot, &onyx_delta))
 			throw ConsensusError("Onyx standard program call rejected against current state");
 		if (authenticated_delta.nullifiers != onyx_delta.nullifiers)
 			throw ConsensusError("Onyx standard program call delta extraction mismatch");
@@ -1002,11 +1116,17 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
 		uint64_t dry_run_fee = 0;
 		std::array<uint8_t, 32> dry_run_program{};
-		if (!zk::Halo2ProofSystem::verify_apply_program_deployment(snapshot,
-		        parameters::ONYX_ANCHOR_WINDOW_BLOCKS, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH,
-		        parameters::ONYX_PROGRAM_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K, network,
-		        next_block_height, &dry_run_snapshot, &dry_run_fee, &dry_run_program) ||
-		    dry_run_fee != onyx_delta.fee || dry_run_program != deployment.program_id)
+		if (preverified != nullptr) {
+			dry_run_snapshot = preverified->next_snapshot;
+			dry_run_fee = preverified->deployment.funding.fee;
+			dry_run_program = preverified->deployment.program_id;
+		} else if (!zk::Halo2ProofSystem::verify_apply_program_deployment(snapshot,
+		               parameters::ONYX_ANCHOR_WINDOW_BLOCKS, tx.onyx_envelope,
+		               parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K,
+		               parameters::ONYX_TOKEN_CIRCUIT_K, network, next_block_height,
+		               &dry_run_snapshot, &dry_run_fee, &dry_run_program))
+			throw ConsensusError("Onyx program deployment rejected against current state");
+		if (dry_run_fee != onyx_delta.fee || dry_run_program != deployment.program_id)
 			throw ConsensusError("Onyx program deployment rejected against current state");
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
@@ -1019,14 +1139,29 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		std::array<uint8_t, 16> network{};
 		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
 		zk::Halo2ProofSystem::VerifiedTokenIssuance applied;
-		if (!zk::Halo2ProofSystem::verify_apply_token_issuance(snapshot, tx.onyx_envelope,
-		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, network, next_block_height,
-		        &dry_run_snapshot, &applied) ||
-		    applied.program_id != issuance.program_id || applied.sequence != issuance.sequence ||
+		if (preverified != nullptr) {
+			dry_run_snapshot = preverified->next_snapshot;
+			applied = preverified->issuance;
+		} else if (!zk::Halo2ProofSystem::verify_apply_token_issuance(snapshot, tx.onyx_envelope,
+		               parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, network,
+		               next_block_height, &dry_run_snapshot, &applied))
+			throw ConsensusError("Onyx token issuance rejected against current state");
+		if (applied.program_id != issuance.program_id || applied.sequence != issuance.sequence ||
 		    applied.issued_amount != issuance.issued_amount)
 			throw ConsensusError("Onyx token issuance rejected against current state");
 		onyx_issuance_program_id = issuance.program_id;
 		has_onyx_issuance_program_id = true;
+	}
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_BRIDGE && preverified != nullptr) {
+		const auto &bridge = preverified->bridge;
+		if (bridge.legacy_amount != authenticated_bridge.legacy_amount ||
+		    bridge.legacy_stack_index != authenticated_bridge.legacy_stack_index ||
+		    bridge.fee != authenticated_bridge.fee ||
+		    bridge.legacy_key_image != authenticated_bridge.legacy_key_image ||
+		    bridge.ownership_sighash != authenticated_bridge.ownership_sighash ||
+		    bridge.ownership_signature != authenticated_bridge.ownership_signature)
+			throw ConsensusError("Onyx bridge verification result mismatch");
 	}
 #else
 	if (tx.version == m_currency.onyx_transaction_version)
@@ -1068,8 +1203,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	DeltaState memory_state(get_tip_height() + 1, get_tip().timestamp, get_tip().timestamp_median, this);
 	BlockStackIndexes stack_indexes;
 	Hash newest_referenced_bid;
-	redo_transaction(next_block_major_version, false, tx, &memory_state, &stack_indexes, &newest_referenced_bid,
-	    m_config.paranoid_checks || check_sigs);
+	redo_transaction(next_block_major_version, false, tx, &memory_state, &stack_indexes,
+	    &newest_referenced_bid, m_config.paranoid_checks || check_sigs, preverified);
 	// Only good transactions are recorded in tx_first_seen, because they require
 	// space there
 	//	update_first_seen_timestamp(tid, unlock_timestamp);
@@ -1326,7 +1461,8 @@ RingSignatureCheckArgs BlockChainState::fill_ring_check_args(const Transaction &
 }
 
 void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbase, const Transaction &transaction,
-    DeltaState *delta_state, BlockStackIndexes *stack_indexes, Hash *newest_referenced_bid, bool check_sigs) const {
+    DeltaState *delta_state, BlockStackIndexes *stack_indexes, Hash *newest_referenced_bid, bool check_sigs,
+    const OnyxMempoolVerification *preverified) const {
 	const bool check_outputs  = check_sigs;
 	const bool is_tx_amethyst = transaction.version >= m_currency.amethyst_transaction_version;
 	DeltaState tx_delta(delta_state->get_block_height(), delta_state->get_block_timestamp(),
@@ -1337,6 +1473,21 @@ void BlockChainState::redo_transaction(uint8_t major_block_version, bool coinbas
 
 	if (transaction.version == m_currency.onyx_transaction_version) {
 #ifdef onyx_USE_ZK
+		if (preverified != nullptr) {
+			invariant(preverified->proof_valid && preverified->transaction_hash == get_transaction_hash(transaction) &&
+			              preverified->envelope_type == transaction.onyx_type &&
+			              preverified->envelope == transaction.onyx_envelope,
+			    "mismatched preverified Onyx transaction");
+			if (transaction.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+				KeyImage key_image{};
+				static_assert(sizeof(key_image.data) == 32, "bridge key image ABI size changed");
+				std::memcpy(key_image.data, preverified->bridge.legacy_key_image.data(), 32);
+				tx_delta.store_keyimage(key_image, delta_state->get_block_height());
+			}
+			tx_delta.set_onyx_snapshot(preverified->next_snapshot);
+			tx_delta.apply(delta_state);
+			return;
+		}
 		BinaryArray snapshot;
 		tx_delta.read_onyx_snapshot(&snapshot);
 		BinaryArray next_snapshot;

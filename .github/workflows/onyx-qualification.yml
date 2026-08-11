@@ -64,3 +64,42 @@ jobs:
         run: >-
           python3 tools/onyx/verify_standard_program_artifacts_v1.py
           --backend-executable vendor/onyx-zk/target/release/onyx-compiler-backend
+
+  verifier-valid-proof-load:
+    name: valid-proof verifier load and liveness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libboost-dev libssl-dev libudev-dev
+      - name: Configure locked ZK-enabled load binaries
+        run: >-
+          cmake -S . -B build-onyx-load
+          -DCMAKE_BUILD_TYPE=Release
+          -DUSE_SQLITE=ON
+          -DONYX_ZK=ON
+      - name: Build load node, wallet, and miner
+        run: >-
+          cmake --build build-onyx-load --parallel 2
+          --target bytecoind walletd minerd
+      - name: Run real valid-proof concurrency and post-load progress qualification
+        run: >-
+          python3 tests/network/test_onyx_verifier_load_process.py
+          --bytecoind build-onyx-load/artifacts/bin/bytecoind
+          --walletd build-onyx-load/artifacts/bin/walletd
+          --minerd build-onyx-load/artifacts/bin/minerd
+          --revision "${{ github.sha }}"
+          --report build-onyx-load/onyx-verifier-load-process.json
+      - name: Upload non-release verifier load reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onyx-verifier-load-${{ github.sha }}
+          path: build-onyx-load/onyx-verifier-load-process*.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

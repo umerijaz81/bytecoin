@@ -5,6 +5,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include "BlockChain.hpp"  // for PreparedBlock
@@ -18,6 +19,38 @@ namespace platform {
 class EventLoop;
 }
 namespace cn {
+
+// Executes at most one bounded CPU job at a time and returns its completion callback to the main
+// event loop. The worker never invokes completion directly, which keeps all mutable node and chain
+// state confined to the event-loop thread.
+class BoundedWorker {
+	struct Task {
+		std::function<void()> work;
+		std::function<void()> complete;
+	};
+
+	platform::EventLoop *const main_loop;
+	std::thread thread;
+	mutable std::mutex mu;
+	std::condition_variable have_work;
+	bool quit = false;
+	bool occupied = false;
+	std::deque<Task> work;
+	std::deque<std::function<void()>> completed;
+
+	void thread_run();
+
+public:
+	explicit BoundedWorker(platform::EventLoop *main_loop);
+	~BoundedWorker();
+
+	BoundedWorker(const BoundedWorker &) = delete;
+	BoundedWorker &operator=(const BoundedWorker &) = delete;
+
+	bool try_submit(std::function<void()> work, std::function<void()> complete);
+	void run_completed();
+	bool is_occupied() const;
+};
 
 class IBlockChainState;  // We will read keyimages and outputs from it
 class Currency;

@@ -12,6 +12,73 @@
 
 using namespace cn;
 
+BoundedWorker::BoundedWorker(platform::EventLoop *main_loop) : main_loop(main_loop) {
+	invariant(main_loop != nullptr, "BoundedWorker requires an event loop");
+	thread = std::thread(&BoundedWorker::thread_run, this);
+}
+
+BoundedWorker::~BoundedWorker() {
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		quit = true;
+		have_work.notify_all();
+	}
+	if (thread.joinable())
+		thread.join();
+}
+
+bool BoundedWorker::try_submit(std::function<void()> worker, std::function<void()> complete) {
+	if (!worker || !complete)
+		return false;
+	std::lock_guard<std::mutex> lock(mu);
+	if (quit || occupied)
+		return false;
+	occupied = true;
+	work.push_back(Task{std::move(worker), std::move(complete)});
+	have_work.notify_one();
+	return true;
+}
+
+void BoundedWorker::thread_run() {
+	while (true) {
+		Task task;
+		{
+			std::unique_lock<std::mutex> lock(mu);
+			have_work.wait(lock, [this] { return quit || !work.empty(); });
+			if (quit && work.empty())
+				return;
+			task = std::move(work.front());
+			work.pop_front();
+		}
+		try {
+			task.work();
+		} catch (...) {
+			// The task owns its typed error result. Never allow an exception to terminate the worker.
+		}
+		{
+			std::lock_guard<std::mutex> lock(mu);
+			completed.push_back(std::move(task.complete));
+			occupied = false;
+		}
+		main_loop->wake([] {});
+	}
+}
+
+void BoundedWorker::run_completed() {
+	std::deque<std::function<void()>> ready;
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		ready.swap(completed);
+	}
+	for (auto &complete : ready)
+		complete();
+}
+
+bool BoundedWorker::is_occupied() const {
+	std::lock_guard<std::mutex> lock(mu);
+	return occupied;
+}
+
 BlockPreparatorMulticore::BlockPreparatorMulticore(const Currency &currency, platform::EventLoop *main_loop)
     : currency(currency), main_loop(main_loop) {
 	auto th_count = std::max<size_t>(2, 3 * std::thread::hardware_concurrency() / 4);

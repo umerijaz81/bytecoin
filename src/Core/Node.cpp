@@ -38,9 +38,13 @@ Node::Node(logging::ILogger &log, const Config &config, BlockChainState &block_c
     , m_start_time(m_p2p.get_local_time())
     , m_commit_timer(std::bind(&Node::db_commit, this))
     , m_dandelion_embargo_timer(std::bind(&Node::on_dandelion_embargo, this))
-    , log_request_timestamp(std::chrono::steady_clock::now())
-    , log_response_timestamp(std::chrono::steady_clock::now())
-    , m_pow_checker(block_chain.get_currency(), platform::EventLoop::current()) {
+	, log_request_timestamp(std::chrono::steady_clock::now())
+	, log_response_timestamp(std::chrono::steady_clock::now())
+	, m_pow_checker(block_chain.get_currency(), platform::EventLoop::current())
+#ifdef onyx_USE_ZK
+	, m_onyx_verifier_worker(platform::EventLoop::current())
+#endif
+{
 	if (config.bytecoind_bind_port != 0) {
 		m_api = std::make_unique<http::Server>(config.bytecoind_bind_ip, config.bytecoind_bind_port,
 		    std::bind(&Node::on_api_http_request, this, _1, _2, _3),
@@ -107,6 +111,9 @@ void Node::advance_all_downloads() {
 }
 
 bool Node::on_idle() {
+#ifdef onyx_USE_ZK
+	m_onyx_verifier_worker.run_completed();
+#endif
 	auto idle_start     = std::chrono::steady_clock::now();
 	Hash was_top_bid    = m_block_chain.get_tip_bid();
 	bool on_idle_result = false;
@@ -312,6 +319,14 @@ void Node::on_api_http_disconnect(http::Client *who) {
 			lit = m_long_poll_http_clients.erase(lit);
 		else
 			++lit;
+#ifdef onyx_USE_ZK
+	for (auto it = m_pending_onyx_rpcs.begin(); it != m_pending_onyx_rpcs.end();) {
+		if (it->second->who == who)
+			it = m_pending_onyx_rpcs.erase(it);
+		else
+			++it;
+	}
+#endif
 }
 
 const std::unordered_map<std::string, Node::BINARYRPCHandlerFunction> Node::m_binaryrpc_handlers = {
@@ -965,7 +980,8 @@ bool Node::on_get_raw_transaction(http::Client *, http::RequestBody &&, json_rpc
 	    req.hash);
 }
 
-bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+bool Node::on_send_transaction(http::Client *who, http::RequestBody &&raw_request,
+    json_rpc::Request &&raw_json_request,
     api::cnd::SendTransaction::Request &&request, api::cnd::SendTransaction::Response &response) {
 	response.send_result = "broadcast";
 
@@ -973,6 +989,40 @@ bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::R
 	try {
 		seria::from_binary(tx, request.binary_transaction);
 		const Hash tid = get_transaction_hash(tx);
+#ifdef onyx_USE_ZK
+		if (tx.version == m_block_chain.get_currency().onyx_transaction_version) {
+			bool already_in_pool = false;
+			auto verification = m_block_chain.begin_onyx_mempool_verification(
+			    tid, tx, "json_rpc", &already_in_pool);
+			if (already_in_pool) {
+				Amount ignored_fee = 0;
+				m_block_chain.add_transaction(
+				    tid, tx, request.binary_transaction, true, "json_rpc", &ignored_fee);
+				return true;
+			}
+			auto pending = std::make_shared<PendingOnyxRpc>();
+		pending->token = m_next_onyx_rpc_token++;
+		pending->who = who;
+		pending->request = std::move(raw_request);
+		pending->json_request = std::move(raw_json_request);
+		pending->transaction = std::move(tx);
+		pending->binary_transaction = std::move(request.binary_transaction);
+		pending->transaction_hash = tid;
+		pending->verification = std::move(verification);
+		const uint64_t token = pending->token;
+		m_pending_onyx_rpcs.emplace(token, pending);
+		const bool submitted = m_onyx_verifier_worker.try_submit(
+		    [pending] {
+			    BlockChainState::verify_onyx_mempool_transaction(pending->verification.get());
+		    },
+		    [this, token] { complete_onyx_rpc(token); });
+		if (!submitted) {
+			m_pending_onyx_rpcs.erase(token);
+			throw OnyxVerifierBusy("Onyx verifier worker is busy; retry later");
+		}
+		return false;
+		}
+#endif
 		Amount verified_fee = 0;
 		if (m_block_chain.add_transaction(
 		        tid, tx, request.binary_transaction, true, "json_rpc", &verified_fee)) {
@@ -1004,6 +1054,152 @@ bool Node::on_send_transaction(http::Client *, http::RequestBody &&, json_rpc::R
 	}
 	return true;
 }
+
+#ifdef onyx_USE_ZK
+void Node::complete_onyx_rpc(uint64_t token) {
+	auto found = m_pending_onyx_rpcs.find(token);
+	if (found == m_pending_onyx_rpcs.end())
+		return;  // Client disconnected while the bounded proof job was running.
+	auto pending = std::move(found->second);
+	m_pending_onyx_rpcs.erase(found);
+
+	http::ResponseBody http_response(pending->request.r);
+	http_response.r.add_headers_nocache();
+	http_response.r.headers.push_back({"Content-Type", "application/json; charset=utf-8"});
+	http_response.r.status = 200;
+	fill_cors(pending->request, http_response);
+
+	api::cnd::SendTransaction::Response response;
+	response.send_result = "broadcast";
+	try {
+		Amount verified_fee = 0;
+		if (m_block_chain.add_transaction(pending->transaction_hash, pending->transaction,
+		        pending->binary_transaction, true, "json_rpc", &verified_fee,
+		        pending->verification.get())) {
+			TransactionDesc desc;
+			desc.hash = pending->transaction_hash;
+			desc.size = pending->binary_transaction.size();
+			desc.fee = verified_fee;
+			Height newest_referenced_height = 0;
+			invariant(m_block_chain.get_largest_referenced_height(
+			              pending->transaction, &newest_referenced_height),
+			    "");
+			invariant(m_block_chain.get_chain(
+			              newest_referenced_height, &desc.newest_referenced_block),
+			    "");
+			relay_transaction_dandelion(desc, nullptr, 0);
+			advance_long_poll();
+		}
+		http_response.set_body(json_rpc::create_response_body(response, pending->json_request));
+	} catch (const ConsensusErrorOutputDoesNotExist &ex) {
+		const api::cnd::SendTransaction::Error error(api::cnd::SendTransaction::WRONG_OUTPUT_REFERENCE,
+		    common::what(ex), m_block_chain.get_currency().max_block_height);
+		http_response.set_body(json_rpc::create_error_response_body(error, pending->json_request));
+	} catch (const ConsensusErrorBadOutputOrSignature &ex) {
+		const api::cnd::SendTransaction::Error error(api::cnd::SendTransaction::WRONG_OUTPUT_REFERENCE,
+		    common::what(ex), ex.conflict_height);
+		http_response.set_body(json_rpc::create_error_response_body(error, pending->json_request));
+	} catch (const ConsensusErrorOutputSpent &ex) {
+		const api::cnd::SendTransaction::Error error(api::cnd::SendTransaction::OUTPUT_ALREADY_SPENT,
+		    common::what(ex), ex.conflict_height);
+		http_response.set_body(json_rpc::create_error_response_body(error, pending->json_request));
+	} catch (const OnyxVerifierBusy &ex) {
+		const api::cnd::SendTransaction::Error error(
+		    api::cnd::SendTransaction::VERIFIER_BUSY, common::what(ex), 0);
+		http_response.set_body(json_rpc::create_error_response_body(error, pending->json_request));
+	} catch (const std::exception &ex) {
+		const api::cnd::SendTransaction::Error error(
+		    api::cnd::SendTransaction::INVALID_TRANSACTION_BINARY_FORMAT, common::what(ex), 0);
+		http_response.set_body(json_rpc::create_error_response_body(error, pending->json_request));
+	}
+	http::Server::write(pending->who, std::move(http_response));
+}
+
+bool Node::schedule_onyx_p2p(P2PProtocolBytecoin *source, Transaction &&transaction,
+    BinaryArray &&binary_transaction, const TransactionDesc &announced, uint8_t stem_hop,
+    std::unique_ptr<BlockChainState::OnyxMempoolVerification> &&verification) {
+	auto pending = std::make_shared<PendingOnyxP2P>();
+	pending->token = m_next_onyx_p2p_token++;
+	pending->source = source;
+	pending->source_address = source->get_address().to_string();
+	pending->transaction = std::move(transaction);
+	pending->binary_transaction = std::move(binary_transaction);
+	pending->announced = announced;
+	pending->stem_hop = stem_hop;
+	pending->verification = std::move(verification);
+	const uint64_t token = pending->token;
+	m_pending_onyx_p2p.emplace(token, pending);
+	if (m_onyx_verifier_worker.try_submit(
+	        [pending] {
+		        BlockChainState::verify_onyx_mempool_transaction(pending->verification.get());
+	        },
+	        [this, token] { complete_onyx_p2p(token); }))
+		return true;
+	m_pending_onyx_p2p.erase(token);
+	return false;
+}
+
+void Node::cancel_onyx_p2p_source(P2PProtocolBytecoin *source) {
+	for (auto &entry : m_pending_onyx_p2p)
+		if (entry.second->source == source)
+			entry.second->source = nullptr;
+}
+
+void Node::complete_onyx_p2p(uint64_t token) {
+	auto found = m_pending_onyx_p2p.find(token);
+	if (found == m_pending_onyx_p2p.end())
+		return;
+	auto pending = std::move(found->second);
+	m_pending_onyx_p2p.erase(found);
+
+	bool retryable_verifier_overload = false;
+	bool added = false;
+	Amount verified_fee = 0;
+	std::string ban_reason;
+	try {
+		added = m_block_chain.add_transaction(pending->announced.hash, pending->transaction,
+		    pending->binary_transaction, true, pending->source_address, &verified_fee,
+		    pending->verification.get());
+		if (pending->announced.fee != verified_fee)
+			ban_reason = "Lied about transcation fee";
+	} catch (const ConsensusErrorOutputDoesNotExist &ex) {
+		ban_reason = "NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex);
+	} catch (const ConsensusErrorBadOutputOrSignature &ex) {
+		ban_reason = "NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex);
+	} catch (const ConsensusErrorOutputSpent &) {
+		// A state conflict is not a peer-ban reason and should not be downloaded again.
+	} catch (const OnyxVerifierBusy &) {
+		retryable_verifier_overload = true;
+		m_onyx_verifier_retry_cooldown.defer(pending->announced.hash);
+	} catch (const std::exception &ex) {
+		ban_reason = "NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex);
+	}
+
+	if (!ban_reason.empty() && pending->source != nullptr) {
+		pending->source->disconnect_onyx_invalid(ban_reason);
+		pending->source = nullptr;
+	}
+	if (ban_reason.empty() && added) {
+		TransactionDesc desc = pending->announced;
+		desc.size = pending->binary_transaction.size();
+		desc.fee = verified_fee;
+		if (desc.size != 0) {
+			if (pending->stem_hop == 0) {
+				p2p::RelayTransactions::Notify message;
+				message.transaction_descs.push_back(desc);
+				broadcast(nullptr, LevinProtocol::send(message));
+			} else {
+				relay_transaction_dandelion(desc, pending->source, pending->stem_hop);
+			}
+			advance_long_poll();
+		}
+	}
+	const bool completed = ban_reason.empty() && !retryable_verifier_overload;
+	for (auto *peer : m_broadcast_protocols)
+		if (peer != pending->source)
+			peer->finish_onyx_download(pending->announced.hash, completed);
+}
+#endif
 
 void Node::check_sendproof(const SendproofLegacy &sp, api::cnd::CheckSendproof::Response &response) const {
 	BinaryArray binary_tx;

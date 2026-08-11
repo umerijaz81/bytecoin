@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <exception>
 #include <set>
 #include <unordered_map>
 #include "BlockChain.hpp"
@@ -10,6 +11,9 @@
 #include "crypto/RandomX.hpp"
 #include "Multicore.hpp"
 #include "crypto/hash.hpp"
+#ifdef onyx_USE_ZK
+#include "zk/Halo2ProofSystem.hpp"
+#endif
 
 namespace cn {
 
@@ -68,8 +72,33 @@ public:
 	api::cnd::SyncBlocks::RawBlockCompact fill_sync_block_compact(const Hash &bid) const;
 
 	Amount minimum_pool_fee_per_byte(bool zero_if_not_full, Hash *minimal_tid = nullptr) const;
+	struct OnyxMempoolVerification {
+		Hash transaction_hash{};
+		Hash tip_hash{};
+		Height block_height = 0;
+		uint8_t envelope_type = 0;
+		BinaryArray envelope;
+		BinaryArray snapshot;
+		BinaryArray next_snapshot;
+		std::array<uint8_t, 16> network{};
+		bool proof_valid = false;
+		std::exception_ptr worker_error;
+		std::unique_ptr<OnyxVerifierAdmission::Permit> permit;
+#ifdef onyx_USE_ZK
+		zk::Halo2ProofSystem::VerifiedTransferDelta transfer;
+		zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
+		zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+#endif
+	};
+	std::unique_ptr<OnyxMempoolVerification> begin_onyx_mempool_verification(
+	    const Hash &tid, const Transaction &, const std::string &source_address, bool *already_in_pool);
+	static void verify_onyx_mempool_transaction(OnyxMempoolVerification *);
+	static bool matches_onyx_mempool_verification(const OnyxMempoolVerification &, const Hash &tid,
+	    const Transaction &, const Hash &tip_hash, Height block_height, const BinaryArray &snapshot);
 	bool add_transaction(const Hash &tid, const Transaction &, const BinaryArray &binary_tx, bool check_sigs,
-	    const std::string &source_address, Amount *verified_fee = nullptr);
+	    const std::string &source_address, Amount *verified_fee = nullptr,
+	    const OnyxMempoolVerification *preverified = nullptr);
 	OnyxVerifierAdmission::Stats get_onyx_verifier_admission_stats() const {
 		return m_onyx_verifier_admission.stats();
 	}
@@ -165,7 +194,7 @@ private:
 
 	void redo_transaction(uint8_t major_block_version, bool coinbase, const Transaction &, DeltaState *,
 	    BlockStackIndexes *, Hash *newest_referenced_bid,
-	    bool check_sigs) const;  // throws ConsensusError
+	    bool check_sigs, const OnyxMempoolVerification *preverified = nullptr) const;  // throws ConsensusError
 	void redo_block(
 	    const Block &, const api::BlockHeader &, DeltaState *, BlockStackIndexes *) const;  // throws ConsensusError
 

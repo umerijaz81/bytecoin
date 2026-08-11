@@ -204,6 +204,10 @@ protected:
 	public:
 		explicit P2PProtocolBytecoin(Node *node, P2PClient *client);
 		~P2PProtocolBytecoin() override;
+		void disconnect_onyx_invalid(const std::string &reason) { disconnect(reason); }
+		void finish_onyx_download(const Hash &tid, bool success) {
+			transaction_download_finished(tid, success);
+		}
 		void advance_chain();
 		void advance_blocks();
 		bool on_idle(std::chrono::steady_clock::time_point idle_start);
@@ -221,6 +225,39 @@ protected:
 
 	BlockPreparatorMulticore m_pow_checker;
 	// TODO - periodically clear m_pow_checker of blocks that were not asked
+#ifdef onyx_USE_ZK
+	struct PendingOnyxRpc {
+		uint64_t token = 0;
+		http::Client *who = nullptr;
+		http::RequestBody request;
+		json_rpc::Request json_request;
+		Transaction transaction;
+		BinaryArray binary_transaction;
+		Hash transaction_hash{};
+		std::unique_ptr<BlockChainState::OnyxMempoolVerification> verification;
+	};
+	struct PendingOnyxP2P {
+		uint64_t token = 0;
+		P2PProtocolBytecoin *source = nullptr;
+		std::string source_address;
+		Transaction transaction;
+		BinaryArray binary_transaction;
+		TransactionDesc announced;
+		uint8_t stem_hop = 0;
+		std::unique_ptr<BlockChainState::OnyxMempoolVerification> verification;
+	};
+	uint64_t m_next_onyx_rpc_token = 1;
+	std::map<uint64_t, std::shared_ptr<PendingOnyxRpc>> m_pending_onyx_rpcs;
+	uint64_t m_next_onyx_p2p_token = 1;
+	std::map<uint64_t, std::shared_ptr<PendingOnyxP2P>> m_pending_onyx_p2p;
+	BoundedWorker m_onyx_verifier_worker;
+	void complete_onyx_rpc(uint64_t token);
+	bool schedule_onyx_p2p(P2PProtocolBytecoin *source, Transaction &&, BinaryArray &&,
+	    const TransactionDesc &, uint8_t stem_hop,
+	    std::unique_ptr<BlockChainState::OnyxMempoolVerification> &&);
+	void complete_onyx_p2p(uint64_t token);
+	void cancel_onyx_p2p_source(P2PProtocolBytecoin *source);
+#endif
 
 	void broadcast(P2PProtocolBytecoin *exclude, const BinaryArray &data);
 	void relay_transaction_dandelion(const TransactionDesc &desc, P2PProtocolBytecoin *source, uint8_t hop);

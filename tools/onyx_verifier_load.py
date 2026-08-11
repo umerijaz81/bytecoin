@@ -299,7 +299,11 @@ def main():
     baseline_metrics = normalized_metrics(baseline_stats_response)
     final_metrics = normalized_metrics(final_stats_response)
     peak_active = max(
-        [baseline_metrics["onyx_verifier_active"], final_metrics["onyx_verifier_active"]]
+        [
+            baseline_metrics["onyx_verifier_active"],
+            final_metrics["onyx_verifier_active"],
+            final_metrics["onyx_verifier_peak_active"],
+        ]
         + [sample.get("onyx_verifier_active", 0) for sample in daemon_samples]
     )
     peak_rss = max(
@@ -308,8 +312,20 @@ def main():
     )
     rss_growth = max(0, peak_rss - baseline_process["rss_bytes"])
     busy_count = sum(item["classification"] == "verifier_busy" for item in submissions)
+    successful_daemon_samples = [
+        sample for sample in daemon_samples if "onyx_verifier_active" in sample
+    ]
+    daemon_sample_errors = [
+        sample for sample in daemon_samples if "statistics_error" in sample
+    ]
+    transport_errors = [
+        item for item in submissions if item["classification"] == "transport_error"
+    ]
     checks = {
         "node_responded_after_load": "result" in final_status and "result" in final_stats_response,
+        "node_responded_during_load": len(successful_daemon_samples) >= 2,
+        "no_daemon_sampling_errors": not daemon_sample_errors,
+        "no_submission_transport_errors": not transport_errors,
         "verifier_peak_within_bound": peak_active <= 1
         and final_metrics["onyx_verifier_peak_active"] <= 1,
         "verifier_permit_observed": final_metrics["onyx_verifier_acquired"]
@@ -353,6 +369,9 @@ def main():
             "peak_rss_bytes": peak_rss,
             "rss_growth_bytes": rss_growth,
             "busy_responses": busy_count,
+            "successful_daemon_samples": len(successful_daemon_samples),
+            "daemon_sampling_errors": len(daemon_sample_errors),
+            "submission_transport_errors": len(transport_errors),
         },
         "checks": checks,
         "passed": all(checks.values()),

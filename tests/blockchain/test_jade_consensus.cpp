@@ -3,10 +3,14 @@
 
 #include "test_jade_consensus.hpp"
 #include <algorithm>
+#include <atomic>
 #include <array>
+#include <condition_variable>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include "Core/Archive.hpp"
 #include "Core/BlockChainState.hpp"
 #include "Core/OnyxVerifierAdmission.hpp"
@@ -24,6 +28,7 @@
 #include "p2p/P2pProtocolDefinitions.hpp"
 #include "p2p/Dandelion.hpp"
 #include "p2p/Socks5.hpp"
+#include "platform/Network.hpp"
 #include "seria/BinaryInputStream.hpp"
 #include "seria/BinaryOutputStream.hpp"
 #include "seria/KVBinaryCommon.hpp"
@@ -417,6 +422,81 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		    "Onyx verifier permits leaked or admitted an internal empty source");
 		invariant(api::cnd::SendTransaction::VERIFIER_BUSY == -104,
 		    "retryable Onyx verifier overload RPC code changed");
+
+		Transaction context_tx;
+		context_tx.version = currency.onyx_transaction_version;
+		context_tx.onyx_type = parameters::ONYX_TYPE_TRANSFER;
+		context_tx.onyx_envelope = BinaryArray{1, 2, 3};
+		BlockChainState::OnyxMempoolVerification context;
+		context.transaction_hash.data[0] = 1;
+		context.tip_hash.data[0] = 2;
+		context.block_height = 42;
+		context.envelope_type = context_tx.onyx_type;
+		context.envelope = context_tx.onyx_envelope;
+		context.snapshot = BinaryArray{4, 5, 6};
+		invariant(BlockChainState::matches_onyx_mempool_verification(context,
+		              context.transaction_hash, context_tx, context.tip_hash,
+		              context.block_height, context.snapshot),
+		    "matching asynchronous Onyx verification context was rejected");
+		Hash changed_tip = context.tip_hash;
+		changed_tip.data[0] ^= 1;
+		invariant(!BlockChainState::matches_onyx_mempool_verification(context,
+		              context.transaction_hash, context_tx, changed_tip,
+		              context.block_height, context.snapshot) &&
+		              !BlockChainState::matches_onyx_mempool_verification(context,
+		                  context.transaction_hash, context_tx, context.tip_hash,
+		                  context.block_height + 1, context.snapshot),
+		    "asynchronous Onyx verification accepted stale tip or height context");
+
+		boost::asio::io_context worker_io;
+		platform::EventLoop worker_loop(worker_io);
+		BoundedWorker worker(&worker_loop);
+		std::mutex gate_mutex;
+		std::condition_variable gate_changed;
+		bool worker_started = false;
+		bool release_worker = false;
+		std::atomic<bool> completion_ran{false};
+		invariant(worker.try_submit(
+		              [&] {
+			              std::unique_lock<std::mutex> lock(gate_mutex);
+			              worker_started = true;
+			              gate_changed.notify_all();
+			              gate_changed.wait(lock, [&] { return release_worker; });
+		              },
+		              [&] { completion_ran = true; }),
+		    "bounded Onyx worker rejected its first job");
+		{
+			std::unique_lock<std::mutex> lock(gate_mutex);
+			invariant(gate_changed.wait_for(lock, std::chrono::seconds(2), [&] { return worker_started; }),
+			    "bounded Onyx worker did not start");
+		}
+		invariant(!worker.try_submit([] {}, [] {}),
+		    "bounded Onyx worker admitted a second concurrent job");
+		{
+			std::lock_guard<std::mutex> lock(gate_mutex);
+			release_worker = true;
+		}
+		gate_changed.notify_all();
+		const auto worker_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (worker.is_occupied() && std::chrono::steady_clock::now() < worker_deadline)
+			std::this_thread::yield();
+		invariant(!worker.is_occupied(), "bounded Onyx worker did not finish");
+		invariant(!completion_ran, "bounded Onyx worker ran completion off the event-loop thread");
+		worker.run_completed();
+		invariant(completion_ran, "bounded Onyx worker did not return completion to the event loop");
+		std::atomic<bool> exception_completion_ran{false};
+		invariant(worker.try_submit(
+		              [] { throw std::runtime_error("expected bounded-worker test exception"); },
+		              [&] { exception_completion_ran = true; }),
+		    "bounded Onyx worker rejected its exception-containment job");
+		const auto exception_deadline =
+		    std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (worker.is_occupied() && std::chrono::steady_clock::now() < exception_deadline)
+			std::this_thread::yield();
+		invariant(!worker.is_occupied(), "bounded Onyx worker did not contain a task exception");
+		worker.run_completed();
+		invariant(exception_completion_ran,
+		    "bounded Onyx worker lost completion after containing a task exception");
 
 		using Cooldown = BoundedRetryCooldown<int>;
 		const auto start = Cooldown::TimePoint{};
