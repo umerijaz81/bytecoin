@@ -204,12 +204,16 @@ The clean rerun also raised capped-token activation mining from 180 to 1,800 sec
 timeout expired at height 32 because peers were still applying the deployment proof; the corrected
 run crossed the old deadline, reached activation height 48, and completed through height 81.
 
-The run measured minutes of CPU per peer for valid program proof admission/application. Confirmed
-replays and pending stable-key competitors can reach proof verification before cheap conflict
-rejection. Cold/warm verifier initialization, safe cheap replay/conflict prechecks, bounded
-admission/backpressure, parallel valid-proof load, and memory-pressure qualification remain open.
-Prechecks are only admission filters: block consensus must still perform full canonical proof
-verification.
+The run measured minutes of CPU per peer for valid program proof admission/application. Standard-call
+admission now authenticates the contextual envelope and checks pool nullifiers/stable keys plus
+committed nullifiers/prior state before Halo2. An eligible precheck still enters full verification,
+and block consensus is unchanged. The clean rerun recorded the already-built competing NFT call at
+`0.015` seconds and the competing swap branch at `0.0` seconds (below timer resolution), under a
+conservative 30-second ceiling, in `build/codex-zk/onyx-precheck-qualification.json`.
+
+Cold/warm verifier initialization, bounded admission/backpressure, parallel valid-proof load,
+memory-pressure qualification, and authenticated cheap filters for the remaining transaction families
+remain open. No precheck may become a substitute for full canonical consensus verification.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not

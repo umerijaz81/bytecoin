@@ -1829,7 +1829,7 @@ mod tests {
         let mut wallet = funded_wallet::<DEPTH>(&keys, network, &[1]);
         let entry = standard_program_entry(StandardProgramKind::Nft, 10, None).unwrap();
         let program_id = entry.id().unwrap();
-        wallet.register_program(entry).unwrap();
+        wallet.register_program(entry.clone()).unwrap();
 
         let collection_id = Fp::from(21).to_repr();
         let token_id = Fp::from(22).to_repr();
@@ -1891,6 +1891,85 @@ mod tests {
         assert_eq!(
             ContextualAuthorizedTransaction::decode(&envelope.encode().unwrap()).unwrap(),
             envelope
+        );
+
+        // The admission precheck authenticates and inspects state without verifying either Halo2
+        // proof. A fresh transaction is eligible, while replaying it after state application is a
+        // cheap conflict. Full proof verification above remains the acceptance gate.
+        let public_output = |note: &WalletNote| crate::transaction::PublicOutput {
+            commitment: note.commitment,
+            value_commitment: value_commitment_bytes(
+                note.plaintext.value,
+                note.plaintext.randomness.field(),
+            ),
+            ephemeral_key: [1; 32],
+            ciphertext: vec![2],
+            outgoing_ciphertext: vec![3],
+        };
+        let mut consensus = crate::state::ShieldedState::<DEPTH>::new(10);
+        consensus.register_program(entry).unwrap();
+        let setup = TransactionPreimage {
+            network_id: network,
+            anchor: consensus.root(),
+            expiry_height: 50,
+            fee: 0,
+            spends: vec![],
+            outputs: vec![public_output(&wallet.notes()[0])],
+            programs: vec![],
+        };
+        consensus.apply_bridge(&setup, [1; 32], 1, 0, 0).unwrap();
+        assert_eq!(consensus.root(), wallet.root());
+
+        let encoded = envelope.encode().unwrap();
+        let fresh_snapshot = consensus.encode_snapshot();
+        assert_eq!(
+            crate::precheck_authenticated_standard_program_state::<DEPTH>(
+                &fresh_snapshot,
+                &envelope
+            ),
+            Ok(true)
+        );
+        assert_eq!(
+            crate::onyx_precheck_authenticated_standard_program_state(
+                fresh_snapshot.as_ptr(),
+                fresh_snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+            ),
+            1
+        );
+        assert_eq!(
+            crate::onyx_precheck_authenticated_standard_program_state(
+                fresh_snapshot.as_ptr(),
+                fresh_snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                3,
+            ),
+            -3
+        );
+
+        consensus
+            .apply_contextual_transaction(&envelope.transaction.preimage, 10, &envelope.contexts)
+            .unwrap();
+        let applied_snapshot = consensus.encode_snapshot();
+        assert_eq!(
+            crate::precheck_authenticated_standard_program_state::<DEPTH>(
+                &applied_snapshot,
+                &envelope
+            ),
+            Ok(false)
+        );
+        assert_eq!(
+            crate::onyx_precheck_authenticated_standard_program_state(
+                applied_snapshot.as_ptr(),
+                applied_snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+            ),
+            0
         );
     }
 

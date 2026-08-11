@@ -1356,6 +1356,89 @@ pub extern "C" fn onyx_extract_authenticated_standard_program_delta(
     })
 }
 
+fn precheck_authenticated_standard_program_state<const DEPTH: usize>(
+    snapshot: &[u8],
+    envelope: &program_context::ContextualAuthorizedTransaction,
+) -> Result<bool, ()> {
+    let state = state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?;
+    if envelope
+        .transaction
+        .preimage
+        .spends
+        .iter()
+        .any(|spend| state.is_spent(&spend.nullifier))
+    {
+        return Ok(false);
+    }
+    for (call, context) in envelope
+        .transaction
+        .preimage
+        .programs
+        .iter()
+        .zip(&envelope.contexts)
+    {
+        let application = standard_programs::StandardApplication::decode(&context.application_data)
+            .map_err(|_| ())?;
+        let state_key = application.state_key(&call.program_id).map_err(|_| ())?;
+        let transition = context.state.as_ref().ok_or(())?;
+        let prior = state::CanonicalField::from_bytes(transition.prior).ok_or(())?;
+        if state
+            .standard_program_state_by_key(&state_key)
+            .is_some_and(|current| current != prior)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Authenticate and decode a contextual standard-program envelope, then reject already-spent
+/// nullifiers or stale prior states without invoking Halo2. This is a mempool admission precheck
+/// only; callers must still run the complete verifier before admission and block application.
+/// Returns 1 when no cheap conflict is present, 0 for a chain-state conflict, and a negative value
+/// for malformed input, invalid authorization, snapshot failure, or unsupported depth.
+#[no_mangle]
+pub extern "C" fn onyx_precheck_authenticated_standard_program_state(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > program_context::MAX_CONTEXTUAL_TRANSACTION_BYTES
+        {
+            return -1;
+        }
+        let envelope = match program_context::ContextualAuthorizedTransaction::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(envelope) => envelope,
+            Err(_) => return -2,
+        };
+        if authorization::verify_authorized_transaction(&envelope.transaction).is_err() {
+            return -2;
+        }
+        let snapshot = unsafe { slice::from_raw_parts(snapshot, snapshot_len) };
+        let eligible = match merkle_depth {
+            2 => precheck_authenticated_standard_program_state::<2>(snapshot, &envelope),
+            4 => precheck_authenticated_standard_program_state::<4>(snapshot, &envelope),
+            32 => precheck_authenticated_standard_program_state::<32>(snapshot, &envelope),
+            _ => return -3,
+        };
+        match eligible {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => -2,
+        }
+    })
+}
+
 /// Verify and apply a one-way legacy bridge envelope. The C++ caller must additionally validate
 /// the returned ownership signature against the disclosed legacy output public key, then atomically
 /// record the returned key image in legacy spent state together with this snapshot.

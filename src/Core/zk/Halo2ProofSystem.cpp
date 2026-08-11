@@ -336,6 +336,19 @@ bool Halo2ProofSystem::extract_authenticated_standard_program_delta(
 	return true;
 }
 
+Halo2ProofSystem::AdmissionPrecheck Halo2ProofSystem::precheck_authenticated_standard_program_state(
+    const BinaryArray &snapshot, const BinaryArray &encoded, uint32_t merkle_depth) {
+	if (snapshot.empty() || encoded.empty())
+		return AdmissionPrecheck::INVALID;
+	const int rc = onyx_precheck_authenticated_standard_program_state(
+	    snapshot.data(), snapshot.size(), encoded.data(), encoded.size(), merkle_depth);
+	if (rc == 1)
+		return AdmissionPrecheck::ELIGIBLE;
+	if (rc == 0)
+		return AdmissionPrecheck::CONFLICT;
+	return AdmissionPrecheck::INVALID;
+}
+
 bool Halo2ProofSystem::verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
     const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta) {

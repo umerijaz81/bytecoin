@@ -853,8 +853,30 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL) {
+		// Authenticate the value-layer preimage and derive canonical stable state keys before invoking
+		// the expensive Halo2 verifier. These checks are admission filters only: they can reject a
+		// transaction that conflicts with the current pool, but a non-conflicting transaction still
+		// performs the complete stateful verification below and every block path verifies independently.
+		zk::Halo2ProofSystem::VerifiedTransferDelta authenticated_delta;
+		if (!zk::Halo2ProofSystem::extract_authenticated_standard_program_delta(
+		        tx.onyx_envelope, &authenticated_delta, &onyx_standard_state_keys))
+			throw ConsensusError("Invalid Onyx standard program call authorization");
+		for (const auto &nullifier : authenticated_delta.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return false;
+		for (const auto &state_key : onyx_standard_state_keys)
+			if (m_memory_state_onyx_standard_state_tx.count(state_key) != 0)
+				return false;
+
 		BinaryArray snapshot;
 		read_onyx_snapshot(&snapshot);
+		const auto state_precheck =
+		    zk::Halo2ProofSystem::precheck_authenticated_standard_program_state(
+		        snapshot, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH);
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::INVALID)
+			throw ConsensusError("Invalid Onyx standard program call precheck");
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
+			throw ConsensusError("Onyx standard program call rejected against current state");
 		BinaryArray dry_run_snapshot;
 		std::array<uint8_t, 16> network{};
 		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
@@ -862,17 +884,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_PROGRAM_CIRCUIT_K, network, next_block_height,
 		        &dry_run_snapshot, &onyx_delta))
 			throw ConsensusError("Onyx standard program call rejected against current state");
-		zk::Halo2ProofSystem::VerifiedTransferDelta authenticated_delta;
-		if (!zk::Halo2ProofSystem::extract_authenticated_standard_program_delta(
-		        tx.onyx_envelope, &authenticated_delta, &onyx_standard_state_keys) ||
-		    authenticated_delta.nullifiers != onyx_delta.nullifiers)
+		if (authenticated_delta.nullifiers != onyx_delta.nullifiers)
 			throw ConsensusError("Onyx standard program call delta extraction mismatch");
-		for (const auto &nullifier : onyx_delta.nullifiers)
-			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
-				return false;
-		for (const auto &state_key : onyx_standard_state_keys)
-			if (m_memory_state_onyx_standard_state_tx.count(state_key) != 0)
-				return false;
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {

@@ -725,9 +725,11 @@ Validation performed before commit:
   seconds and timed out after reaching height 32 while peers applied the deployment proof. That call
   now uses 1,800 seconds, crossed the former failure boundary, and reached activation height 48.
 - Valid program calls took roughly two minutes to construct and minutes per peer to admit/apply.
-  Confirmed replays and pending state-key conflicts also incurred proof verification before rejection.
-  Treat cheap conflict/replay prechecks plus bounded verifier queues as the immediate DoS work; never
-  turn a precheck into a substitute for consensus verification.
+  Authenticated standard-call replay and stable-key conflict prechecks are now implemented before
+  Halo2 while all eligible mempool and block paths retain full verification. The clean three-node
+  precheck rerun finished at height 81 and recorded `0.015` seconds for the competing NFT admission
+  and `0.0` seconds (below timer resolution) for the competing swap branch. Bounded verifier queues
+  and the other transaction families remain the immediate DoS work.
 
 Validation not yet completed:
 
@@ -883,8 +885,8 @@ Implemented:
 
 Remaining:
 
-- Cheap replay/state-conflict admission prechecks that cannot bypass canonical consensus proof
-  verification, followed by bounded verifier queues, concurrency, memory, and overload behavior.
+- Bounded verifier queues, concurrency, memory, cancellation, and overload behavior. Extend cheap
+  rejection to other transaction families only through authenticated metadata extractors.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.

@@ -700,9 +700,9 @@ Exact profile evidence:
 
 Observed performance is not a release pass. Program proof creation took roughly two minutes per call
 on this Windows host, and each peer independently consumed minutes verifying/admitting or applying a
-valid proof. Confirmed replays and pending stable-key competitors also reached expensive verification
-before their cheap state conflict was returned. Those are concrete CPU-amplification findings for the
-performance/DoS milestone; optimize ordering without skipping consensus verification.
+valid proof. At the time of this run, confirmed replays and pending stable-key competitors also reached
+expensive verification. The authenticated admission precheck described below now rejects those two
+standard-call conflict classes before Halo2, without changing block verification.
 
 ### Completed implementation: program-state rollback, reopen, and recovery (`5101111`)
 
@@ -790,22 +790,55 @@ This scenario deliberately rolls back the swap refund because it exercises progr
 undo, mempool restoration, wallet recovery, and reconfirmation in one bounded branch. It does not yet
 replace wider randomized reorg campaigns across every earlier deployment/issuance transition.
 
-### Next implementation: cheap replay/conflict admission and bounded verifier performance
+### Completed implementation: authenticated standard-call conflict prechecks
 
-Valid program calls took minutes of CPU per peer in the clean run. Confirmed replays and pending
-stable-key conflicts can currently reach expensive proof verification before their state conflict is
-returned. The immediate implementation order is:
+Standard-program mempool admission now authenticates the contextual value-layer envelope and derives
+its canonical nullifiers and stable state keys before invoking Halo2. It rejects a nullifier or stable
+key already reserved by the local pool, then decodes the current rollback-safe consensus snapshot and
+rejects an already-spent nullifier or stale signed prior state. The precheck does not inspect
+unauthenticated caller-supplied identifiers and cannot admit anything: an eligible result still enters
+the original full stateful proof verifier, and block application is unchanged.
 
-1. Map transaction admission ordering for deployments, standard calls, issuance, and private token
-   transfers; identify authenticated identifiers and state keys that are safe to inspect before proof
-   verification.
-2. Add cheap exact-transaction replay and current/pending state-conflict prechecks. These are
-   admission/DoS filters only; block consensus must still perform full canonical proof verification.
-3. Add bounded verifier queues, per-peer/global concurrency and memory limits, cancellation, and
+The Rust/C ABI boundary returns three explicit outcomes: malformed/unauthorized input, authenticated
+state conflict, or eligible for full verification. C++ preserves the two existing caller semantics:
+pending pool conflicts return `false`, while conflicts against committed state throw the same
+`ConsensusError` used by the full verifier. An initial qualification attempt exposed this distinction:
+returning `false` for a confirmed replay correctly rejected it internally but made RPC report
+`broadcast`; the final implementation restores the consensus-error response and the rerun passes.
+
+Focused and process validation:
+
+- The optimized Rust wallet fixture constructs and fully verifies a signed NFT call, confirms the
+  fresh snapshot is eligible, applies it, and confirms both the internal helper and FFI return a cheap
+  replay conflict. Unsupported Merkle depth fails closed.
+- Release `bytecoind`, `walletd`, `minerd`, and `tests` rebuild successfully; `tests.exe --jade`
+  passes and the Python harness compiles cleanly.
+- The complete three-node run exited zero and wrote
+  `build/codex-zk/onyx-precheck-qualification.json` with scope
+  `local-ci-not-release-evidence`. It finished at height 81 on block
+  `135019cdf8c964f11fc4c666e082f4ad10ad265a53eca4c3682d9795eb9fc23a`, with all three nodes on
+  commitment root `3950785d3dfe4dc5494960c05312b81e45f1d006c71e5af008e00d8591d9f136`.
+- Timed admission of an already-built competing NFT transition took `0.015` seconds; the competing
+  swap branch measured below the timer's resolution and was recorded as `0.0` seconds. Both are below
+  the conservative 30-second regression ceiling, while valid proof admission on the same host still
+  consumed minutes per peer.
+- The same run passed confirmed replay rejection, every token/profile lifecycle, durable rollback,
+  restored refund eligibility, reconfirmation, alternate-node wallet reopen, and exact supply
+  convergence. The report records the measured timings for future comparison.
+
+### Next implementation: bounded verifier performance
+
+Cheap standard-call replay/conflict amplification is closed, but valid proofs and the deployment,
+issuance, and private-transfer families can still consume substantial CPU. The immediate order is:
+
+1. Add authenticated metadata extractors for deployments, issuance, and private token transfers only
+   where signatures bind every identifier used for early rejection. Never reject from unauthenticated
+   program IDs, sequences, anchors, or nullifiers.
+2. Add bounded verifier queues, per-peer/global concurrency and memory limits, cancellation, and
    deterministic overload errors without consensus divergence.
-4. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
-   application on named hardware. Pin thresholds in regression tests only after measuring variance.
-5. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
+3. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
+   application on named hardware. Pin thresholds only after measuring variance.
+4. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
 
 Other remaining O5 work:
 

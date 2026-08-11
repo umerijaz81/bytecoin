@@ -23,6 +23,7 @@ MINING_ADDRESS_A = (
 )
 WALLET_PASSWORD = "onyx-local-qualification-password"
 RECOVERY_PASSWORD = "onyx-local-recovery-password"
+MAX_PENDING_PROGRAM_CONFLICT_SECONDS = 30.0
 WALLET_AUTH = "onyx-local:qualification-auth"
 
 
@@ -1105,11 +1106,21 @@ def main():
                     "witness": owner_witness,
                 },
             )
+            competing_call_started = time.monotonic()
             competing_call_response = rpc_response(
                 onyx_b.rpc_port,
                 "send_transaction",
                 {"binary_transaction": competing_call["binary_transaction"]},
             )
+            competing_call_elapsed = time.monotonic() - competing_call_started
+            pending_conflict_precheck_seconds = {
+                "stateful-nft": round(competing_call_elapsed, 6)
+            }
+            if competing_call_elapsed > MAX_PENDING_PROGRAM_CONFLICT_SECONDS:
+                raise RuntimeError(
+                    "pending standard-program state conflict reached expensive verification: "
+                    f"elapsed={competing_call_elapsed:.3f}s"
+                )
             if (
                 transaction_known(onyx_b, competing_call["transaction_hash"])
                 or not transaction_known(onyx_b, standard_call["transaction_hash"])
@@ -1742,11 +1753,21 @@ def main():
                     competing = receiver_wallet.call(
                         "create_onyx_standard_program_call", competitor
                     )
+                    competing_started = time.monotonic()
                     competing_response = rpc_response(
                         onyx_b.rpc_port,
                         "send_transaction",
                         {"binary_transaction": competing["binary_transaction"]},
                     )
+                    competing_elapsed = time.monotonic() - competing_started
+                    pending_conflict_precheck_seconds[label] = round(
+                        competing_elapsed, 6
+                    )
+                    if competing_elapsed > MAX_PENDING_PROGRAM_CONFLICT_SECONDS:
+                        raise RuntimeError(
+                            f"pending {label} state conflict reached expensive verification: "
+                            f"elapsed={competing_elapsed:.3f}s"
+                        )
                     if (
                         transaction_known(onyx_b, competing["transaction_hash"])
                         or not transaction_known(onyx_b, transaction["transaction_hash"])
@@ -2330,6 +2351,10 @@ def main():
                 "branch_b_tip": branch_b_tip,
                 "final_height": final_height,
                 "final_block_hash": final_tip,
+                "pending_standard_program_conflict_precheck": {
+                    "maximum_seconds": MAX_PENDING_PROGRAM_CONFLICT_SECONDS,
+                    "observed_seconds": pending_conflict_precheck_seconds,
+                },
                 "scenarios": {
                     "longer_branch_reorganization": "passed",
                     "supply_audit_convergence": "passed",

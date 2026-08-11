@@ -646,6 +646,10 @@ impl<const DEPTH: usize> ShieldedState<DEPTH> {
         Ok(self.program_states.get(&key).copied())
     }
 
+    pub fn standard_program_state_by_key(&self, state_key: &[u8; 32]) -> Option<CanonicalField> {
+        self.program_states.get(state_key).copied()
+    }
+
     fn next_block_program_cost(
         &self,
         block_height: u64,

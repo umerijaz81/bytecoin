@@ -160,6 +160,13 @@ int onyx_extract_authenticated_standard_program_delta(
 	uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out,
 	uint8_t *state_keys_out, size_t state_key_capacity, size_t *state_key_count_out);
 
+/* Authenticate a contextual envelope and cheaply compare its nullifiers/prior states with the
+ * snapshot. Returns 1 eligible, 0 conflicting, or a negative value for malformed input/snapshot.
+ * This is an admission filter only; full verification remains mandatory before acceptance. */
+int onyx_precheck_authenticated_standard_program_state(
+    const uint8_t *snapshot, size_t snapshot_len,
+    const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth);
+
 /* Decode the rollback-safe consensus snapshot and return its public supply-accounting totals.
  * After all pointers are validated, every output is zeroed before any decode that can fail. */
 int onyx_state_supply_audit(

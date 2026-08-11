@@ -77,6 +77,7 @@ public:
 		uint64_t current_block_program_cost = 0;
 		std::array<uint8_t, 32> commitment_root{};
 	};
+	enum class AdmissionPrecheck { INVALID, CONFLICT, ELIGIBLE };
 	const char *backend_id() const override;
 	static uint32_t abi_version();
 
@@ -127,6 +128,8 @@ public:
 	static bool extract_authenticated_standard_program_delta(
 	    const BinaryArray &encoded, VerifiedTransferDelta *delta,
 	    std::vector<std::array<uint8_t, 32>> *state_keys);
+	static AdmissionPrecheck precheck_authenticated_standard_program_state(
+	    const BinaryArray &snapshot, const BinaryArray &encoded, uint32_t merkle_depth);
 	static bool verify_apply_bridge(const BinaryArray &snapshot, uint64_t anchor_window_blocks,
 	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
