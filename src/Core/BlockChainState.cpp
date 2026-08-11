@@ -180,9 +180,8 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 			zk::Halo2ProofSystem::VerifiedBridgeDelta verified;
-			if (!zk::Halo2ProofSystem::verify_bridge(
-			        tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &verified))
-				throw ConsensusError("Invalid Onyx bridge proof");
+			if (!zk::Halo2ProofSystem::extract_bridge_metadata(tx.onyx_envelope, &verified))
+				throw ConsensusError("Malformed Onyx bridge");
 			return verified.fee;
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
@@ -822,9 +821,11 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	bool has_authenticated_program_deployment = false;
 	zk::Halo2ProofSystem::VerifiedTokenIssuance authenticated_token_issuance;
 	bool has_authenticated_token_issuance = false;
-	// These policy checks precede validate_tx_semantic because bridges still verify proofs while
-	// extracting metadata. Empty sources are internal deterministic
-	// reorg restoration and deliberately bypass this non-consensus admission limiter.
+	zk::Halo2ProofSystem::VerifiedBridgeDelta authenticated_bridge;
+	bool has_authenticated_bridge = false;
+	// These cheap policy/authentication checks precede the mandatory stateful proof. Empty sources
+	// are internal deterministic reorg restoration and deliberately bypass only the non-consensus
+	// admission limiter.
 	if (is_zero_fee_standard_call &&
 	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
 		return false;
@@ -879,6 +880,40 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		if (m_memory_state_onyx_issuance_tx.count(authenticated_token_issuance.program_id) != 0)
 			return false;
 	}
+	if (is_onyx && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+		if (!zk::Halo2ProofSystem::extract_bridge_metadata(tx.onyx_envelope, &authenticated_bridge))
+			throw ConsensusError("Malformed Onyx bridge");
+		has_authenticated_bridge = true;
+		KeyImage key_image{};
+		Hash sighash{};
+		crypto::Signature signature{};
+		static_assert(sizeof(key_image.data) == 32 && sizeof(sighash.data) == 32 && sizeof(signature) == 64,
+		    "bridge ownership ABI sizes changed");
+		std::memcpy(key_image.data, authenticated_bridge.legacy_key_image.data(), 32);
+		std::memcpy(sighash.data, authenticated_bridge.ownership_sighash.data(), 32);
+		std::memcpy(&signature, authenticated_bridge.ownership_signature.data(), 64);
+		if (!key_in_main_subgroup(key_image))
+			throw ConsensusError("Legacy bridge key image not in main subgroup");
+		if (authenticated_bridge.legacy_stack_index > std::numeric_limits<size_t>::max())
+			throw ConsensusError("Legacy bridge stack index overflow");
+		OutputIndexData output;
+		if (!read_amount_output(authenticated_bridge.legacy_amount,
+		        static_cast<size_t>(authenticated_bridge.legacy_stack_index), &output))
+			throw ConsensusError("Legacy bridge output does not exist");
+		if (!m_currency.is_transaction_unlocked(next_block_major_version,
+		        output.unlock_block_or_timestamp, next_block_height, get_tip().timestamp,
+		        get_tip().timestamp_median))
+			throw ConsensusError("Legacy bridge output is locked");
+		const std::vector<PublicKey> output_keys{output.public_key};
+		const RingSignature ownership_signature{signature};
+		if (!crypto::check_ring_signature(sighash, key_image, output_keys, ownership_signature))
+			throw ConsensusError("Invalid legacy bridge ownership signature");
+		Height spent_height = 0;
+		if (read_keyimage(key_image, &spent_height))
+			throw ConsensusErrorOutputSpent("Legacy bridge output already spent", key_image, spent_height);
+		if (m_memory_state_ki_tx.count(key_image) != 0)
+			return false;
+	}
 #endif
 	const size_t my_size = binary_tx.size();
 	// Validate against the block miners can build next before using the authenticated opaque-envelope
@@ -895,6 +930,12 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	bool has_onyx_program_id = false;
 	std::array<uint8_t, 32> onyx_issuance_program_id{};
 	bool has_onyx_issuance_program_id = false;
+	if (tx.version == m_currency.onyx_transaction_version &&
+	    tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+		invariant(has_authenticated_bridge, "authenticated bridge metadata missing");
+		if (my_fee != authenticated_bridge.fee)
+			throw ConsensusError("Onyx bridge fee extraction mismatch");
+	}
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
 		invariant(has_authenticated_transfer_delta, "authenticated transfer delta missing");
 		onyx_delta = authenticated_transfer_delta;
@@ -1192,9 +1233,8 @@ void BlockChainState::remove_from_pool(Hash tid) {
 	}
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
-		invariant(zk::Halo2ProofSystem::verify_bridge(
-		              tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge),
-		    "stored Onyx bridge failed verification");
+		invariant(zk::Halo2ProofSystem::extract_bridge_metadata(tx.onyx_envelope, &bridge),
+		    "stored Onyx bridge failed metadata extraction");
 		KeyImage key_image{};
 		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
 		if (m_memory_state_ki_tx.erase(key_image) != 1)
@@ -1411,9 +1451,8 @@ void BlockChainState::undo_transaction(IBlockChainState *delta_state, Height, co
 	if (tx.version == m_currency.onyx_transaction_version && tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 #ifdef onyx_USE_ZK
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
-		invariant(zk::Halo2ProofSystem::verify_bridge(
-		              tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge),
-		    "accepted Onyx bridge failed verification during undo");
+		invariant(zk::Halo2ProofSystem::extract_bridge_metadata(tx.onyx_envelope, &bridge),
+		    "accepted Onyx bridge failed metadata extraction during undo");
 		KeyImage key_image{};
 		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
 		delta_state->delete_keyimage(key_image);

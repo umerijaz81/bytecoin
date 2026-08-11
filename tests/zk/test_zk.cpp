@@ -290,6 +290,24 @@ void test_zk() {
 		              verified.ownership_sighash == ownership_sighash &&
 		              verified.ownership_signature == ownership_signature,
 		    "verified bridge fields changed across the C ABI");
+		Halo2ProofSystem::VerifiedBridgeDelta metadata;
+		invariant(Halo2ProofSystem::extract_bridge_metadata(bridge, &metadata),
+		    "bridge metadata extraction failed through C++ adapter");
+		invariant(metadata.legacy_amount == verified.legacy_amount &&
+		              metadata.legacy_stack_index == verified.legacy_stack_index &&
+		              metadata.legacy_key_image == verified.legacy_key_image &&
+		              metadata.ownership_sighash == verified.ownership_sighash &&
+		              metadata.ownership_signature == verified.ownership_signature &&
+		              metadata.fee == verified.fee,
+		    "proof-free bridge metadata differs from full verification");
+		metadata.legacy_amount = 99;
+		invariant(!Halo2ProofSystem::extract_bridge_metadata(BinaryArray{0xff}, &metadata),
+		    "malformed bridge metadata extraction succeeded");
+		const std::array<uint8_t, 32> zero32{};
+		const std::array<uint8_t, 64> zero64{};
+		invariant(metadata.legacy_amount == 0 && metadata.legacy_key_image == zero32 &&
+		              metadata.ownership_sighash == zero32 && metadata.ownership_signature == zero64,
+		    "failed bridge metadata extraction left stale outputs");
 
 		BinaryArray state;
 		invariant(Halo2ProofSystem::verify_apply_bridge(

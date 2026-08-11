@@ -2185,6 +2185,74 @@ pub extern "C" fn onyx_verify_bridge(
     })
 }
 
+/// Decode a canonical bridge and extract the metadata covered by its legacy ownership sighash
+/// without invoking Halo2. C++ callers must verify the returned signature against the resolved
+/// legacy output before using these values for rejection or admission bookkeeping.
+#[no_mangle]
+pub extern "C" fn onyx_extract_bridge_metadata(
+    encoded: *const u8,
+    encoded_len: usize,
+    legacy_amount_out: *mut u64,
+    legacy_stack_index_out: *mut u64,
+    legacy_key_image_out: *mut u8,
+    ownership_sighash_out: *mut u8,
+    ownership_signature_out: *mut u8,
+    fee_out: *mut u64,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || legacy_amount_out.is_null()
+            || legacy_stack_index_out.is_null()
+            || legacy_key_image_out.is_null()
+            || ownership_sighash_out.is_null()
+            || ownership_signature_out.is_null()
+            || fee_out.is_null()
+            || encoded_len == 0
+            || encoded_len > MAX_AUTHORIZED_TRANSACTION_BYTES
+        {
+            return -1;
+        }
+        unsafe {
+            *legacy_amount_out = 0;
+            *legacy_stack_index_out = 0;
+            std::ptr::write_bytes(legacy_key_image_out, 0, 32);
+            std::ptr::write_bytes(ownership_sighash_out, 0, 32);
+            std::ptr::write_bytes(ownership_signature_out, 0, 64);
+            *fee_out = 0;
+        }
+        let bridge = match bridge::AuthorizedBridge::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(bridge) => bridge,
+            Err(_) => return -2,
+        };
+        if bridge.backend_id != proof::BRIDGE_BACKEND {
+            return -3;
+        }
+        let sighash = match bridge.ownership_sighash() {
+            Ok(hash) => hash,
+            Err(_) => return -2,
+        };
+        unsafe {
+            *legacy_amount_out = bridge.preimage.legacy_amount;
+            *legacy_stack_index_out = bridge.preimage.legacy_stack_index;
+            *fee_out = bridge.preimage.fee;
+            std::ptr::copy_nonoverlapping(
+                bridge.preimage.legacy_key_image.as_ptr(),
+                legacy_key_image_out,
+                32,
+            );
+            std::ptr::copy_nonoverlapping(sighash.as_ptr(), ownership_sighash_out, 32);
+            std::ptr::copy_nonoverlapping(
+                bridge.ownership_signature.as_ptr(),
+                ownership_signature_out,
+                64,
+            );
+        }
+        1
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn onyx_wallet_address(
     seed: *const u8,
@@ -4495,7 +4563,7 @@ mod tests {
                 1,
                 &mut second_count,
             ),
-            -3
+            -2
         );
         assert_eq!(
             (network, anchor, expiry, fee, first_count, second_count),
@@ -4678,6 +4746,37 @@ mod tests {
             (0, 0, [0; 32], [0; 32], [0; 64], 0)
         );
 
+        legacy_amount = u64::MAX;
+        legacy_stack_index = u64::MAX;
+        key_image.fill(0xff);
+        sighash.fill(0xff);
+        signature.fill(0xff);
+        fee = u64::MAX;
+        assert_eq!(
+            onyx_extract_bridge_metadata(
+                malformed.as_ptr(),
+                malformed.len(),
+                &mut legacy_amount,
+                &mut legacy_stack_index,
+                key_image.as_mut_ptr(),
+                sighash.as_mut_ptr(),
+                signature.as_mut_ptr(),
+                &mut fee,
+            ),
+            -2
+        );
+        assert_eq!(
+            (
+                legacy_amount,
+                legacy_stack_index,
+                key_image,
+                sighash,
+                signature,
+                fee
+            ),
+            (0, 0, [0; 32], [0; 32], [0; 64], 0)
+        );
+
         let mut snapshot_out = 1usize as *mut u8;
         let mut snapshot_len = usize::MAX;
         fee = u64::MAX;
@@ -4697,7 +4796,7 @@ mod tests {
                 &mut snapshot_len,
                 &mut fee,
             ),
-            -3
+            -2
         );
         assert!(snapshot_out.is_null());
         assert_eq!((snapshot_len, fee), (0, 0));

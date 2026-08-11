@@ -264,6 +264,47 @@ mod tests {
         assert_eq!(extracted_key_image, [7; 32]);
         assert_eq!(extracted_sighash, bridge.ownership_sighash().unwrap());
         assert_eq!(extracted_signature, [0; 64]);
+
+        // Structural extraction must return exactly the metadata produced by the full stateful
+        // verifier without invoking Halo2. The caller still has to resolve the legacy output and
+        // verify this ownership signature before using the values for admission decisions.
+        let mut metadata_amount = u64::MAX;
+        let mut metadata_index = u64::MAX;
+        let mut metadata_key_image = [0xffu8; 32];
+        let mut metadata_sighash = [0xffu8; 32];
+        let mut metadata_signature = [0xffu8; 64];
+        let mut metadata_fee = u64::MAX;
+        assert_eq!(
+            crate::onyx_extract_bridge_metadata(
+                encoded.as_ptr(),
+                encoded.len(),
+                &mut metadata_amount,
+                &mut metadata_index,
+                metadata_key_image.as_mut_ptr(),
+                metadata_sighash.as_mut_ptr(),
+                metadata_signature.as_mut_ptr(),
+                &mut metadata_fee,
+            ),
+            1
+        );
+        assert_eq!(
+            (
+                metadata_amount,
+                metadata_index,
+                metadata_key_image,
+                metadata_sighash,
+                metadata_signature,
+                metadata_fee,
+            ),
+            (
+                extracted_amount,
+                extracted_index,
+                extracted_key_image,
+                extracted_sighash,
+                extracted_signature,
+                extracted_fee,
+            )
+        );
         let mut total_bridged = 0u64;
         let mut total_fees = 0u64;
         let mut circulating_supply = 0u64;

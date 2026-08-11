@@ -146,6 +146,7 @@ public:
 	    const BinaryArray &encoded, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedBridgeDelta *delta);
 	static bool verify_bridge(const BinaryArray &encoded, uint32_t circuit_k, VerifiedBridgeDelta *delta);
+	static bool extract_bridge_metadata(const BinaryArray &encoded, VerifiedBridgeDelta *delta);
 	static bool state_supply_audit(const BinaryArray &snapshot, SupplyAudit *audit);
 	static bool state_standard_program_state(const BinaryArray &snapshot,
 	    const std::array<uint8_t, 32> &program_id, const BinaryArray &application,

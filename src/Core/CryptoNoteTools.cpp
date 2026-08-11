@@ -188,8 +188,7 @@ bool cn::get_tx_fee(const TransactionPrefix &tx, uint64_t *fee) {
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
 			zk::Halo2ProofSystem::VerifiedBridgeDelta delta;
-			if (!zk::Halo2ProofSystem::verify_bridge(
-			        tx.onyx_envelope, parameters::ONYX_BRIDGE_CIRCUIT_K, &delta))
+			if (!zk::Halo2ProofSystem::extract_bridge_metadata(tx.onyx_envelope, &delta))
 				return false;
 			*fee = delta.fee;
 			return true;

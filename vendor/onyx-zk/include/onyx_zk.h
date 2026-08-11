@@ -227,6 +227,15 @@ int onyx_verify_bridge(
     uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
     uint8_t ownership_signature_out[64], uint64_t *fee_out);
 
+/* Extract canonical bridge metadata without Halo2. Every returned field is covered by
+ * ownership_sighash_out, but the caller must resolve the legacy output and verify the returned
+ * ownership signature before using the metadata for an admission decision. */
+int onyx_extract_bridge_metadata(
+    const uint8_t *encoded, size_t encoded_len,
+    uint64_t *legacy_amount_out, uint64_t *legacy_stack_index_out,
+    uint8_t legacy_key_image_out[32], uint8_t ownership_sighash_out[32],
+    uint8_t ownership_signature_out[64], uint64_t *fee_out);
+
 /* Wallet/SDK constructors and queries below clear every fixed, scalar, and allocated output after
  * all output pointers are validated and before any input-dependent failure.
  *

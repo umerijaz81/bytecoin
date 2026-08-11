@@ -497,6 +497,22 @@ bool Halo2ProofSystem::verify_bridge(
 	return true;
 }
 
+bool Halo2ProofSystem::extract_bridge_metadata(
+    const BinaryArray &encoded, VerifiedBridgeDelta *delta) {
+	if (delta != nullptr)
+		*delta = VerifiedBridgeDelta{};
+	if (encoded.empty() || delta == nullptr)
+		return false;
+	VerifiedBridgeDelta result;
+	const int rc = onyx_extract_bridge_metadata(encoded.data(), encoded.size(), &result.legacy_amount,
+	    &result.legacy_stack_index, result.legacy_key_image.data(), result.ownership_sighash.data(),
+	    result.ownership_signature.data(), &result.fee);
+	if (rc != 1)
+		return false;
+	*delta = result;
+	return true;
+}
+
 bool Halo2ProofSystem::state_supply_audit(const BinaryArray &snapshot, SupplyAudit *audit) {
 	if (audit != nullptr)
 		*audit = SupplyAudit{};
