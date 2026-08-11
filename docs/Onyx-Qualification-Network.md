@@ -213,8 +213,8 @@ conservative 30-second ceiling, in `build/codex-zk/onyx-precheck-qualification.j
 
 Cold/warm verifier initialization, bounded admission/backpressure, parallel valid-proof load,
 and memory-pressure qualification remain open. Authenticated cheap filters now cover standard calls,
-transfers, deployments, and issuance; bridge fee extraction remains proof-backed. No precheck may
-become a substitute for full canonical consensus verification.
+transfers, deployments, issuance, and bridges. No precheck may become a substitute for full canonical
+consensus verification.
 
 The node additionally enforces a non-blocking process-local permit before external Onyx mempool proof
 or fee verification: one active verifier globally and per source, with no internal wait queue.
@@ -238,7 +238,14 @@ Issuance admission is state-aware: the canonical registry supplies the issuer ke
 which the precheck verifies registry identity, active schema, issuer and value-binding signatures,
 anchor, sequence, and cumulative supply before Halo2. Eligible issuance still runs the full stateful
 proof/application once. Fresh, replay, and corrupted-issuer cases pass in the optimized regression;
-bridge fee extraction and live backlog/RSS/load measurements remain open.
+live backlog/RSS/load measurements remain open.
+
+Bridge admission structurally extracts the ownership-sighash-covered amount, stack index, key image,
+fee, and signature without Halo2. Before those values can drive a conflict rejection, C++ resolves
+the exact legacy output, checks subgroup/index/unlock rules, and verifies the ownership ring signature
+against that output key. Eligible bridges retain the full stateful bridge proof and authoritative
+legacy spent/output/signature checks. The real proof regression, malformed-output clearing test, both
+feature-mode builds, both Jade suites, and the complete C++ ZK suite pass.
 
 The P2P body-download backlog now has explicit non-consensus bounds: 32 active transaction downloads
 per peer and 128 process-wide. A transaction ID that encounters local Onyx verifier overload is

@@ -770,6 +770,13 @@ Validation performed before commit:
   classification, checks post-load RPC health, and atomically emits revision-bound JSON. Its unit
   tests pass. A real proof-bearing run on named hardware is still required before setting an RSS
   threshold or treating the report as evidence.
+- Commit `7e46efb` makes bridge admission use proof-free canonical metadata extraction for semantic fee reads, then
+  authenticates that metadata by resolving the legacy output and verifying the ownership ring
+  signature before confirmed/pending key-image conflict checks. The ownership sighash binds the
+  bridge preimage, backend, and proof bytes. Eligible mempool and block paths retain the full stateful
+  bridge proof/application and authoritative legacy checks. The real bridge regression, failure-output
+  clearing test, both feature-mode builds, both Jade suites, and the complete C++ ZK suite pass. No
+  Onyx semantic/read-only fee path now needs to verify a proof.
 
 Validation not yet completed:
 

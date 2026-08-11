@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-11**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `5101111` (`Qualify Onyx rollback and recovery`)
+Implementation revision documented: `7e46efb` (`Authenticate Onyx bridge admission`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `5101111` on this branch.
+- **Committed**: present at or before Git revision `7e46efb` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -835,8 +835,8 @@ issuance, and private-transfer families can still consume substantial CPU. The i
 
 External Onyx mempool admission now obtains a process-local RAII permit before
 `validate_tx_semantic`. At introduction, transfer, bridge, deployment, and issuance metadata
-extraction could itself verify a proof; authenticated filters added afterward leave bridge as the
-remaining proof-backed fee path. The default bound is one active external Onyx verifier globally and one per source.
+extraction could itself verify a proof; authenticated filters added afterward remove proof work from
+all semantic/read-only fee paths. The default bound is one active external Onyx verifier globally and one per source.
 There is no waiting queue: a contending request receives retryable RPC error `-104`
 (`VERIFIER_BUSY`) immediately. P2P treats the same overload as a local non-ban condition.
 
@@ -923,8 +923,28 @@ expiry, and state transition rules. The proof-bearing regression confirms fresh 
 application, replay conflict, and corrupted-issuer rejection. Cargo check, ZK/non-ZK Release builds,
 and both Jade suites pass.
 
-With transfer, deployment, standard-call, and issuance filters complete, bridge metadata is the only
-remaining Onyx fee path that verifies a proof during semantic/read-only fee extraction.
+#### Implemented in `7e46efb`: authenticated bridge admission
+
+Bridge semantic validation and read-only fee calculation now decode canonical bridge metadata
+without invoking Halo2. The extracted legacy amount, stack index, key image, fee, ownership sighash,
+and ownership signature are not trusted directly: mempool admission resolves the exact legacy output,
+checks the key-image subgroup and index bounds, checks next-block unlock context, and verifies the
+one-member ownership ring signature against the resolved output key before consulting confirmed or
+pending key-image conflicts.
+
+The ownership sighash binds the complete canonical bridge preimage, backend identifier, and proof
+bytes. Consequently, a successful ownership signature authenticates the values used for cheap
+rejection without treating the structural extractor as a proof verifier. A non-conflicting bridge
+still enters the unchanged authoritative `verify_apply_bridge` path, followed by the legacy spent
+check, output resolution/unlock check, ownership verification, key-image storage, and atomic Onyx
+snapshot application. Pool cleanup and block undo use structural metadata only for transactions that
+were already fully accepted.
+
+The optimized real bridge regression compares every structural field with the full stateful verifier.
+Malformed extraction clears every output. `cargo check --release`, both focused Rust tests, ZK and
+non-ZK Release daemon/test builds, both Jade suites, and the complete C++ ZK suite pass. This completes
+proof-free semantic and read-only fee handling for every Onyx transaction family; live valid-proof
+load qualification remains the next performance milestone.
 
 #### Implemented: bounded P2P download backlog and verifier-overload cooldown
 
