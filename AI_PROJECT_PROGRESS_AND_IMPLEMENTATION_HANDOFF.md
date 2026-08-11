@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `585bc4d` (`Offload Onyx mempool proof verification`)
+- Committed revision reviewed: `e04ff20` (`Add Onyx differential state crash qualification`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -146,7 +146,7 @@ builds, incident rehearsal, and governance approval for one exact frozen commit.
 |---|---|---|
 | Jade hardening | Committed and locally tested | Independent review, historical compatibility, platform/long-run qualification |
 | O0 ZK foundation | Substantially repository-complete | Independent circuit/FFI audit, long valid/malformed fuzzing, benchmarks |
-| O1 shielded state | Substantially repository-complete | Differential state model, crash injection, independent consensus audit |
+| O1 shielded state | Deterministic reference-ledger and SQLite crash-boundary runners implemented locally | Long/full-daemon campaigns, maximum-size corruption testing, independent consensus audit |
 | O2 private transfers | Committed, functionally process-qualified, and locally valid-proof load-qualified over HTTP and P2P | Cold/warm and sustained load campaigns, public testnet, independent crypto/wallet audit |
 | O3 wallet/RPC | Committed | Hardware-wallet acceptance, multi-operator recovery tests, external review |
 | O4 migration | Committed and locally process-qualified | Public supply evidence, independent review, incident rehearsal |
@@ -277,17 +277,52 @@ Primary implementation:
 - Stateful standard-program rollback, database reopen, wallet reopen, and reconfirmation.
 - SQLite online-backup behavior was tested after raw directory copies proved capable of reopening one
   block behind the RPC-visible tip.
+- `vendor/onyx-zk/src/state_model_tests.rs` now contains an independent reference ledger and a
+  deterministic generated apply/undo/fork/reopen campaign. The reference model uses its own
+  containers and incremental Poseidon frontier rather than calling production state-transition
+  helpers.
+- A fixed prelude guarantees successful bridge, token deployment, NFT deployment, issuance,
+  contextual standard-program call, and transfer operations, followed by reopen, duplicate
+  rejection, undo, and fork coverage. Seeded exploration continues after the prelude.
+- After every accepted operation the runner compares commitment root/count, nullifiers, retained
+  anchors, height, bridged/fee/circulating supply, program registry/function/cost data, token
+  issuance supply/sequence, and standard-program state. It re-encodes and reopens the production
+  snapshot at every step and repeats the comparison.
+- Rejected operations must agree between the production and reference ledgers and leave the encoded
+  production state byte-for-byte unchanged. A failure prints the seed, failing step, and complete
+  shortest generated prefix needed to replay that divergence.
+- The default campaign runs two fixed seeds for at least 74 steps. Replay or extend it with
+  `ONYX_STATE_MODEL_SEED=<hex>` and `ONYX_STATE_MODEL_STEPS=<count>` before invoking the focused Rust
+  test.
+- Snapshot tests reject every truncated prefix and a supply-field corruption. These are bounded
+  regression tests, not yet a maximum-size coverage-guided corruption campaign.
+- `tests/network/test_onyx_db_crash_process.py` repeatedly terminates the native C++ test process at
+  three real SQLite transaction boundaries using the production DB adapter and Onyx state/undo key
+  shapes: after the state write, after the complete state/undo pair but before commit, and directly
+  after commit. It verifies rollback or survival through both the C++ adapter and an independent
+  read-only Python SQLite connection plus `PRAGMA integrity_check`.
+- The 2026-08-12 local crash run observed exact child exit codes 85/86/87, rolled back both
+  uncommitted cases, recovered the committed pair, and reported SQLite integrity `ok`. Its report
+  schema is `bytecoin-onyx-db-crash-v1` and its scope is deliberately
+  `local-process-crash-not-release-evidence`.
+- Weekly qualification CI builds the native `tests` target, runs the crash harness, and uploads its
+  revision-bound JSON report. The ordinary Onyx Rust matrix maps the new model module exactly once;
+  local shard validation currently reports 108 tests total and 74 in the core shard.
 
 ### 9.3 Still required
 
-1. Build a simple independent reference ledger and differential state runner.
-2. Generate randomized bridges, transfers, deployments, issuance, program calls, forks, undo, and
-   reopen operations.
-3. Compare roots, nullifiers, commitment counts, program state, supply, and error behavior after
-   every operation.
-4. Inject crashes at actual database transaction/flush boundaries, not only clean shutdowns.
-5. Fuzz corrupt snapshots and partial writes at configured maximum sizes.
-6. Submit the state transition and rollback design to an independent consensus audit.
+1. Extend the deterministic runner into long revision-bound campaigns with many published seeds,
+   higher operation counts, resource ceilings, retained reports, and automated minimization beyond
+   the already printed divergent prefix.
+2. Add full-daemon kill points during actual Onyx block application, undo, longer-chain reorg, DB
+   flush/checkpoint, and restart. The current harness proves SQLite transaction atomicity through the
+   production adapter, but it does not yet kill `bytecoind` inside a live block/reorg path.
+3. Fuzz corrupt snapshots, WAL/database images, partial writes, and boundary-sized state at every
+   configured maximum. Prove bounded CPU and memory as well as fail-closed recovery.
+4. Run the same campaigns on clean Linux, macOS, and Windows builds and archive reports for one
+   immutable revision. A local Windows pass is regression evidence only.
+5. Submit the state transition, snapshot, persistence, rollback, and reference-model assumptions to
+   an independent consensus audit. Resolve every finding before activation.
 
 ## 10. O2 - private native and token transfers
 
@@ -1041,11 +1076,16 @@ thresholds without changing consensus validity or skipping verification.
 
 ### Priority 2 - deterministic differential state/crash runner
 
-Implement a small independent ledger and compare it after generated apply/undo/fork/reopen sequences.
-Add crash injection at database boundaries and save minimized failing seeds.
+Status: **bounded runner implemented and passing locally; long/full-daemon qualification remains**.
+
+Implemented in the current working milestone: independent ledger comparisons after generated
+apply/undo/fork/reopen sequences, deterministic seed/step replay, failure-prefix output, snapshot
+prefix/corruption rejection, and forced-process SQLite state/undo transaction tests. See section 9.2
+for exact coverage and section 9.3 for the remaining scope.
 
 Exit condition: long campaigns produce no unexplained root, supply, nullifier, or program-state
-divergence.
+divergence, and full-daemon block/reorg crash campaigns recover without corruption. The bounded local
+runner alone does not satisfy this exit condition.
 
 ### Priority 3 - compiler and valid-envelope fuzz campaigns
 

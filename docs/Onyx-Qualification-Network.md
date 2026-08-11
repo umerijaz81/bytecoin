@@ -295,3 +295,25 @@ these values are observations, not universal ceilings.
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.
+
+## SQLite state/undo crash-boundary qualification
+
+`tests/network/test_onyx_db_crash_process.py` launches the native `tests` executable in hidden child
+modes that use `platform::DBsqlite3` and the same Onyx state (`Z`) and block-hash-keyed undo (`z...`)
+key shapes as the daemon. It forcibly exits after a state-only write, after both writes but before
+commit, and immediately after commit. Each restart checks the expected state through the C++ adapter;
+the Python parent independently opens the database read-only, runs `PRAGMA integrity_check`, and
+compares the exact raw rows.
+
+Run it against a ZK-enabled native test build:
+
+```text
+python tests/network/test_onyx_db_crash_process.py \
+  --tests build/codex-zk/artifacts/bin/Release/tests.exe \
+  --revision <full-commit> \
+  --report build/codex-zk/onyx-db-crash-process.json
+```
+
+The report scope is `local-process-crash-not-release-evidence`. This verifies transaction atomicity
+at the production SQLite adapter boundary; it does not replace a future campaign that kills a live
+`bytecoind` during block application, undo, reorganization, flush, or checkpoint.

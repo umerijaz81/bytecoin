@@ -152,8 +152,8 @@ Still required:
 
 ### O1 — Canonical Onyx state
 
-Status: **Repository implementation substantially complete; independent consensus audit and long
-campaigns remain.**
+Status: **Repository implementation plus bounded independent-model/SQLite crash runners complete;
+independent consensus audit and long/full-daemon campaigns remain.**
 
 Implemented:
 
@@ -167,6 +167,11 @@ Implemented:
   mintable programs, and cap enforcement.
 - Supply-audit and standard-state query paths that clear caller-visible outputs on failure.
 - Tip-hash keyed supply-audit caching that recomputes on same-height reorganization.
+- Independent deterministic reference ledger with generated bridge, transfer, deployment, issuance,
+  contextual-program, rejection, undo, fork, and reopen sequences; exact comparisons and replayable
+  seed/prefix diagnostics run after every step.
+- Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
+  state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
 
 Primary locations:
 
@@ -179,8 +184,11 @@ Primary locations:
 Still required:
 
 - Independent consensus-state audit.
-- Long randomized differential apply/undo/reorg campaigns.
-- Crash-recovery campaigns against real database interruption points.
+- Long, multi-platform, revision-bound extensions of the bounded deterministic campaigns.
+- Full `bytecoind` kill/restart campaigns during actual block apply, undo, reorg, flush, and
+  checkpoint paths; the current test terminates the native test child around real SQLite commits but
+  does not yet interrupt a live daemon consensus transition.
+- Maximum-size snapshot/database corruption fuzzing and state resource measurements.
 
 ### O2 — Private transfers and authorization
 
