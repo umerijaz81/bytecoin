@@ -20,6 +20,7 @@ on:
       - "tests/miner/**"
       - "tests/network/**"
       - "tests/security/**"
+      - "tools/onyx_verifier_load.py"
       - "vendor/randomx/**"
   pull_request:
     paths:
@@ -37,6 +38,7 @@ on:
       - "tests/blockchain/**"
       - "tests/miner/**"
       - "tests/network/**"
+      - "tools/onyx_verifier_load.py"
       - "vendor/randomx/**"
 
 permissions:
@@ -51,6 +53,8 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Test Onyx verifier load-report tooling
+        run: python3 -m unittest tests.network.test_onyx_verifier_load_unit -v
       - name: Install build dependencies
         run: |
           sudo apt-get update

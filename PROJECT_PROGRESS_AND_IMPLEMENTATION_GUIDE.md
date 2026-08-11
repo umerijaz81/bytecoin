@@ -955,6 +955,14 @@ retry-cooldown table size. These counters are updated under the same lock as per
 load report to prove both resource behavior and whether the intended limiter engaged. Optional
 zero-valued fields may be absent from JSON; qualification readers must treat absence as zero.
 
+The standalone `tools/onyx_verifier_load.py` runner accepts distinct prebuilt transaction files,
+releases concurrent submissions on a barrier, samples cross-platform process RSS/peak RSS/CPU, polls
+the authenticated counters, measures each response, checks post-load node health, and writes an
+atomic revision-bound JSON report with scope `local-load-not-release-evidence`. It fails closed on a
+verifier peak above one, missing permit activity, missing required overload evidence, post-load RPC
+failure, or a caller-supplied RSS ceiling violation. Unit tests cover canonical/distinct input
+handling, optional counter normalization, response classification, and live process sampling.
+
 1. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
    application on named hardware. Pin thresholds only after measuring variance.
 2. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.

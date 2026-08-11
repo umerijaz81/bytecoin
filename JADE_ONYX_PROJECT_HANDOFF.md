@@ -765,6 +765,11 @@ Validation performed before commit:
   global/per-source overload rejections, active transaction downloads, and current cooldown entries.
   These are the authoritative limiter-engagement inputs for the pending live load report; absent
   optional fields mean zero.
+- `tools/onyx_verifier_load.py` turns distinct prebuilt Onyx transactions into a barrier-synchronized
+  local load run, samples process RSS/CPU plus limiter statistics, records response latency and
+  classification, checks post-load RPC health, and atomically emits revision-bound JSON. Its unit
+  tests pass. A real proof-bearing run on named hardware is still required before setting an RSS
+  threshold or treating the report as evidence.
 
 Validation not yet completed:
 

@@ -253,6 +253,29 @@ The authenticated private `get_statistics` endpoint supplies `onyx_verifier_acti
 retry-cooldown count. Load evidence must sample these alongside process RSS/CPU and treat an omitted
 optional zero-valued field as zero.
 
+`tools/onyx_verifier_load.py` is the bounded live runner. Supply at least two distinct, unsubmitted,
+fully formed Onyx transaction files (plain hex or JSON containing `binary_transaction`), the daemon
+PID, and private RPC credentials:
+
+```text
+python tools/onyx_verifier_load.py \
+  --rpc-url http://127.0.0.1:18081/json_rpc \
+  --authorization user:password \
+  --pid <bytecoind-pid> \
+  --transaction-file first.hex \
+  --transaction-file second.hex \
+  --parallel 2 \
+  --revision <full-commit> \
+  --max-rss-growth-mib <measured-threshold> \
+  --report build/codex-zk/onyx-verifier-load.json
+```
+
+The runner starts submissions on one barrier, samples process RSS/peak RSS/CPU independently of RPC,
+polls authenticated limiter statistics, records every response and latency, and verifies post-load
+RPC health. It fails unless peak verifier concurrency remains at most one, a permit is observed, and
+overload is observed (unless `--allow-no-overload` is explicitly used for a control run). An RSS
+ceiling is enforced only when supplied; do not invent one before measuring the named host.
+
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not
 satisfy that evidence.
