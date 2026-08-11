@@ -5,13 +5,16 @@ use reddsa::orchard::SpendAuth;
 use reddsa::{Signature, SigningKey, VerificationKey};
 use sha2::{Digest, Sha256};
 
-use crate::authorization::{authorization_digest, AuthorizationError};
+use crate::authorization::{
+    authorization_digest, verify_issuance_binding_authorization, verify_spend_authorizations,
+    AuthorizationError,
+};
 use crate::keys::KeyBundle;
 use crate::program::ProgramRegistry;
 use crate::proof::{verify_authorized_token_issuance, ProofError};
 use crate::token_program::{
-    issuance_function_id, issuance_policy_from_entry, issuance_public_data_hash, TokenProgramError,
-    TOKEN_PROGRAM_BACKEND,
+    issuance_function_id, issuance_policy_from_entry, issuance_public_data_hash,
+    issuance_schema_hash, TokenProgramError, TOKEN_PROGRAM_BACKEND,
 };
 use crate::transaction::{read_bytes, write_bytes, AuthorizedTransaction, TransactionError};
 use crate::types::{write_varint, DecodeError, Reader};
@@ -195,6 +198,63 @@ pub fn verify_token_issuance<const DEPTH: usize, const OUTPUTS: usize>(
         block_height,
     )?;
     Ok(())
+}
+
+/// Authenticate all issuance metadata that depends on the registered token policy without invoking
+/// Halo2. The returned cap is only an input to rejection-only state checks; full verification remains
+/// mandatory before application.
+pub fn authenticate_token_issuance<const DEPTH: usize>(
+    k: u32,
+    issuance: &AuthorizedTokenIssuance,
+    registry: &ProgramRegistry,
+    block_height: u64,
+) -> Result<u64, TokenIssuanceError> {
+    issuance.validate_structure()?;
+    if !(10..=20).contains(&k) {
+        return Err(TokenIssuanceError::InvalidShape);
+    }
+    let preimage = &issuance.transaction.preimage;
+    let call = &preimage.programs[0];
+    let entry = registry
+        .get(&call.program_id)
+        .ok_or(TokenIssuanceError::InvalidShape)?;
+    if entry.id().map_err(|_| TokenIssuanceError::InvalidShape)? != call.program_id {
+        return Err(TokenIssuanceError::InvalidShape);
+    }
+    let (depth, manifest_k, policy) = issuance_policy_from_entry(entry)?;
+    if depth != DEPTH || manifest_k != k || issuance.issued_amount > policy.max_supply {
+        return Err(TokenIssuanceError::SupplyCap);
+    }
+    let (_, function) = registry
+        .active_function(&call.program_id, call.function_id, block_height)
+        .map_err(|_| TokenIssuanceError::InvalidShape)?;
+    if entry.backend != TOKEN_PROGRAM_BACKEND
+        || function.public_input_schema_hash != issuance_schema_hash(DEPTH, preimage.outputs.len())?
+    {
+        return Err(TokenIssuanceError::InvalidShape);
+    }
+    let verification = VerificationKey::<SpendAuth>::try_from(policy.issuer)
+        .map_err(|_| TokenIssuanceError::InvalidIssuer)?;
+    verification
+        .verify(
+            &issuance.issuer_digest()?,
+            &Signature::<SpendAuth>::from(issuance.issuer_signature),
+        )
+        .map_err(|_| TokenIssuanceError::InvalidIssuer)?;
+    verify_spend_authorizations(
+        preimage,
+        &issuance.transaction.backend_id,
+        &issuance.transaction.proof,
+        &issuance.transaction.spend_signatures,
+    )?;
+    verify_issuance_binding_authorization(
+        preimage,
+        issuance.issued_amount,
+        &issuance.transaction.backend_id,
+        &issuance.transaction.proof,
+        issuance.transaction.binding_signature,
+    )?;
+    Ok(policy.max_supply)
 }
 
 pub fn verify_token_issuance_proof<const DEPTH: usize, const OUTPUTS: usize>(
@@ -408,6 +468,32 @@ mod tests {
         assert_eq!(extracted_commitment_count, 2);
 
         let initial_snapshot = state.encode_snapshot();
+        assert_eq!(
+            crate::onyx_precheck_authenticated_token_issuance(
+                initial_snapshot.as_ptr(),
+                initial_snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                network.as_ptr(),
+                1,
+                extracted_network.as_mut_ptr(),
+                extracted_anchor.as_mut_ptr(),
+                &mut extracted_expiry,
+                extracted_program.as_mut_ptr(),
+                &mut extracted_sequence,
+                &mut extracted_amount,
+                extracted_commitments.as_mut_ptr(),
+                2,
+                &mut extracted_commitment_count,
+            ),
+            1
+        );
+        assert_eq!(
+            (extracted_program, extracted_sequence, extracted_amount),
+            (program_id, 0, 100)
+        );
         let mut applied_ptr = std::ptr::null_mut();
         let mut applied_len = 0usize;
         let mut applied_program = [0u8; 32];
@@ -438,12 +524,57 @@ mod tests {
         assert_eq!(applied_program, program_id);
         assert_eq!(applied_sequence, 0);
         assert_eq!(applied_amount, 100);
+        assert_eq!(
+            crate::onyx_precheck_authenticated_token_issuance(
+                ffi_snapshot.as_ptr(),
+                ffi_snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+                K,
+                network.as_ptr(),
+                1,
+                extracted_network.as_mut_ptr(),
+                extracted_anchor.as_mut_ptr(),
+                &mut extracted_expiry,
+                extracted_program.as_mut_ptr(),
+                &mut extracted_sequence,
+                &mut extracted_amount,
+                extracted_commitments.as_mut_ptr(),
+                2,
+                &mut extracted_commitment_count,
+            ),
+            0
+        );
 
         let mut bad_signature = issuance.clone();
         bad_signature.issuer_signature[0] ^= 1;
         assert_eq!(
             verify_token_issuance::<DEPTH, 2>(K, &bad_signature, state.program_registry(), 1).err(),
             Some(TokenIssuanceError::InvalidIssuer)
+        );
+        let bad_encoded = bad_signature.encode().unwrap();
+        assert_eq!(
+            crate::onyx_precheck_authenticated_token_issuance(
+                initial_snapshot.as_ptr(),
+                initial_snapshot.len(),
+                bad_encoded.as_ptr(),
+                bad_encoded.len(),
+                DEPTH as u32,
+                K,
+                network.as_ptr(),
+                1,
+                extracted_network.as_mut_ptr(),
+                extracted_anchor.as_mut_ptr(),
+                &mut extracted_expiry,
+                extracted_program.as_mut_ptr(),
+                &mut extracted_sequence,
+                &mut extracted_amount,
+                extracted_commitments.as_mut_ptr(),
+                2,
+                &mut extracted_commitment_count,
+            ),
+            -2
         );
 
         state

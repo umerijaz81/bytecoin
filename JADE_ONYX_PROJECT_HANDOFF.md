@@ -746,7 +746,14 @@ Validation performed before commit:
   manifest program ID before using fee, nullifier, commitment, or program ID metadata. Pending pool
   conflicts fail before Halo2; eligible deployments still execute the stateful proof/apply verifier
   once and must return the same fee and program ID. The real deployment proof regression and both
-  feature-mode builds pass. Issuance remains the last proof-backed metadata family.
+  feature-mode builds pass.
+- Token issuance now uses a state-aware authenticated precheck because the issuer key and supply cap
+  must come from the canonical deployed registry. It verifies the registry entry identity, active
+  function schema, issuer signature, issuance binding signature, anchor, sequence, and cumulative cap
+  before a conflict can reject early. Eligible issuance still runs the complete stateful proof/apply
+  verifier once and must reproduce program ID, sequence, and amount. Fee-only reads are proof-free;
+  the real issuance regression and both build modes pass. Bridge fee extraction is now the remaining
+  proof-backed read path.
 
 Validation not yet completed:
 

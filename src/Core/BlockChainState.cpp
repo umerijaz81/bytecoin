@@ -193,10 +193,11 @@ Amount cn::validate_tx_semantic(const Currency &currency, uint8_t block_major_ve
 			return verified.funding.fee;
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
-			zk::Halo2ProofSystem::VerifiedTokenIssuance verified;
-			if (!zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
-			        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, &verified))
-				throw ConsensusError("Invalid Onyx token issuance proof");
+			// Issuance is fee-free. Its issuer and registry-dependent metadata are authenticated
+			// against the current snapshot in mempool/block application rather than in this
+			// state-independent structural pass.
+			if (!zk::Halo2ProofSystem::validate_token_issuance_structure(tx.onyx_envelope))
+				throw ConsensusError("Malformed Onyx token issuance");
 			return 0;
 		}
 		if (tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL) {
@@ -807,6 +808,9 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		m_archive.add(Archive::TRANSACTION, binary_tx, tid, source_address);
 		return false;  // AddTransactionResult::ALREADY_IN_POOL;
 	}
+	const Height tip_height = get_tip_height();
+	const uint8_t next_block_major_version = m_currency.get_next_block_major_version(tip_height);
+	const Height next_block_height = tip_height + 1;
 	std::unique_ptr<OnyxVerifierAdmission::Permit> onyx_verifier_permit;
 #ifdef onyx_USE_ZK
 	const bool is_onyx = tx.version == m_currency.onyx_transaction_version;
@@ -816,8 +820,10 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	bool has_authenticated_transfer_delta = false;
 	zk::Halo2ProofSystem::VerifiedProgramDeployment authenticated_program_deployment;
 	bool has_authenticated_program_deployment = false;
-	// These policy checks precede validate_tx_semantic because bridges and issuance
-	// still verify proofs while extracting metadata. Empty sources are internal deterministic
+	zk::Halo2ProofSystem::VerifiedTokenIssuance authenticated_token_issuance;
+	bool has_authenticated_token_issuance = false;
+	// These policy checks precede validate_tx_semantic because bridges still verify proofs while
+	// extracting metadata. Empty sources are internal deterministic
 	// reorg restoration and deliberately bypass this non-consensus admission limiter.
 	if (is_zero_fee_standard_call &&
 	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
@@ -856,14 +862,27 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 		if (m_memory_state_onyx_program_tx.count(authenticated_program_deployment.program_id) != 0)
 			return false;
 	}
+	if (is_onyx && tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		std::array<uint8_t, 16> network{};
+		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+		const auto state_precheck = zk::Halo2ProofSystem::precheck_authenticated_token_issuance(
+		    snapshot, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH,
+		    parameters::ONYX_TOKEN_CIRCUIT_K, network, next_block_height,
+		    &authenticated_token_issuance);
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::INVALID)
+			throw ConsensusError("Invalid Onyx token issuance authorization");
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
+			throw ConsensusError("Onyx token issuance rejected against current state");
+		has_authenticated_token_issuance = true;
+		if (m_memory_state_onyx_issuance_tx.count(authenticated_token_issuance.program_id) != 0)
+			return false;
+	}
 #endif
 	const size_t my_size = binary_tx.size();
 	// Validate against the block miners can build next before using the authenticated opaque-envelope
 	// fee for pool ordering.
-	const Height tip_height = get_tip_height();
-	const uint8_t next_block_major_version =
-	    m_currency.get_next_block_major_version(tip_height);
-	const Height next_block_height = tip_height + 1;  // Safe after the checked helper above.
 	const Amount my_fee = validate_tx_semantic(m_currency, next_block_major_version, false, tx,
 	    m_config.paranoid_checks || check_sigs, true);
 	if (verified_fee != nullptr)
@@ -951,10 +970,8 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 	}
 	if (tx.version == m_currency.onyx_transaction_version &&
 	    tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
-		zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
-		if (!zk::Halo2ProofSystem::verify_token_issuance(tx.onyx_envelope,
-		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, &issuance))
-			throw ConsensusError("Invalid Onyx token issuance proof");
+		invariant(has_authenticated_token_issuance, "authenticated token issuance missing");
+		const auto &issuance = authenticated_token_issuance;
 		BinaryArray snapshot;
 		read_onyx_snapshot(&snapshot);
 		BinaryArray dry_run_snapshot;
@@ -969,8 +986,6 @@ bool BlockChainState::add_transaction(const Hash &tid, const Transaction &tx, co
 			throw ConsensusError("Onyx token issuance rejected against current state");
 		onyx_issuance_program_id = issuance.program_id;
 		has_onyx_issuance_program_id = true;
-		if (m_memory_state_onyx_issuance_tx.count(onyx_issuance_program_id) != 0)
-			return false;
 	}
 #else
 	if (tx.version == m_currency.onyx_transaction_version)

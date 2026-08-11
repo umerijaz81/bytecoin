@@ -149,11 +149,24 @@ int onyx_verify_apply_program_deployment(
     uint8_t program_id_out[32]);
 
 /* Verify a token issuance proof/binding and extract its public state delta. */
+int onyx_validate_token_issuance_structure(const uint8_t *encoded, size_t encoded_len);
+
 int onyx_verify_and_extract_token_issuance(
     const uint8_t *encoded, size_t encoded_len, uint32_t merkle_depth, uint32_t circuit_k,
     uint8_t network_out[16], uint8_t anchor_out[32], uint64_t *expiry_height_out,
     uint8_t program_id_out[32], uint64_t *sequence_out, uint64_t *issued_amount_out,
     uint8_t *commitments_out, size_t commitment_capacity, size_t *commitment_count_out);
+
+/* Authenticate issuer, registry policy, binding signature, and issuance metadata, then cheaply
+ * compare anchor, sequence, and cumulative cap with the snapshot. Full proof verification remains
+ * mandatory. Returns 1 eligible, 0 state conflict, or a negative malformed/unauthorized result. */
+int onyx_precheck_authenticated_token_issuance(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t *encoded, size_t encoded_len,
+    uint32_t merkle_depth, uint32_t circuit_k, const uint8_t expected_network[16],
+    uint64_t block_height, uint8_t network_out[16], uint8_t anchor_out[32],
+    uint64_t *expiry_height_out, uint8_t program_id_out[32], uint64_t *sequence_out,
+    uint64_t *issued_amount_out, uint8_t *commitments_out, size_t commitment_capacity,
+    size_t *commitment_count_out);
 
 /* Verify issuer/cap/sequence/registry/proof and atomically apply token issuance. */
 int onyx_verify_apply_token_issuance(

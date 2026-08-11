@@ -212,8 +212,9 @@ and block consensus is unchanged. The clean rerun recorded the already-built com
 conservative 30-second ceiling, in `build/codex-zk/onyx-precheck-qualification.json`.
 
 Cold/warm verifier initialization, bounded admission/backpressure, parallel valid-proof load,
-memory-pressure qualification, and authenticated cheap filters for the remaining transaction families
-remain open. No precheck may become a substitute for full canonical consensus verification.
+and memory-pressure qualification remain open. Authenticated cheap filters now cover standard calls,
+transfers, deployments, and issuance; bridge fee extraction remains proof-backed. No precheck may
+become a substitute for full canonical consensus verification.
 
 The node additionally enforces a non-blocking process-local permit before external Onyx mempool proof
 or fee verification: one active verifier globally and per source, with no internal wait queue.
@@ -232,6 +233,12 @@ Deployment admission likewise verifies funding authorization and reconstructs th
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused
 real-deployment regression passes; issuance metadata and live load measurements remain open.
+
+Issuance admission is state-aware: the canonical registry supplies the issuer key and cap, after
+which the precheck verifies registry identity, active schema, issuer and value-binding signatures,
+anchor, sequence, and cumulative supply before Halo2. Eligible issuance still runs the full stateful
+proof/application once. Fresh, replay, and corrupted-issuer cases pass in the optimized regression;
+bridge fee extraction and live backlog/RSS/load measurements remain open.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not

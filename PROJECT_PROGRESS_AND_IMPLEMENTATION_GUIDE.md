@@ -834,8 +834,9 @@ issuance, and private-transfer families can still consume substantial CPU. The i
 #### Implemented: fail-fast concurrent mempool verification bound
 
 External Onyx mempool admission now obtains a process-local RAII permit before
-`validate_tx_semantic`, because transfer, bridge, deployment, and issuance fee extraction can itself
-verify a proof. The default bound is one active external Onyx verifier globally and one per source.
+`validate_tx_semantic`. At introduction, transfer, bridge, deployment, and issuance metadata
+extraction could itself verify a proof; authenticated filters added afterward leave bridge as the
+remaining proof-backed fee path. The default bound is one active external Onyx verifier globally and one per source.
 There is no waiting queue: a contending request receives retryable RPC error `-104`
 (`VERIFIER_BUSY`) immediately. P2P treats the same overload as a local non-ban condition.
 
@@ -900,14 +901,36 @@ The optimized real-deployment regression matched the authenticated output to ful
 then completed stateful application/replay checks. Cargo check, ZK/non-ZK Release daemon and test
 builds, and both Jade suites pass.
 
-1. Add an authenticated metadata extractor for issuance only
-   where signatures bind every identifier used for early rejection. Never reject from unauthenticated
-   program IDs, sequences, anchors, or nullifiers.
-2. Add bounded network backlog/rate policy and cancellation around the fail-fast verifier permit,
+#### Implemented: registry-authenticated token-issuance precheck
+
+Issuance cannot safely use a state-independent extractor because its issuer key lives in the deployed
+token policy. The new precheck therefore decodes the canonical snapshot, loads the exact signed
+program ID from the registry, recomputes and verifies the registry entry ID, validates the token
+depth/domain and active issuance function schema, and obtains the issuer key and supply cap from that
+policy. It then verifies both the separate issuer signature and the issuance-specific value-binding
+signature before exposing any metadata.
+
+Only authenticated values drive rejection. The precheck compares network, expiry distance, the signed
+anchor against the retained anchor window, next issuance sequence, and cumulative supply against the snapshot. A current-state conflict
+throws a consensus rejection; a second pending issuance for the same authenticated program returns a
+pool conflict. An eligible issuance still executes `verify_apply_token_issuance` exactly once, and
+the applied program ID, sequence, and amount must match the authenticated precheck result.
+
+Semantic validation and `get_tx_fee()` now return the protocol-defined zero issuance fee without
+proof verification. This is safe because neither path admits or applies the transaction; mempool and
+block state application still enforce the complete registry, issuer, proof, cap, sequence, network,
+expiry, and state transition rules. The proof-bearing regression confirms fresh eligibility, full
+application, replay conflict, and corrupted-issuer rejection. Cargo check, ZK/non-ZK Release builds,
+and both Jade suites pass.
+
+With transfer, deployment, standard-call, and issuance filters complete, bridge metadata is the only
+remaining Onyx fee path that verifies a proof during semantic/read-only fee extraction.
+
+1. Add bounded network backlog/rate policy and cancellation around the fail-fast verifier permit,
    without consensus divergence or peer bans for local overload.
-3. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
+2. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
    application on named hardware. Pin thresholds only after measuring variance.
-4. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
+3. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
 
 Other remaining O5 work:
 

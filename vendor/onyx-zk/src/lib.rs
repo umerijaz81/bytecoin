@@ -987,6 +987,27 @@ pub extern "C" fn onyx_verify_apply_program_deployment(
 /// Verify the proof and binding signature of a canonical token issuance and extract its delta.
 /// Issuer authorization and cumulative supply are snapshot-dependent and are checked by apply.
 #[no_mangle]
+pub extern "C" fn onyx_validate_token_issuance_structure(
+    encoded: *const u8,
+    encoded_len: usize,
+) -> i32 {
+    ffi_i32(|| {
+        if encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > token_issuance::MAX_TOKEN_ISSUANCE_BYTES
+        {
+            return -1;
+        }
+        match token_issuance::AuthorizedTokenIssuance::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(_) => 1,
+            Err(_) => -2,
+        }
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn onyx_verify_and_extract_token_issuance(
     encoded: *const u8,
     encoded_len: usize,
@@ -1057,6 +1078,150 @@ pub extern "C" fn onyx_verify_and_extract_token_issuance(
             }
         }
         1
+    })
+}
+
+fn precheck_authenticated_token_issuance<const DEPTH: usize>(
+    snapshot: &[u8],
+    issuance: &token_issuance::AuthorizedTokenIssuance,
+    circuit_k: u32,
+    expected_network: &[u8],
+    block_height: u64,
+) -> Result<bool, ()> {
+    let state = state::ShieldedState::<DEPTH>::decode_snapshot(snapshot).map_err(|_| ())?;
+    let max_supply = token_issuance::authenticate_token_issuance::<DEPTH>(
+        circuit_k,
+        issuance,
+        state.program_registry(),
+        block_height,
+    )
+    .map_err(|_| ())?;
+    let preimage = &issuance.transaction.preimage;
+    let program_id = preimage.programs[0].program_id;
+    let eligible = preimage.network_id.as_slice() == expected_network
+        && block_height <= preimage.expiry_height
+        && preimage.expiry_height - block_height <= MAX_EXPIRY_DISTANCE_BLOCKS
+        && state.knows_anchor(preimage.anchor)
+        && issuance.sequence == state.token_next_issuance_sequence(&program_id)
+        && state
+            .token_issued_supply(&program_id)
+            .checked_add(issuance.issued_amount)
+            .is_some_and(|supply| supply <= max_supply);
+    Ok(eligible)
+}
+
+/// Authenticate issuer, registry policy, binding signature, and public issuance metadata, then
+/// cheaply compare anchor, sequence, and cumulative cap against the canonical snapshot.
+#[no_mangle]
+pub extern "C" fn onyx_precheck_authenticated_token_issuance(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    encoded: *const u8,
+    encoded_len: usize,
+    merkle_depth: u32,
+    circuit_k: u32,
+    expected_network: *const u8,
+    block_height: u64,
+    network_out: *mut u8,
+    anchor_out: *mut u8,
+    expiry_height_out: *mut u64,
+    program_id_out: *mut u8,
+    sequence_out: *mut u64,
+    issued_amount_out: *mut u64,
+    commitments_out: *mut u8,
+    commitment_capacity: usize,
+    commitment_count_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        if snapshot.is_null()
+            || snapshot_len == 0
+            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+            || encoded.is_null()
+            || encoded_len == 0
+            || encoded_len > token_issuance::MAX_TOKEN_ISSUANCE_BYTES
+            || expected_network.is_null()
+            || network_out.is_null()
+            || anchor_out.is_null()
+            || expiry_height_out.is_null()
+            || program_id_out.is_null()
+            || sequence_out.is_null()
+            || issued_amount_out.is_null()
+            || commitments_out.is_null()
+            || commitment_count_out.is_null()
+        {
+            return -1;
+        }
+        unsafe {
+            std::ptr::write_bytes(network_out, 0, 16);
+            std::ptr::write_bytes(anchor_out, 0, 32);
+            *expiry_height_out = 0;
+            std::ptr::write_bytes(program_id_out, 0, 32);
+            *sequence_out = 0;
+            *issued_amount_out = 0;
+            *commitment_count_out = 0;
+        }
+        let issuance = match token_issuance::AuthorizedTokenIssuance::decode(unsafe {
+            slice::from_raw_parts(encoded, encoded_len)
+        }) {
+            Ok(issuance) => issuance,
+            Err(_) => return -2,
+        };
+        let preimage = &issuance.transaction.preimage;
+        if commitment_capacity < preimage.outputs.len() {
+            return -4;
+        }
+        let snapshot = unsafe { slice::from_raw_parts(snapshot, snapshot_len) };
+        let expected_network = unsafe { slice::from_raw_parts(expected_network, 16) };
+        let eligible = match merkle_depth {
+            2 => precheck_authenticated_token_issuance::<2>(
+                snapshot,
+                &issuance,
+                circuit_k,
+                expected_network,
+                block_height,
+            ),
+            4 => precheck_authenticated_token_issuance::<4>(
+                snapshot,
+                &issuance,
+                circuit_k,
+                expected_network,
+                block_height,
+            ),
+            32 => precheck_authenticated_token_issuance::<32>(
+                snapshot,
+                &issuance,
+                circuit_k,
+                expected_network,
+                block_height,
+            ),
+            _ => return -3,
+        };
+        let eligible = match eligible {
+            Ok(eligible) => eligible,
+            Err(_) => return -2,
+        };
+        let program_id = preimage.programs[0].program_id;
+        unsafe {
+            std::ptr::copy_nonoverlapping(preimage.network_id.as_ptr(), network_out, 16);
+            std::ptr::copy_nonoverlapping(preimage.anchor.bytes().as_ptr(), anchor_out, 32);
+            *expiry_height_out = preimage.expiry_height;
+            std::ptr::copy_nonoverlapping(program_id.as_ptr(), program_id_out, 32);
+            *sequence_out = issuance.sequence;
+            *issued_amount_out = issuance.issued_amount;
+            *commitment_count_out = preimage.outputs.len();
+            for (index, output) in preimage.outputs.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(
+                    output.commitment.bytes().as_ptr(),
+                    commitments_out.add(index * 32),
+                    32,
+                );
+            }
+        }
+        if eligible {
+            1
+        } else {
+            0
+        }
     })
 }
 

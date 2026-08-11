@@ -293,6 +293,35 @@ bool Halo2ProofSystem::verify_token_issuance(const BinaryArray &encoded, uint32_
 	return true;
 }
 
+bool Halo2ProofSystem::validate_token_issuance_structure(const BinaryArray &encoded) {
+	return !encoded.empty() && onyx_validate_token_issuance_structure(encoded.data(), encoded.size()) == 1;
+}
+
+Halo2ProofSystem::AdmissionPrecheck Halo2ProofSystem::precheck_authenticated_token_issuance(
+    const BinaryArray &snapshot, const BinaryArray &encoded, uint32_t merkle_depth,
+    uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+    VerifiedTokenIssuance *issuance) {
+	if (issuance != nullptr)
+		*issuance = VerifiedTokenIssuance{};
+	if (snapshot.empty() || encoded.empty() || issuance == nullptr)
+		return AdmissionPrecheck::INVALID;
+	VerifiedTokenIssuance result;
+	std::array<uint8_t, 32 * 2> commitments{};
+	size_t commitment_count = 0;
+	const int rc = onyx_precheck_authenticated_token_issuance(snapshot.data(), snapshot.size(),
+	    encoded.data(), encoded.size(), merkle_depth, circuit_k, expected_network.data(), block_height,
+	    result.network.data(), result.anchor.data(), &result.expiry_height, result.program_id.data(),
+	    &result.sequence, &result.issued_amount, commitments.data(), 2, &commitment_count);
+	if ((rc != 0 && rc != 1) || commitment_count > 2)
+		return AdmissionPrecheck::INVALID;
+	result.commitments.resize(commitment_count);
+	for (size_t i = 0; i != commitment_count; ++i)
+		std::copy(commitments.begin() + i * 32, commitments.begin() + (i + 1) * 32,
+		    result.commitments[i].begin());
+	*issuance = std::move(result);
+	return rc == 1 ? AdmissionPrecheck::ELIGIBLE : AdmissionPrecheck::CONFLICT;
+}
+
 bool Halo2ProofSystem::verify_apply_token_issuance(const BinaryArray &snapshot, const BinaryArray &encoded,
     uint32_t merkle_depth, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
     uint64_t block_height, BinaryArray *next_snapshot, VerifiedTokenIssuance *issuance) {

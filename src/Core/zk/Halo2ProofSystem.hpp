@@ -124,6 +124,11 @@ public:
 	    BinaryArray *next_snapshot, uint64_t *fee, std::array<uint8_t, 32> *program_id);
 	static bool verify_token_issuance(const BinaryArray &encoded, uint32_t merkle_depth,
 	    uint32_t circuit_k, VerifiedTokenIssuance *issuance);
+	static bool validate_token_issuance_structure(const BinaryArray &encoded);
+	static AdmissionPrecheck precheck_authenticated_token_issuance(const BinaryArray &snapshot,
+	    const BinaryArray &encoded, uint32_t merkle_depth, uint32_t circuit_k,
+	    const std::array<uint8_t, 16> &expected_network, uint64_t block_height,
+	    VerifiedTokenIssuance *issuance);
 	static bool verify_apply_token_issuance(const BinaryArray &snapshot, const BinaryArray &encoded,
 	    uint32_t merkle_depth, uint32_t circuit_k, const std::array<uint8_t, 16> &expected_network,
 	    uint64_t block_height, BinaryArray *next_snapshot, VerifiedTokenIssuance *issuance);
