@@ -54,9 +54,20 @@ ZK-enabled processes:
    circuit domains; reject tampered, duplicate, replayed, foreign-issuer, zero, and over-cap operations;
 13. activate the token, issue 1000 units, transfer 400 units between independent wallets while paying
    a native fee, and reconcile exact token/native balances, registry state, commitments, and supply;
-14. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
-15. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
-   supply-audit snapshot and the nonsensitive wallet qualification results.
+14. deploy and activate vesting, two-of-two multisig custody, and atomic-swap programs; reject early,
+   under-threshold, wrong-preimage, and pending competing-branch operations; confirm the valid calls
+   at heights 75, 76, and 77;
+15. mine the height-78 refund boundary and wait for node C's exact durable SQLite commit before taking
+   a transactionally consistent online backup;
+16. confirm the timeout refund at height 79, reopen the height-78 backup as an isolated fork, mine a
+   longer non-refund branch to height 80, and force all three primaries to roll back to it;
+17. require exact restoration of program state, commitment root/count, supply audit, and transaction
+   eligibility; reopen the receiver wallet through an alternate primary;
+18. submit the identical refund binary to every daemon that lacks it, reconfirm it at height 81, and
+   require exact node/wallet/state/audit convergence;
+19. prove a testnet daemon cannot cross the network-identity/genesis boundary; and
+20. optionally write a revision-bound JSON report containing every node's final height, hash, peer ID,
+   supply-audit snapshot, rollback evidence, and nonsensitive wallet qualification results.
 
 Example:
 
@@ -151,10 +162,54 @@ The passing report is `build/codex-zk/onyx-standard-profiles-qualification.json`
 `6d3606e4b912bb42f48205ed2401d1bf0483b542f036574ca8ca6fa42fd63b1a`. All nodes report `742000`
 bridged, `500003` fees, `241997` circulating native units, 21 commitments, and five programs.
 
-The run also measured minutes of CPU per peer for valid program proof admission/application. Confirmed
-replays and pending stable-key competitors reached proof verification before cheap conflict rejection.
-Cold/warm verifier initialization, bounded admission/backpressure, program-state reorganization and
-rollback, reopen behavior, and alternate-node recovery are still open.
+Commit `5101111` extends the rehearsal through deterministic program rollback, reopen, alternate-node
+wallet recovery, and reconfirmation. The clean unattended run exited zero and wrote
+`build/codex-zk/onyx-program-rollback-qualification.json`, marked
+`local-ci-not-release-evidence`.
+
+The rollback design is intentionally strict about database durability. `get_status` exposes the
+in-memory/header tip before the daemon's periodic SQLite transaction necessarily commits. The harness
+therefore waits until node C logs `db_commit started... tip_height=78`, then uses SQLite's online
+backup API while the source remains live. Raw directory copies and backups taken before this event
+were observed reopening one block behind. Source and destination SQLite connections are explicitly
+closed; a Python connection context manager alone does not close its Windows file handle.
+
+The exact passing branch sequence was:
+
+- height 78 pre-refund tip:
+  `8bc5bf085294530004ab078de8ffddc7b3bbd0809bcf2733403df9eef74ebf48`;
+- first refund transaction:
+  `bae8c1def7efe4c31d9a4f78e370224c5c0745fd901701d0d4263b3d08c04635`, confirmed at 79;
+- longer non-refund height-80 tip:
+  `21784d82597721d2307ccdb20407f5c82d90ca69079cd27b478c9ef65aebfae8`;
+- rollback commitment count/root: `20` /
+  `6eb87a0e11d818b4206600234ec8980e61f405c39ae325e80ba5cea9bba97618`;
+- identical refund reconfirmation height/final block: `81` /
+  `8c7ce1043aadd0a4faeae46a6ef6e5f212a100f7b0353d5d7d79e01205b8cd77`;
+- final commitment count/root: `21` /
+  `c50ae942893af7412b2ea5263665e16a40a65a0eb311058e7e4333a98a63180d`.
+
+Every primary ended with `742000` bridged, `500003` fees, `241997` circulating native units, five
+programs, and current-block program cost `4096`. The report marks program-state rollback,
+commitment-root rollback, mempool eligibility restoration, alternate-node wallet reopen, and refund
+reconfirmation after node reopen as passed. The test also terminated every daemon/wallet/miner and
+removed its temporary directory.
+
+Transaction restoration has an important relay detail: a primary may automatically restore the
+rolled-back transaction to its mempool. Sending the duplicate to that same primary returns a known
+transaction conflict and does not guarantee rebroadcast to an isolated peer. The harness checks all
+four daemons and directly submits the exact binary to each one where it is absent.
+
+The clean rerun also raised capped-token activation mining from 180 to 1,800 seconds. The shorter
+timeout expired at height 32 because peers were still applying the deployment proof; the corrected
+run crossed the old deadline, reached activation height 48, and completed through height 81.
+
+The run measured minutes of CPU per peer for valid program proof admission/application. Confirmed
+replays and pending stable-key competitors can reach proof verification before cheap conflict
+rejection. Cold/warm verifier initialization, safe cheap replay/conflict prechecks, bounded
+admission/backpressure, parallel valid-proof load, and memory-pressure qualification remain open.
+Prechecks are only admission filters: block consensus must still perform full canonical proof
+verification.
 
 The release gate still requires at least 14 elapsed days, 10,000 blocks and three independently
 operated nodes running the exact frozen revision. A private local run or accelerated clock does not

@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx Project Progress and Implementation Guide
 
-Last reconciled: **2026-08-05**
+Last reconciled: **2026-08-11**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `db044e5` (`Qualify private Onyx token lifecycle`)
+Implementation revision documented: `5101111` (`Qualify Onyx rollback and recovery`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -38,7 +38,7 @@ Current overall status:
 | O2 private transfers | Implemented and process-qualified locally | Real two-wallet transfer is committed; hosted CI and independent/public qualification remain |
 | O3 wallet and RPC | Implemented in repository | Needs real hardware-wallet and multi-operator acceptance |
 | O4 legacy migration | Implemented and committed | Local three-node migration passes; public supply evidence and incident drill remain |
-| O5 programs/compiler/SDKs | Substantially implemented; NFT, capped-token, vesting, multisig, and swap lifecycles are committed and locally process-qualified | Qualify rollback/recovery, performance/DoS limits, hosted CI, and public operation |
+| O5 programs/compiler/SDKs | Substantially implemented; NFT, capped-token, vesting, multisig, swap, and refund rollback/reopen lifecycles are committed and locally process-qualified | Implement performance/DoS limits, hosted CI, and public operation |
 | O6 network/PoW/release | Major components implemented | Real Tor/I2P, long soaks, platform measurements, audits, and ceremony remain |
 | External release gates | Not complete | Must be independently performed; must never be fabricated in repository JSON |
 
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `3da16ad` on this branch.
+- **Committed**: present at or before Git revision `5101111` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -451,10 +451,10 @@ protocol requiring its own threat model, supply proof, activation rules, tests, 
 
 ## 12. O5 — standard programs, compiler, and SDKs
 
-Status: **substantially implemented; real pinned NFT deployment/call and the capped-token,
-vesting, multisig, and swap lifecycles are committed and locally process-qualified through
-`3da16ad`. Program-state rollback/recovery, bounded verifier performance, hosted CI, and
-independent/public qualification remain.**
+Status: **substantially implemented; real pinned NFT deployment/call, capped-token, vesting,
+multisig, swap, and refund rollback/reopen lifecycles are committed and locally process-qualified
+through `5101111`. Bounded verifier performance, hosted CI, and independent/public qualification
+remain.**
 
 Implemented program consensus:
 
@@ -704,26 +704,108 @@ valid proof. Confirmed replays and pending stable-key competitors also reached e
 before their cheap state conflict was returned. Those are concrete CPU-amplification findings for the
 performance/DoS milestone; optimize ordering without skipping consensus verification.
 
-### Next implementation: program-state rollback and recovery
+### Completed implementation: program-state rollback, reopen, and recovery (`5101111`)
 
-Keep the next scenarios deterministic and bounded in this order:
+The release-binary process harness now continues beyond the first swap refund and proves an actual
+program-state undo/reapply lifecycle. This is a local regression gate, not public release evidence.
+The clean unattended run on 2026-08-11 exited zero and wrote
+`build/codex-zk/onyx-program-rollback-qualification.json` with scope
+`local-ci-not-release-evidence`.
 
-1. **Rollback/recovery**: force short competing branches across deployment, token issuance/transfer,
-   NFT call, vesting, multisig, swap claim, and swap refund. Prove program roots, sequences, balances,
-   commitment roots/counts, supply, and mempool eligibility restore exactly.
-2. **Reopen/recovery**: stop and reopen every node around rollback, restore a wallet through an
-   alternate node, and compare reconstructed native/token/program state with the pre-recorded oracle.
-3. **Evidence**: record branch tips, transaction hashes, heights, state commitments, balances, fees,
-   and audits without logging seeds, passwords, spend keys, signatures, or auth tokens.
+Deterministic branch sequence:
 
-Acceptance criteria:
+1. Complete the five-program lifecycle through swap claim height 77, then mine the empty timeout
+   boundary at height 78. Record tip
+   `8bc5bf085294530004ab078de8ffddc7b3bbd0809bcf2733403df9eef74ebf48`, the complete supply
+   audit, and the pre-refund program state.
+2. Wait for node C's exact `db_commit started... tip_height=78` log event. RPC/header height is not
+   accepted as proof that SQLite has durably committed the same tip.
+3. Use SQLite's online backup API while node C remains live to create a transactionally consistent
+   height-78 database image. Both source and destination connections are explicitly closed so Windows
+   cleanup can remove the temporary tree.
+4. Stop/reopen node C from its live database at the exact height-78 tip, construct the timeout refund,
+   and confirm transaction
+   `bae8c1def7efe4c31d9a4f78e370224c5c0745fd901701d0d4263b3d08c04635` at height 79.
+5. Open the height-78 snapshot as an isolated daemon with an unused exclusive peer port, mine two
+   empty blocks, and obtain the alternative height-80 tip
+   `21784d82597721d2307ccdb20407f5c82d90ca69079cd27b478c9ef65aebfae8`.
+6. Restart all three primaries against that longer fork. Require every primary to durably converge on
+   the same height-80 block and prove the refund is undone: program state, supply audit, commitment
+   count, commitment root, and transaction eligibility return to the recorded pre-refund oracle.
+7. Stop/reopen the receiver wallet through an alternate primary node. Require its reconstructed
+   native/token/program view to match the rollback state.
+8. Submit the identical refund binary directly to every daemon that does not know it, including the
+   isolated fork. This is necessary because restoring a transaction to a primary mempool does not
+   rebroadcast it when a duplicate submission is rejected as already known.
+9. Reconfirm the same refund at height 81 on block
+   `8c7ce1043aadd0a4faeae46a6ef6e5f212a100f7b0353d5d7d79e01205b8cd77`; require all nodes,
+   wallets, program state, commitments, and supply audits to converge again.
+10. Reject a testnet process at the Onyx identity/genesis boundary, write the report, terminate all
+    processes, close every database handle, and remove the temporary qualification directory.
 
-- All three nodes converge after every valid program transaction.
-- Invalid and conflicting transactions are rejected before state mutation.
-- Reorg/undo restores exact prior program roots, sequences, balances, supply, and mempool eligibility.
-- Wallet recovery through another node reconstructs program and asset state.
-- Native supply remains `bridged - all fees`; token supply never exceeds its program cap.
-- The harness finishes within a documented CI budget after warm-up.
+Exact passing final audit on all three primary nodes:
+
+| Field | Value |
+|---|---:|
+| Final height | `81` |
+| Final block | `8c7ce1043aadd0a4faeae46a6ef6e5f212a100f7b0353d5d7d79e01205b8cd77` |
+| Commitment root | `c50ae942893af7412b2ea5263665e16a40a65a0eb311058e7e4333a98a63180d` |
+| Commitment count | `21` |
+| Program count | `5` |
+| Total bridged | `742000` |
+| Total fees | `500003` |
+| Circulating native supply | `241997` |
+| Current-block program cost | `4096` |
+
+The rollback oracle at height 80 restored commitment count `20` and root
+`6eb87a0e11d818b4206600234ec8980e61f405c39ae325e80ba5cea9bba97618` before the height-81
+reconfirmation appended the twenty-first commitment. The final report marks every rollback scenario
+passed, including commitment-root rollback, program-state rollback, mempool eligibility restoration,
+alternate-node wallet reopen, and reconfirmation after node reopen.
+
+Qualification failures that informed the final design must not be erased from future handoffs:
+
+- A raw database-directory copy and a backup taken before the daemon's periodic commit both reopened
+  one block behind the RPC-visible tip. The final harness waits for the exact durable log event and
+  uses SQLite online backup.
+- A duplicate refund submission to a primary that had automatically restored the transaction to its
+  mempool did not rebroadcast to the isolated fork. The final harness checks each daemon and submits
+  the exact binary wherever it is absent.
+- Python's SQLite connection context manager does not close the handle. Explicit closing fixed a
+  Windows temporary-directory cleanup failure after an otherwise successful diagnostic run.
+- Capped-token activation originally inherited the helper's 180-second miner timeout. Multi-peer
+  deployment proof application exhausted it after reaching only height 32. The scoped activation
+  call now uses 1,800 seconds; the clean rerun crossed that old boundary and reached height 48.
+
+Acceptance criteria now proven locally:
+
+- All three nodes converge after every valid program transaction and after the longer-branch reorg.
+- Reorg/undo restores exact program state, commitments, supply, and transaction eligibility.
+- Node reopen and alternate-node wallet recovery reconstruct the rollback state.
+- The identical transaction can reconfirm after rollback, restoring the final root/audit exactly.
+- Native supply remains `bridged - all fees`; token supply remains within its program cap.
+- The report is valid JSON and cleanup leaves no daemon, wallet, miner, or temporary data directory.
+
+This scenario deliberately rolls back the swap refund because it exercises program state, commitment
+undo, mempool restoration, wallet recovery, and reconfirmation in one bounded branch. It does not yet
+replace wider randomized reorg campaigns across every earlier deployment/issuance transition.
+
+### Next implementation: cheap replay/conflict admission and bounded verifier performance
+
+Valid program calls took minutes of CPU per peer in the clean run. Confirmed replays and pending
+stable-key conflicts can currently reach expensive proof verification before their state conflict is
+returned. The immediate implementation order is:
+
+1. Map transaction admission ordering for deployments, standard calls, issuance, and private token
+   transfers; identify authenticated identifiers and state keys that are safe to inspect before proof
+   verification.
+2. Add cheap exact-transaction replay and current/pending state-conflict prechecks. These are
+   admission/DoS filters only; block consensus must still perform full canonical proof verification.
+3. Add bounded verifier queues, per-peer/global concurrency and memory limits, cancellation, and
+   deterministic overload errors without consensus divergence.
+4. Benchmark cold/warm valid proofs, duplicate replays, conflicts, parallel requests, RSS, and block
+   application on named hardware. Pin thresholds in regression tests only after measuring variance.
+5. Run adversarial mixed workloads and prove ordinary block/wallet progress continues under load.
 
 Other remaining O5 work:
 
@@ -967,11 +1049,12 @@ unrelated user file enters the commit.
 
 Status: **pinned NFT deployment is committed in `1a82773`, its stateful NFT call is committed in
 `060b691`, capped-token deployment/issuance/transfer and split circuit APIs are committed in
-`db044e5`, and vesting/multisig/swap process qualification is committed in `3da16ad`. Program-state
-rollback/recovery remains.**
+`db044e5`, vesting/multisig/swap process qualification is committed in `3da16ad`, and deterministic
+refund rollback/reopen/reconfirmation qualification is committed in `5101111`.**
 
-Follow the exact results and next scenario in section 12. Implement reorg/recovery next, retaining
-per-transition branch tips and state/audit oracles.
+Follow the exact results in section 12. Implement cheap safe replay/conflict admission checks and
+bounded verifier scheduling next, retaining full consensus verification, per-transition branch tips,
+state/audit oracles, rollback/recovery, and deterministic overload behavior.
 
 Exit criterion: real wallets and three nodes prove valid transitions, invalid mutation rejection,
 rollback, recovery, fee/supply correctness, and bounded runtime.

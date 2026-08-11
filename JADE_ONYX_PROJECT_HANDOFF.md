@@ -1,9 +1,9 @@
 # Jade/Onyx Project Progress and Implementation Handoff
 
-Last reviewed: 2026-08-05
+Last reviewed: 2026-08-11
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `db044e5` (`Qualify private Onyx token lifecycle`)
+Last implementation revision reviewed: `5101111` (`Qualify Onyx rollback and recovery`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `db044e5`.
+- **Implemented and committed** means the code is in the branch history at or before `5101111`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -335,6 +335,21 @@ Implemented:
 - Authorized-transfer extraction and application select native `k=16` or token `k=14` from the
   authenticated backend id. This closes the mismatch found after a real issuance reached height 49
   and the subsequent wallet-created mixed token/native-fee transfer was routed to the native domain.
+- Commit `3da16ad` locally qualifies vesting, two-of-two multisig custody, swap claim/conflict, and
+  timeout-refund paths through height 79. Commit `5101111` extends that release-binary process test
+  through an exact durable height-78 SQLite snapshot, first refund at 79, a longer non-refund fork at
+  height 80, three-node rollback/reopen, alternate-node receiver-wallet recovery, mempool eligibility
+  restoration, and identical refund reconfirmation at height 81.
+- The clean unattended `5101111` run exited zero. All three nodes ended on
+  `8c7ce1043aadd0a4faeae46a6ef6e5f212a100f7b0353d5d7d79e01205b8cd77` with commitment root
+  `c50ae942893af7412b2ea5263665e16a40a65a0eb311058e7e4333a98a63180d`, `742000` bridged,
+  `500003` fees, `241997` circulating, 21 commitments, and five programs. The report is
+  `build/codex-zk/onyx-program-rollback-qualification.json` and is explicitly local, non-release
+  evidence.
+- The rollback oracle was height 80 block
+  `21784d82597721d2307ccdb20407f5c82d90ca69079cd27b478c9ef65aebfae8`, commitment count 20,
+  and root `6eb87a0e11d818b4206600234ec8980e61f405c39ae325e80ba5cea9bba97618`. Reconfirmation reused
+  refund transaction `bae8c1def7efe4c31d9a4f78e370224c5c0745fd901701d0d4263b3d08c04635`.
 
 Primary locations:
 
@@ -695,6 +710,20 @@ Validation performed before commit:
   at height 79 on `63e8b4f97fb494cd3dacbb82aeb9f188b728116f451b4bd41a937f5b937cbc83`
   with root `6d3606e4b912bb42f48205ed2401d1bf0483b542f036574ca8ca6fa42fd63b1a`,
   `742000` bridged, `500003` fees, `241997` circulating, 21 commitments, and five programs.
+- The rollback/reopen extension committed in `5101111` passed a fresh clean run from genesis through
+  height 81. It waits for node C's exact durable height-78 database commit before using SQLite online
+  backup; a raw copy or an online backup before that commit can legitimately reopen at height 77 even
+  when RPC already reports height 78. Python SQLite connections are explicitly closed so Windows can
+  remove the temporary tree.
+- The first refund confirmed at 79, the snapshot fork reached alternative height-80 block
+  `21784d82597721d2307ccdb20407f5c82d90ca69079cd27b478c9ef65aebfae8`, and all three primaries
+  durably converged there with the refund undone. The receiver wallet reopened through another node;
+  the exact refund binary was sent directly to every daemon that lacked it because a duplicate known
+  to one primary is not automatically rebroadcast. The same transaction reconfirmed at 81 on
+  `8c7ce1043aadd0a4faeae46a6ef6e5f212a100f7b0353d5d7d79e01205b8cd77`.
+- The clean run also exposed and fixed a harness-only timeout: capped-token activation inherited 180
+  seconds and timed out after reaching height 32 while peers applied the deployment proof. That call
+  now uses 1,800 seconds, crossed the former failure boundary, and reached activation height 48.
 - Valid program calls took roughly two minutes to construct and minutes per peer to admit/apply.
   Confirmed replays and pending state-key conflicts also incurred proof verification before rejection.
   Treat cheap conflict/replay prechecks plus bounded verifier queues as the immediate DoS work; never
@@ -813,14 +842,15 @@ Record compiler identity, seed corpus digest, duration, crashes, minimized repro
 Status: **Completed in `5ed59bd`, extended in `d1dca30`, wallet-qualified in `a26303e`,
 migration-qualified in `6ee5247`, native-transfer-qualified in `dd9755e`, pinned NFT deployment
 qualified in `1a82773`, stateful NFT call qualified in `060b691`, and capped-token lifecycle qualified
-in `db044e5`.**
+in `db044e5`, remaining profiles qualified in `3da16ad`, and rollback/reopen/reconfirmation qualified
+in `5101111`.**
 
 ### Priority 1 — Qualification topology harness
 
 Status: **The topology, mining, restart/reorganization, malformed-binary, isolation, supply-audit,
-report, wallet recovery, real migration, independent-wallet native transfer, pinned NFT deployment,
-one stateful NFT call, and the capped-token deployment/issuance/private-transfer lifecycle are
-implemented and locally process-qualified through `db044e5`.**
+report, wallet recovery, real migration, independent-wallet native transfer, every pinned program
+lifecycle, and deterministic program rollback/reopen/reconfirmation are implemented and locally
+process-qualified through `5101111`.**
 
 Implemented:
 
@@ -843,13 +873,20 @@ Implemented:
 - Real capped-token deployment, activation, issuer/sequence/cap enforcement, private issuance,
   mixed token/native-fee transfer, pending-conflict/tamper/replay rejection, two-wallet balance
   recovery, and exact three-node registry/commitment/supply equality.
+- Real vesting, multisig custody, swap claim/refund, pending stable-key conflict, timeout, and replay
+  qualification with exact state/supply equality.
+- Durable height-78 SQLite snapshot, first refund at 79, isolated alternative fork to 80, exact
+  three-node program/commitment/supply rollback, node reopen, alternate-node wallet recovery, restored
+  transaction eligibility, and identical refund reconfirmation at 81.
 - Machine-readable logs containing revision, genesis, height, block hash, and supply-audit snapshots.
 - No credentials or secret keys in logs.
 
 Remaining:
 
-- Program-state reorganization, rollback, alternate-node wallet recovery, and reopen qualification.
+- Cheap replay/state-conflict admission prechecks that cannot bypass canonical consensus proof
+  verification, followed by bounded verifier queues, concurrency, memory, and overload behavior.
 - Valid-proof denial-of-service load rather than only malformed/truncated input.
+- Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 
 ### Priority 2 — Migration and incident rehearsal tooling
