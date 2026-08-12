@@ -387,6 +387,61 @@ def main():
             ):
                 raise RuntimeError("node admitted the conflicting sibling transfer")
 
+            accepted_transaction = next(
+                transaction
+                for transaction in transactions
+                if transaction["transaction_hash"] == accepted_transaction_hash
+            )
+            verifier_before_duplicate = node.statistics().get(
+                "onyx_verifier_acquired", 0
+            )
+            prechecks_before_duplicate = node.statistics().get(
+                "onyx_verifier_precheck_conflicts", 0
+            )
+            duplicate_started = time.monotonic()
+            duplicate_response = rpc_call(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": accepted_transaction["binary_transaction"]},
+            )
+            duplicate_elapsed = time.monotonic() - duplicate_started
+            verifier_after_duplicate = node.statistics().get(
+                "onyx_verifier_acquired", 0
+            )
+            prechecks_after_duplicate = node.statistics().get(
+                "onyx_verifier_precheck_conflicts", 0
+            )
+            pool_count_after_duplicate = node.statistics().get(
+                "transaction_pool_count", 0
+            )
+            exact_duplicate_precheck = {
+                "transaction_hash": accepted_transaction_hash,
+                "elapsed_seconds": round(duplicate_elapsed, 6),
+                "verifier_acquired_before": verifier_before_duplicate,
+                "verifier_acquired_after": verifier_after_duplicate,
+                "precheck_conflicts_before": prechecks_before_duplicate,
+                "precheck_conflicts_after": prechecks_after_duplicate,
+                "pool_count_after": pool_count_after_duplicate,
+                "response": duplicate_response,
+            }
+            if duplicate_elapsed > MAX_PENDING_TRANSFER_CONFLICT_SECONDS:
+                raise RuntimeError(
+                    "exact duplicate exceeded the proof-free admission ceiling: "
+                    f"elapsed={duplicate_elapsed:.3f}s"
+                )
+            if verifier_after_duplicate != verifier_before_duplicate:
+                raise RuntimeError(
+                    "exact duplicate acquired the expensive verifier: "
+                    f"before={verifier_before_duplicate} after={verifier_after_duplicate}"
+                )
+            if prechecks_after_duplicate != prechecks_before_duplicate:
+                raise RuntimeError(
+                    "exact duplicate was misclassified as an authenticated conflict: "
+                    f"before={prechecks_before_duplicate} after={prechecks_after_duplicate}"
+                )
+            if pool_count_after_duplicate != 1:
+                raise RuntimeError("exact duplicate changed the transaction pool count")
+
             relay_after_load_status = relay_node.status()
             after_load_status = node.status()
             if (
@@ -452,6 +507,12 @@ def main():
                         node, conflicting_transaction["transaction_hash"]
                     )
                 ),
+                "exact_duplicate_skipped_verifier": (
+                    verifier_after_duplicate == verifier_before_duplicate
+                    and prechecks_after_duplicate == prechecks_before_duplicate
+                    and duplicate_elapsed <= MAX_PENDING_TRANSFER_CONFLICT_SECONDS
+                    and pool_count_after_duplicate == 1
+                ),
                 "post_load_block_progress": final_status["top_block_height"]
                 == final_height,
                 "post_load_wallet_progress": source_wallet.call("get_onyx_status")[
@@ -484,6 +545,7 @@ def main():
                 ],
                 "admission_classifications": classifications,
                 "pending_transfer_conflict_precheck": transfer_conflict_precheck,
+                "exact_duplicate_precheck": exact_duplicate_precheck,
                 "baseline_status": baseline_status,
                 "after_load_status": after_load_status,
                 "final_status": final_status,
