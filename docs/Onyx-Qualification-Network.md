@@ -242,6 +242,14 @@ at 1, and preserves the one-entry pool. Its report records the pool count at dup
 before the later block intentionally removes the accepted transaction. The combined live run passed
 all nine checks with 143 successful health samples, peak verifier one, and exact post-load progress.
 
+The `d8abdef` extension starts one additional valid-proof request through a raw HTTP socket and waits
+until the daemon reports that its verifier permit is active before closing the client. The disconnect
+handler increments private `onyx_verifier_abandoned_rpcs` and removes response ownership; the shared
+worker input remains alive until verification finishes. The passing run observed abandoned RPCs 0 to
+1, verifier acquisitions 1 to 2, active verification returning to zero, no pool entry, and no known
+transaction. The later barrier run acquired verifier 3 and completed, proving permit reuse. All ten
+wrapper checks passed; graceful daemon shutdown during proof remains separate work.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused
@@ -270,7 +278,8 @@ recording peak RSS, CPU, latency, ordinary wallet progress, and block applicatio
 
 The authenticated private `get_statistics` endpoint supplies `onyx_verifier_active`,
 `onyx_verifier_peak_active`, acquisition and overload-rejection counters,
-`onyx_verifier_precheck_conflicts`, active transaction downloads, and retry-cooldown count. Load
+`onyx_verifier_precheck_conflicts`, `onyx_verifier_abandoned_rpcs`, active transaction downloads, and
+retry-cooldown count. Load
 evidence must sample these alongside process RSS/CPU and treat an omitted optional zero-valued field
 as zero.
 

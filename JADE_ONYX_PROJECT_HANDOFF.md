@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-12
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `59b0721` (`Qualify proof-free Onyx duplicate admission`)
+Last implementation revision reviewed: `d8abdef` (`Qualify abandoned Onyx verifier requests`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `59b0721`.
+- **Implemented and committed** means the code is in the branch history at or before `d8abdef`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -797,6 +797,11 @@ Validation performed before commit:
   binary returned below timer resolution, verifier acquisitions remained 2 to 2, authenticated
   conflicts remained 1 to 1, and the pool remained at one. All nine wrapper checks passed with 143
   health samples, zero sampling/transport errors, peak verifier one, and exact height-5 progress.
+- Commit `d8abdef` adds a real abandoned HTTP request after verifier acquisition. A raw client sends a
+  complete valid transaction, waits for active verification, and disconnects. The run proves the
+  abandoned-RPC counter advances 0 to 1, acquisitions advance 1 to 2, active verification returns to
+  zero, and neither pool nor transaction lookup admits the abandoned request. The following normal
+  load acquires verifier 3 and passes, proving permit reuse. All ten wrapper checks pass.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -824,8 +829,8 @@ Validation performed before commit:
   builds pass; the first live parallel proof/RSS/progress run passes, while repeated fairness,
   mixed-ingress, and named-hardware qualification remains open.
 - Private daemon statistics expose current/peak Onyx verifier concurrency, permit acquisitions,
-  global/per-source overload rejections, proof-free precheck conflicts, active transaction downloads,
-  and current cooldown entries.
+  global/per-source overload rejections, proof-free precheck conflicts, abandoned proof RPCs, active
+  transaction downloads, and current cooldown entries.
   These are the authoritative limiter-engagement inputs for live load reports; absent optional fields
   mean zero.
 - `tools/onyx_verifier_load.py` turns distinct prebuilt Onyx transactions into a barrier-synchronized
@@ -998,10 +1003,11 @@ Remaining:
 
 - Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
   HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
-- Add live invalid-proof floods and non-transfer conflict load,
-  disconnect/shutdown cancellation, mixed RPC/P2P ingress, and explicit permit-leak/fairness checks.
+- Add live invalid-proof floods and non-transfer conflict load, graceful node shutdown during proof,
+  mixed RPC/P2P ingress, and explicit fairness checks.
   Extend cheap rejection only through authenticated metadata extractors. The pending transfer
-  conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`.
+  conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`; abandoned
+  HTTP response ownership and permit cleanup are covered in `d8abdef`.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

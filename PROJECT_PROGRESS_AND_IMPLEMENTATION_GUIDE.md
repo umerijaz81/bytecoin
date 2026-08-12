@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `59b0721` on this branch.
+- **Committed**: present at or before Git revision `d8abdef` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -924,6 +924,15 @@ compare against the intentionally emptied post-block pool. The combined run pass
 with 143 successful health samples, zero sampling/transport errors, peak verifier one, and exact
 post-load chain, wallet, and supply progress.
 
+Commit `d8abdef` qualifies client abandonment after proof work has actually started. The harness
+sends a complete valid transaction over a raw HTTP socket, waits until the private statistics report
+one active newly acquired verifier, and then closes the socket without reading a response. The node's
+disconnect path drops response ownership while the immutable worker input remains alive. The passing
+run observed abandoned RPCs 0 to 1, acquisitions 1 to 2, active verification returning to zero, an
+empty pool, and no transaction lookup result. The later normal load acquired verifier 3 and completed,
+proving capacity was reusable. All ten wrapper checks, complete ZK/Jade regressions, both build modes,
+and release-control absence passed.
+
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 
 Native and private-token transfer envelopes now have a state-independent authenticated metadata
@@ -1040,7 +1049,8 @@ RSS, responsiveness, P2P propagation, wallet progress, and block progress; repea
 are still required for defensible fairness and resource ceilings.
 
 The private `get_statistics` response now exposes active and peak verifier count, successful permit
-acquisitions, global/per-source permit rejections, proof-free precheck conflicts, active
+acquisitions, global/per-source permit rejections, proof-free precheck conflicts, abandoned proof
+RPCs, active
 transaction-body downloads, and current retry-cooldown table size. These counters are updated under
 the same lock as permit state, allowing a
 load report to prove both resource behavior and whether the intended limiter engaged. Optional
