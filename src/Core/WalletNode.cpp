@@ -456,8 +456,18 @@ bool WalletNode::on_create_onyx_transaction(http::Client *, http::RequestBody &&
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid Onyx address encoding");
 	const Height expiry = get_onyx_construction_window(request.expiry_height).expiry_height;
 	BinaryArray envelope;
-	if (!get_wallet_state().create_onyx_transfer(recipient, request.amount, request.fee, expiry,
-	        common::as_binary_array(request.memo), &envelope))
+	bool created = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (request.qualification_invalid_proof) {
+		created = get_wallet_state().create_onyx_authenticated_invalid_proof_transfer(recipient,
+		    request.amount, request.fee, expiry, common::as_binary_array(request.memo), &envelope);
+	} else
+#endif
+	{
+		created = get_wallet_state().create_onyx_transfer(recipient, request.amount, request.fee, expiry,
+		    common::as_binary_array(request.memo), &envelope);
+	}
+	if (!created)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx transaction");
 	Transaction transaction;
 	transaction.version = m_currency.onyx_transaction_version;

@@ -915,6 +915,31 @@ bool Halo2ProofSystem::wallet_create_transfer(const BinaryArray &snapshot,
 	return true;
 }
 
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool Halo2ProofSystem::wallet_create_authenticated_invalid_proof_transfer(const BinaryArray &snapshot,
+    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
+    uint64_t amount, uint64_t fee, uint64_t expiry_height, const BinaryArray &memo,
+    uint32_t circuit_k, BinaryArray *transaction) {
+	if (transaction == nullptr)
+		return false;
+	if (snapshot.empty()) {
+		transaction->clear();
+		return false;
+	}
+	OnyxBuffer encoded;
+	const int rc = onyx_wallet_create_authenticated_invalid_proof_transfer(snapshot.data(), snapshot.size(),
+	    seed.data(), recipient.data(), amount, fee, expiry_height,
+	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k, &encoded.data, &encoded.size);
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES)) {
+		transaction->clear();
+		return false;
+	}
+	BinaryArray transaction_result = encoded.copy();
+	*transaction = std::move(transaction_result);
+	return true;
+}
+#endif
+
 bool Halo2ProofSystem::wallet_create_mixed_token_transfer(const BinaryArray &snapshot,
     const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
     const std::array<uint8_t, 32> &program_id, uint64_t token_amount, uint64_t fee,

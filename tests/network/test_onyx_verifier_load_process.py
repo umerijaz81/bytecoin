@@ -48,6 +48,7 @@ SCHEMA = "bytecoin-onyx-verifier-load-process-v1"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOAD_TOOL = ROOT / "tools" / "onyx_verifier_load.py"
 MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
+INVALID_PROOF_ATTEMPTS = 3
 
 
 def canonical_utc_now():
@@ -254,6 +255,21 @@ def main():
                 )
             if transactions[0]["transaction_hash"] == transactions[1]["transaction_hash"]:
                 raise RuntimeError("wallet produced duplicate load transactions")
+            invalid_proof_transaction = source_wallet.call(
+                "create_onyx_transaction",
+                {
+                    "address": receiver_onyx["address"],
+                    "amount": transfer_amount,
+                    "fee": transfer_fee,
+                    "expiry_height": 0,
+                    "memo": "authenticated invalid proof qualification",
+                    "qualification_invalid_proof": True,
+                },
+            )
+            if invalid_proof_transaction["transaction_hash"] in {
+                transaction["transaction_hash"] for transaction in transactions
+            }:
+                raise RuntimeError("invalid-proof fixture duplicated a valid transaction")
 
             transaction_paths = []
             for index, transaction in enumerate(transactions):
@@ -538,6 +554,65 @@ def main():
                     f"{abandoned_rpc_cleanup!r}"
                 )
 
+            invalid_before = node.statistics()
+            invalid_started = time.monotonic()
+            invalid_responses = []
+            invalid_attempt_seconds = []
+            for _ in range(INVALID_PROOF_ATTEMPTS):
+                attempt_started = time.monotonic()
+                invalid_responses.append(
+                    rpc_response(
+                        rpc_port,
+                        "send_transaction",
+                        {
+                            "binary_transaction": invalid_proof_transaction[
+                                "binary_transaction"
+                            ]
+                        },
+                    )
+                )
+                invalid_attempt_seconds.append(
+                    round(time.monotonic() - attempt_started, 6)
+                )
+            invalid_elapsed = time.monotonic() - invalid_started
+            invalid_after = node.statistics()
+            authenticated_invalid_proof = {
+                "transaction_hash": invalid_proof_transaction["transaction_hash"],
+                "bytes": len(
+                    bytes.fromhex(invalid_proof_transaction["binary_transaction"])
+                ),
+                "attempts": INVALID_PROOF_ATTEMPTS,
+                "attempt_seconds": invalid_attempt_seconds,
+                "elapsed_seconds": round(invalid_elapsed, 6),
+                "responses": invalid_responses,
+                "verifier_acquired_before": invalid_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": invalid_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_active_after": invalid_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after": invalid_after.get("transaction_pool_count", 0),
+                "transaction_known_after": transaction_known(
+                    node, invalid_proof_transaction["transaction_hash"]
+                ),
+            }
+            if (
+                any("error" not in response for response in invalid_responses)
+                or authenticated_invalid_proof["verifier_acquired_after"]
+                != authenticated_invalid_proof["verifier_acquired_before"]
+                + INVALID_PROOF_ATTEMPTS
+                or authenticated_invalid_proof["verifier_active_after"] != 0
+                or authenticated_invalid_proof["pool_count_after"] != 0
+                or authenticated_invalid_proof["transaction_known_after"]
+            ):
+                raise RuntimeError(
+                    "authenticated invalid proof did not reach and cleanly leave the verifier: "
+                    f"{authenticated_invalid_proof!r}"
+                )
+
             baseline_status = node.status()
             baseline_audit = rpc_call(rpc_port, "get_onyx_supply_audit")
             command = [
@@ -594,6 +669,12 @@ def main():
                     f"load did not produce one accepted and one bounded-overload response: "
                     f"{classifications!r}"
                 )
+            verifier_acquired_after_load = node.statistics().get(
+                "onyx_verifier_acquired", 0
+            )
+            authenticated_invalid_proof["verifier_acquired_after_valid_load"] = (
+                verifier_acquired_after_load
+            )
             accepted_submission = next(
                 item
                 for item in load_report["submissions"]
@@ -787,6 +868,22 @@ def main():
                     and abandoned_rpc_cleanup["pool_count_after"] == 0
                     and not abandoned_rpc_cleanup["transaction_known_after"]
                 ),
+                "authenticated_invalid_proof_reached_verifier_without_admission": (
+                    all(
+                        "error" in response
+                        for response in authenticated_invalid_proof["responses"]
+                    )
+                    and authenticated_invalid_proof["verifier_acquired_after"]
+                    == authenticated_invalid_proof["verifier_acquired_before"]
+                    + authenticated_invalid_proof["attempts"]
+                    and authenticated_invalid_proof["verifier_active_after"] == 0
+                    and authenticated_invalid_proof["pool_count_after"] == 0
+                    and not authenticated_invalid_proof["transaction_known_after"]
+                    and authenticated_invalid_proof[
+                        "verifier_acquired_after_valid_load"
+                    ]
+                    >= authenticated_invalid_proof["verifier_acquired_after"] + 1
+                ),
                 "one_accepted_one_busy": classifications
                 == ["accepted", "verifier_busy"],
                 "tip_unchanged_during_unmined_load": (
@@ -838,6 +935,7 @@ def main():
                     "checks": load_report.get("checks"),
                 },
                 "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
+                "authenticated_invalid_proof": authenticated_invalid_proof,
                 "graceful_shutdown": graceful_shutdown,
                 "transactions": [
                     {

@@ -428,6 +428,9 @@ struct CreateOnyxTransaction {
 		Amount fee = 0;
 		Height expiry_height = 0;  // zero selects current tip + 20
 		std::string memo;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+		bool qualification_invalid_proof = false;
+#endif
 	};
 	struct Response {
 		BinaryArray binary_transaction;

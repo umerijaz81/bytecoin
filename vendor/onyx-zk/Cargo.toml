@@ -11,6 +11,12 @@ name = "onyx_zk"
 # staticlib: linked into the C++ node/tests. rlib: lets `cargo test` exercise the Rust side.
 crate-type = ["staticlib", "rlib"]
 
+[features]
+default = []
+# Non-distributable wallet fixture used to prove that authenticated invalid proofs reach the real
+# verifier boundary. CMake only enables this in an explicitly marked qualification build.
+qualification-fixtures = []
+
 [dependencies]
 # Exact-pinned and committed under vendor/ for locked offline builds.
 halo2_proofs = "=0.3.2"

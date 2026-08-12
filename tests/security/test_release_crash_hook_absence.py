@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove that default/release bytecoind artifacts contain no crash-test control."""
+"""Prove that ordinary artifacts contain no non-distributable Onyx controls."""
 
 import argparse
 import pathlib
@@ -25,19 +25,30 @@ FORBIDDEN_MARKERS = (
     b"ioerr-wal-partial-first",
     b"ioerr-wal-partial-half",
     b"ioerr-wal-partial-final",
+    b"qualification_invalid_proof",
+    b"onyx_wallet_create_authenticated_invalid_proof_transfer",
 )
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bytecoind", required=True, type=pathlib.Path)
+    parser.add_argument("--walletd", type=pathlib.Path)
     args = parser.parse_args()
     bytecoind = args.bytecoind.resolve()
 
-    image = bytecoind.read_bytes()
-    present = [marker.decode("ascii") for marker in FORBIDDEN_MARKERS if marker in image]
-    if present:
-        raise RuntimeError(f"release bytecoind contains crash-test markers: {present}")
+    artifacts = [bytecoind]
+    if args.walletd is not None:
+        artifacts.append(args.walletd.resolve())
+    for artifact in artifacts:
+        image = artifact.read_bytes()
+        present = [
+            marker.decode("ascii") for marker in FORBIDDEN_MARKERS if marker in image
+        ]
+        if present:
+            raise RuntimeError(
+                f"ordinary artifact {artifact} contains qualification markers: {present}"
+            )
 
     with tempfile.TemporaryDirectory(prefix="bytecoin-no-crash-hook-") as temporary:
         result = subprocess.run(
@@ -60,7 +71,7 @@ def main():
             "release bytecoind did not reject the crash-test option as unknown:\n"
             + result.stdout
         )
-    print("release bytecoind excludes and rejects Onyx crash-test controls")
+    print("ordinary artifacts exclude non-distributable Onyx qualification controls")
 
 
 if __name__ == "__main__":

@@ -22,12 +22,20 @@ set(BYTECOIN_OUTPUT_ROOT "${CMAKE_BINARY_DIR}/artifacts" CACHE PATH
 # build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
 option(ONYX_ZK "Build the Onyx ZK backend (requires Rust/cargo)" OFF)
 option(ONYX_CRASH_TESTS "Compile hidden Onyx daemon crash-injection qualification points" OFF)
+option(ONYX_INVALID_PROOF_TESTS "Compile authenticated invalid-proof qualification fixtures" OFF)
 if(ONYX_CRASH_TESTS AND NOT ONYX_ZK)
     message(FATAL_ERROR "ONYX_CRASH_TESTS requires ONYX_ZK=ON")
+endif()
+if(ONYX_INVALID_PROOF_TESTS AND NOT ONYX_ZK)
+    message(FATAL_ERROR "ONYX_INVALID_PROOF_TESTS requires ONYX_ZK=ON")
 endif()
 if(ONYX_CRASH_TESTS)
     add_definitions(-DBYTECOIN_ONYX_CRASH_TESTS=1)
     message(WARNING "Onyx daemon crash-injection points are compiled in; do not distribute these qualification binaries")
+endif()
+if(ONYX_INVALID_PROOF_TESTS)
+    add_definitions(-DBYTECOIN_ONYX_INVALID_PROOF_TESTS=1)
+    message(WARNING "Authenticated invalid-proof fixtures are compiled in; do not distribute these qualification binaries")
 endif()
 get_filename_component(PARENT_DIR ${CMAKE_SOURCE_DIR} DIRECTORY)
 
@@ -221,10 +229,17 @@ if(ONYX_ZK)
         message(FATAL_ERROR "ONYX_ZK=ON but 'cargo' was not found. Install a Rust toolchain or build with -DONYX_ZK=OFF.")
     endif()
     set(ONYX_ZK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/onyx-zk)
+    # Keep Cargo outputs isolated per CMake build tree. Qualification features must never overwrite
+    # the ordinary static library used by another configured build directory.
+    set(ONYX_ZK_TARGET_DIR ${CMAKE_BINARY_DIR}/onyx-zk-target)
     if(WIN32)
-        set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/onyx_zk.lib)
+        set(ONYX_ZK_LIB ${ONYX_ZK_TARGET_DIR}/release/onyx_zk.lib)
     else()
-        set(ONYX_ZK_LIB ${ONYX_ZK_DIR}/target/release/libonyx_zk.a)
+        set(ONYX_ZK_LIB ${ONYX_ZK_TARGET_DIR}/release/libonyx_zk.a)
+    endif()
+    set(ONYX_ZK_CARGO_FEATURE_ARGS "")
+    if(ONYX_INVALID_PROOF_TESTS)
+        list(APPEND ONYX_ZK_CARGO_FEATURE_ARGS --features qualification-fixtures)
     endif()
     # Track every first-party crate source, including bin targets and nested modules.  A non-recursive
     # glob can leave the imported static library silently stale after a nested consensus/prover source
@@ -245,7 +260,10 @@ if(ONYX_ZK)
     endif()
     add_custom_command(
         OUTPUT ${ONYX_ZK_LIB}
-        COMMAND ${CARGO_EXECUTABLE} build --release --locked --offline --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
+        COMMAND ${CARGO_EXECUTABLE} build --release --locked --offline
+            --manifest-path ${ONYX_ZK_DIR}/Cargo.toml
+            --target-dir ${ONYX_ZK_TARGET_DIR}
+            ${ONYX_ZK_CARGO_FEATURE_ARGS}
         WORKING_DIRECTORY ${ONYX_ZK_DIR}
         DEPENDS ${ONYX_ZK_BUILD_INPUTS}
         COMMENT "Building Onyx ZK backend (cargo build --release)"

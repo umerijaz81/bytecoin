@@ -3624,6 +3624,101 @@ pub extern "C" fn onyx_wallet_create_standard_program_call(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn wallet_create_transfer_impl(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    amount: u64,
+    fee: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    authenticated_invalid_proof: bool,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    if transaction_out.is_null() || transaction_len_out.is_null() {
+        return -1;
+    }
+    unsafe {
+        *transaction_out = std::ptr::null_mut();
+        *transaction_len_out = 0;
+    }
+    if snapshot.is_null()
+        || snapshot_len == 0
+        || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
+        || seed.is_null()
+        || recipient.is_null()
+        || memo_len > types::MAX_MEMO_BYTES
+        || (memo.is_null() && memo_len != 0)
+        || !(10..=20).contains(&circuit_k)
+    {
+        return -1;
+    }
+    let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
+        slice::from_raw_parts(snapshot, snapshot_len)
+    }) {
+        Ok(wallet) => wallet,
+        Err(_) => return -2,
+    };
+    let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
+        .try_into()
+        .unwrap();
+    let recipient = unsafe { slice::from_raw_parts(recipient, 91) };
+    let address = keys::RecipientAddress {
+        network_id: recipient[0..16].try_into().unwrap(),
+        diversifier: recipient[16..27].try_into().unwrap(),
+        transmission_key: recipient[27..59].try_into().unwrap(),
+        spend_authority_key: recipient[59..91].try_into().unwrap(),
+    };
+    let keys = match keys::MasterSeed::new(seed).derive(address.network_id) {
+        Ok(keys) => keys,
+        Err(_) => return -2,
+    };
+    let memo = if memo_len == 0 {
+        vec![]
+    } else {
+        unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+    };
+    #[cfg(feature = "qualification-fixtures")]
+    let built = if authenticated_invalid_proof {
+        wallet.build_authenticated_invalid_proof_transfer(
+            &keys,
+            &address,
+            amount,
+            fee,
+            expiry_height,
+            memo,
+            circuit_k,
+        )
+    } else {
+        wallet.build_transfer(&keys, &address, amount, fee, expiry_height, memo, circuit_k)
+    };
+    #[cfg(not(feature = "qualification-fixtures"))]
+    let built = {
+        let _ = authenticated_invalid_proof;
+        wallet.build_transfer(&keys, &address, amount, fee, expiry_height, memo, circuit_k)
+    };
+    let transaction = match built {
+        Ok(transaction) => transaction,
+        Err(wallet::WalletBuildError::InsufficientFunds) => return -7,
+        Err(_) => return -2,
+    };
+    let encoded = match transaction.encode() {
+        Ok(encoded) if encoded.len() <= MAX_AUTHORIZED_TRANSACTION_BYTES => encoded,
+        _ => return -6,
+    };
+    let (ptr, len) = into_raw(encoded);
+    unsafe {
+        *transaction_out = ptr;
+        *transaction_len_out = len;
+    }
+    1
+}
+
 #[no_mangle]
 pub extern "C" fn onyx_wallet_create_transfer(
     snapshot: *const u8,
@@ -3640,71 +3735,56 @@ pub extern "C" fn onyx_wallet_create_transfer(
     transaction_len_out: *mut usize,
 ) -> i32 {
     ffi_i32(|| {
-        if transaction_out.is_null() || transaction_len_out.is_null() {
-            return -1;
-        }
-        unsafe {
-            *transaction_out = std::ptr::null_mut();
-            *transaction_len_out = 0;
-        }
-        if snapshot.is_null()
-            || snapshot_len == 0
-            || snapshot_len > MAX_STATE_SNAPSHOT_BYTES
-            || seed.is_null()
-            || recipient.is_null()
-            || memo_len > types::MAX_MEMO_BYTES
-            || (memo.is_null() && memo_len != 0)
-            || !(10..=20).contains(&circuit_k)
-        {
-            return -1;
-        }
-        let wallet = match wallet::WalletState::<32>::decode_snapshot(unsafe {
-            slice::from_raw_parts(snapshot, snapshot_len)
-        }) {
-            Ok(wallet) => wallet,
-            Err(_) => return -2,
-        };
-        let seed: [u8; 32] = unsafe { slice::from_raw_parts(seed, 32) }
-            .try_into()
-            .unwrap();
-        let recipient = unsafe { slice::from_raw_parts(recipient, 91) };
-        let address = keys::RecipientAddress {
-            network_id: recipient[0..16].try_into().unwrap(),
-            diversifier: recipient[16..27].try_into().unwrap(),
-            transmission_key: recipient[27..59].try_into().unwrap(),
-            spend_authority_key: recipient[59..91].try_into().unwrap(),
-        };
-        let keys = match keys::MasterSeed::new(seed).derive(address.network_id) {
-            Ok(keys) => keys,
-            Err(_) => return -2,
-        };
-        let transaction = match wallet.build_transfer(
-            &keys,
-            &address,
+        wallet_create_transfer_impl(
+            snapshot,
+            snapshot_len,
+            seed,
+            recipient,
             amount,
             fee,
             expiry_height,
-            if memo_len == 0 {
-                vec![]
-            } else {
-                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
-            },
+            memo,
+            memo_len,
             circuit_k,
-        ) {
-            Ok(transaction) => transaction,
-            Err(wallet::WalletBuildError::InsufficientFunds) => return -7,
-            Err(_) => return -2,
-        };
-        let encoded = match transaction.encode() {
-            Ok(encoded) if encoded.len() <= MAX_AUTHORIZED_TRANSACTION_BYTES => encoded,
-            _ => return -6,
-        };
-        let (ptr, len) = into_raw(encoded);
-        unsafe {
-            *transaction_out = ptr;
-            *transaction_len_out = len;
-        }
-        1
+            false,
+            transaction_out,
+            transaction_len_out,
+        )
+    })
+}
+
+#[cfg(feature = "qualification-fixtures")]
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_authenticated_invalid_proof_transfer(
+    snapshot: *const u8,
+    snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    amount: u64,
+    fee: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    ffi_i32(|| {
+        wallet_create_transfer_impl(
+            snapshot,
+            snapshot_len,
+            seed,
+            recipient,
+            amount,
+            fee,
+            expiry_height,
+            memo,
+            memo_len,
+            circuit_k,
+            true,
+            transaction_out,
+            transaction_len_out,
+        )
     })
 }
 

@@ -567,6 +567,33 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             circuit_k,
             vec![],
             None,
+            false,
+        )
+        .map(|built| built.transaction)
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    pub fn build_authenticated_invalid_proof_transfer(
+        &self,
+        keys: &KeyBundle,
+        recipient: &RecipientAddress,
+        amount: u64,
+        fee: u64,
+        expiry_height: u64,
+        memo: Vec<u8>,
+        circuit_k: u32,
+    ) -> Result<AuthorizedTransaction, WalletBuildError> {
+        self.build_native_transfer(
+            keys,
+            recipient,
+            amount,
+            fee,
+            expiry_height,
+            memo,
+            circuit_k,
+            vec![],
+            None,
+            true,
         )
         .map(|built| built.transaction)
     }
@@ -649,6 +676,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
                 circuit_k,
                 vec![call],
                 None,
+                false,
             )?
             .transaction;
         Ok(AuthorizedProgramDeployment {
@@ -725,6 +753,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
                 application,
                 witness,
             }),
+            false,
         )?;
         Ok(ContextualAuthorizedTransaction {
             transaction: built.transaction,
@@ -744,6 +773,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         circuit_k: u32,
         programs: Vec<ProgramCall>,
         standard_call: Option<StandardCallBuild>,
+        invalidate_proof: bool,
     ) -> Result<BuiltNativeTransfer, WalletBuildError> {
         let required = amount
             .checked_add(fee)
@@ -1011,6 +1041,18 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             }
             None => (base_backend_id, base_proof, None),
         };
+        #[cfg(feature = "qualification-fixtures")]
+        let mut proof = proof;
+        #[cfg(feature = "qualification-fixtures")]
+        if invalidate_proof {
+            // Preserve the canonical proof length and all public transaction metadata, but alter the
+            // completed Halo2 transcript before signing it. The signatures below therefore remain
+            // authentic for these exact invalid proof bytes and cheap authorization prechecks pass.
+            let last = proof.last_mut().ok_or(WalletBuildError::Crypto)?;
+            *last ^= 0x01;
+        }
+        #[cfg(not(feature = "qualification-fixtures"))]
+        let _ = invalidate_proof;
         let spend_signatures = sign_prepared_spends(&prepared, &preimage, &backend_id, &proof)
             .map_err(|_| WalletBuildError::Crypto)?;
         let binding_signature = sign_binding_authorization(
@@ -1736,6 +1778,37 @@ mod tests {
             .scan_transfer(&sender.full_viewing_key().unwrap(), &change)
             .unwrap();
         assert_eq!(sender_wallet.unspent_balance().unwrap(), 3);
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[test]
+    fn invalid_proof_fixture_preserves_authorization_but_fails_halo2() {
+        const DEPTH: usize = 2;
+        const K: u32 = 16;
+        let network = [31; NETWORK_ID_BYTES];
+        let sender = MasterSeed::new([71; 32]).derive(network).unwrap();
+        let recipient = MasterSeed::new([72; 32])
+            .derive(network)
+            .unwrap()
+            .address(0)
+            .unwrap();
+        let wallet = funded_wallet::<DEPTH>(&sender, network, &[25]);
+        let transaction = wallet
+            .build_authenticated_invalid_proof_transfer(
+                &sender,
+                &recipient,
+                20,
+                2,
+                50,
+                b"qualification only".to_vec(),
+                K,
+            )
+            .unwrap();
+
+        crate::authorization::verify_authorized_transaction(&transaction).unwrap();
+        assert!(
+            crate::proof::verify_authorized_multi_transfer::<DEPTH, 1, 2>(K, &transaction).is_err()
+        );
     }
 
     #[test]

@@ -103,6 +103,11 @@ public:
 	    OnyxTokenProgramStatus *result) const;
 	bool create_onyx_transfer(const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	bool create_onyx_authenticated_invalid_proof_transfer(const std::array<uint8_t, 91> &recipient,
+	    Amount amount, Amount fee, Height expiry_height, const BinaryArray &memo,
+	    BinaryArray *envelope) const;
+#endif
 	bool create_onyx_token_transfer(const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, Amount amount, Amount fee,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope) const;

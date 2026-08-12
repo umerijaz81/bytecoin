@@ -246,6 +246,51 @@ bool WalletState::create_onyx_transfer(const std::array<uint8_t, 91> &recipient,
 #endif
 }
 
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool WalletState::create_onyx_authenticated_invalid_proof_transfer(
+    const std::array<uint8_t, 91> &recipient, Amount amount, Amount fee, Height expiry_height,
+    const BinaryArray &memo, BinaryArray *envelope) const {
+#ifdef onyx_USE_ZK
+	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || envelope == nullptr)
+		return false;
+	std::array<uint8_t, 32> seed{};
+	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+	std::array<uint8_t, 16> network{};
+	std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+	BinaryArray proving_snapshot = m_onyx_wallet_snapshot;
+	for (const auto &entry : payment_queue) {
+		if (entry.in_blockchain())
+			continue;
+		Transaction pending;
+		try {
+			seria::from_binary(pending, entry.binary_transaction);
+		} catch (const std::exception &) {
+			return false;
+		}
+		if (pending.version != m_currency.onyx_transaction_version ||
+		    (pending.onyx_type != parameters::ONYX_TYPE_TRANSFER &&
+		        pending.onyx_type != parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT &&
+		        pending.onyx_type != parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL))
+			continue;
+		BinaryArray reserved;
+		const bool reserved_ok = pending.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT
+		    ? zk::Halo2ProofSystem::wallet_reserve_deployment_spends(
+		          proving_snapshot, seed, network, pending.onyx_envelope, &reserved)
+		    : zk::Halo2ProofSystem::wallet_reserve_spends(
+		          proving_snapshot, seed, network, pending.onyx_envelope, &reserved);
+		if (!reserved_ok)
+			return false;
+		proving_snapshot = std::move(reserved);
+	}
+	return zk::Halo2ProofSystem::wallet_create_authenticated_invalid_proof_transfer(proving_snapshot,
+	    seed, recipient, amount, fee, expiry_height, memo, parameters::ONYX_TRANSFER_CIRCUIT_K,
+	    envelope);
+#else
+	return false;
+#endif
+}
+#endif
+
 bool WalletState::create_onyx_token_transfer(const std::array<uint8_t, 91> &recipient,
     const std::array<uint8_t, 32> &program_id, Amount amount, Amount fee, Height expiry_height,
     const BinaryArray &memo, BinaryArray *envelope) const {

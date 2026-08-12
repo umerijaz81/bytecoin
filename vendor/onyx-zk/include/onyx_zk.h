@@ -347,6 +347,15 @@ int onyx_wallet_create_transfer(
     const uint8_t recipient[91], uint64_t amount, uint64_t fee, uint64_t expiry_height,
     const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
     uint8_t **transaction_out, size_t *transaction_len_out);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+/* Non-distributable fixture: alter a completed Halo2 transcript and then authenticate those exact
+ * bytes with the real spend and binding keys. This must only exist in qualification binaries. */
+int onyx_wallet_create_authenticated_invalid_proof_transfer(
+    const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
+    const uint8_t recipient[91], uint64_t amount, uint64_t fee, uint64_t expiry_height,
+    const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
+    uint8_t **transaction_out, size_t *transaction_len_out);
+#endif
 int onyx_wallet_create_mixed_token_transfer(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
     const uint8_t recipient[91], const uint8_t program_id[32],
