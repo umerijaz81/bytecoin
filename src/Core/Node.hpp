@@ -258,6 +258,7 @@ protected:
 	void complete_onyx_p2p(uint64_t token);
 	void cancel_onyx_p2p_source(P2PProtocolBytecoin *source);
 #endif
+	uint64_t m_onyx_verifier_abandoned_rpcs = 0;
 
 	void broadcast(P2PProtocolBytecoin *exclude, const BinaryArray &data);
 	void relay_transaction_dandelion(const TransactionDesc &desc, P2PProtocolBytecoin *source, uint8_t hop);

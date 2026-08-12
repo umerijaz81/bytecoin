@@ -321,9 +321,10 @@ void Node::on_api_http_disconnect(http::Client *who) {
 			++lit;
 #ifdef onyx_USE_ZK
 	for (auto it = m_pending_onyx_rpcs.begin(); it != m_pending_onyx_rpcs.end();) {
-		if (it->second->who == who)
+		if (it->second->who == who) {
+			++m_onyx_verifier_abandoned_rpcs;
 			it = m_pending_onyx_rpcs.erase(it);
-		else
+		} else
 			++it;
 	}
 #endif
@@ -673,6 +674,7 @@ api::cnd::GetStatistics::Response Node::create_statistics_response(const api::cn
 	res.onyx_verifier_rejected_global = verifier.rejected_global;
 	res.onyx_verifier_rejected_source = verifier.rejected_source;
 	res.onyx_verifier_precheck_conflicts = verifier.precheck_conflicts;
+	res.onyx_verifier_abandoned_rpcs = m_onyx_verifier_abandoned_rpcs;
 	res.transaction_downloads_active = downloading_transactions.size();
 	res.onyx_verifier_retry_cooldowns = m_onyx_verifier_retry_cooldown.size();
 	return res;

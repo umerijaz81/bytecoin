@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import socket
 import subprocess
 import sys
 import tempfile
@@ -257,6 +258,90 @@ def main():
                 write_transaction(path, transaction)
                 transaction_paths.append(path)
 
+            abandoned_before = node.statistics()
+            abandoned_body = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "abandoned-valid-proof",
+                    "method": "send_transaction",
+                    "params": {
+                        "binary_transaction": transactions[0]["binary_transaction"]
+                    },
+                },
+                separators=(",", ":"),
+            ).encode("ascii")
+            abandoned_request = (
+                f"POST /json_rpc HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{rpc_port}\r\n"
+                "Content-Type: application/json-rpc\r\n"
+                f"Content-Length: {len(abandoned_body)}\r\n"
+                "Connection: keep-alive\r\n\r\n"
+            ).encode("ascii") + abandoned_body
+            abandoned_socket = socket.create_connection(
+                ("127.0.0.1", rpc_port), timeout=10
+            )
+            try:
+                abandoned_socket.sendall(abandoned_request)
+                wait_until(
+                    "abandoned RPC verifier start",
+                    lambda: node.statistics().get("onyx_verifier_acquired", 0)
+                    == abandoned_before.get("onyx_verifier_acquired", 0) + 1
+                    and node.statistics().get("onyx_verifier_active", 0) == 1,
+                    nodes + [source_wallet, receiver_wallet],
+                    timeout=30,
+                )
+            finally:
+                try:
+                    abandoned_socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                abandoned_socket.close()
+
+            wait_until(
+                "abandoned RPC verifier cleanup",
+                lambda: node.statistics().get("onyx_verifier_abandoned_rpcs", 0)
+                == abandoned_before.get("onyx_verifier_abandoned_rpcs", 0) + 1
+                and node.statistics().get("onyx_verifier_active", 0) == 0,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=args.rpc_timeout,
+            )
+            abandoned_after = node.statistics()
+            abandoned_rpc_cleanup = {
+                "transaction_hash": transactions[0]["transaction_hash"],
+                "verifier_acquired_before": abandoned_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": abandoned_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "abandoned_rpcs_before": abandoned_before.get(
+                    "onyx_verifier_abandoned_rpcs", 0
+                ),
+                "abandoned_rpcs_after": abandoned_after.get(
+                    "onyx_verifier_abandoned_rpcs", 0
+                ),
+                "verifier_active_after": abandoned_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after": abandoned_after.get("transaction_pool_count", 0),
+                "transaction_known_after": transaction_known(
+                    node, transactions[0]["transaction_hash"]
+                ),
+            }
+            if (
+                abandoned_rpc_cleanup["verifier_acquired_after"]
+                != abandoned_rpc_cleanup["verifier_acquired_before"] + 1
+                or abandoned_rpc_cleanup["abandoned_rpcs_after"]
+                != abandoned_rpc_cleanup["abandoned_rpcs_before"] + 1
+                or abandoned_rpc_cleanup["verifier_active_after"] != 0
+                or abandoned_rpc_cleanup["pool_count_after"] != 0
+                or abandoned_rpc_cleanup["transaction_known_after"]
+            ):
+                raise RuntimeError(
+                    "abandoned valid-proof RPC did not cleanly release without admission: "
+                    f"{abandoned_rpc_cleanup!r}"
+                )
+
             baseline_status = node.status()
             baseline_audit = rpc_call(rpc_port, "get_onyx_supply_audit")
             command = [
@@ -486,6 +571,15 @@ def main():
             )
             checks = {
                 "raw_load_report_passed": bool(load_report.get("passed")),
+                "abandoned_rpc_released_without_admission": (
+                    abandoned_rpc_cleanup["verifier_acquired_after"]
+                    == abandoned_rpc_cleanup["verifier_acquired_before"] + 1
+                    and abandoned_rpc_cleanup["abandoned_rpcs_after"]
+                    == abandoned_rpc_cleanup["abandoned_rpcs_before"] + 1
+                    and abandoned_rpc_cleanup["verifier_active_after"] == 0
+                    and abandoned_rpc_cleanup["pool_count_after"] == 0
+                    and not abandoned_rpc_cleanup["transaction_known_after"]
+                ),
                 "one_accepted_one_busy": classifications
                 == ["accepted", "verifier_busy"],
                 "tip_unchanged_during_unmined_load": (
@@ -536,6 +630,7 @@ def main():
                     "observed": load_report.get("observed"),
                     "checks": load_report.get("checks"),
                 },
+                "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
                 "transactions": [
                     {
                         "transaction_hash": transaction["transaction_hash"],

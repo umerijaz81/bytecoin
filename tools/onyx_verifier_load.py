@@ -31,6 +31,7 @@ METRIC_FIELDS = (
     "onyx_verifier_rejected_global",
     "onyx_verifier_rejected_source",
     "onyx_verifier_precheck_conflicts",
+    "onyx_verifier_abandoned_rpcs",
     "transaction_downloads_active",
     "onyx_verifier_retry_cooldowns",
 )
