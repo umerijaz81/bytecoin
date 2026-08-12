@@ -1667,6 +1667,10 @@ void BlockChainState::redo_block(const Hash &bhash, const Block &block, const ap
 		m_db.put(undo_key, previous_snapshot, true);
 	}
 	delta.apply(this);  // Will remove from pool by key_image
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+	if (delta.onyx_snapshot_changed())
+		onyx_crash_test_point("apply-after-state-write", 91);
+#endif
 	for (auto tit = block.transactions.begin(); tit != block.transactions.end(); ++tit) {
 		const auto tid = block.header.transaction_hashes.at(tit - block.transactions.begin());
 		if (tit->version == m_currency.onyx_transaction_version) {
@@ -1769,6 +1773,9 @@ void BlockChainState::undo_block(const Hash &bhash, const Block &block, Height h
 	if (m_db.get(onyx_undo_key, previous_onyx_snapshot)) {
 		set_onyx_snapshot(previous_onyx_snapshot);
 		m_db.del(onyx_undo_key, true);
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+		onyx_crash_test_point("reorg-after-undo", 94);
+#endif
 	}
 
 	auto key =

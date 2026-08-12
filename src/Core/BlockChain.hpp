@@ -138,6 +138,9 @@ public:
 	typedef std::array<Height, 7> CheckpointDifficulty;  // size must be == m_currency.get_checkpoint_keys_count()
 protected:
 	bool has_block(const Hash &bid) const;
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+	void onyx_crash_test_point(const char *point, int exit_code) const;
+#endif
 
 	std::vector<Hash> m_internal_import_chain;
 	void start_internal_import();

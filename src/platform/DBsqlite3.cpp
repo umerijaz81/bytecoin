@@ -164,9 +164,13 @@ void DBsqliteKV::Cursor::step_and_check() {
 	}
 	size = stmt_get.column_bytes(0);
 	data = reinterpret_cast<const char *>(sqlite3_column_blob(stmt_get.handle, 0));
+	if (size == 0)
+		data = "";
 	std::string it_key(data, size);
 	size = stmt_get.column_bytes(1);
 	data = reinterpret_cast<const char *>(sqlite3_column_blob(stmt_get.handle, 1));
+	if (size == 0)
+		data = "";  // SQLite may return nullptr for a present zero-length BLOB.
 	if (it_key.size() < prefix.size() ||
 	    std::char_traits<char>::compare(prefix.data(), it_key.data(), prefix.size()) != 0) {
 		data   = nullptr;
@@ -212,29 +216,37 @@ void DBsqliteKV::put(const std::string &key, const std::string &value, bool noov
 	::put(stmt, key, value.data(), value.size());
 }
 
-static std::pair<const unsigned char *, size_t> get(const sqlite::Stmt &stmt, const std::string &key) {
+struct SQLiteValue {
+	bool found;
+	const unsigned char *data;
+	size_t size;
+};
+
+static SQLiteValue get(const sqlite::Stmt &stmt, const std::string &key) {
 	sqlite3_reset(stmt.handle);
 	stmt.bind_blob(1, key.data(), key.size());
 	if (!stmt.step())
-		return std::make_pair(nullptr, 0);
+		return {false, nullptr, 0};
 	auto si = stmt.column_bytes(1);
 	auto da = stmt.column_blob(1);
-	return std::make_pair(da, si);
+	if (si == 0)
+		da = reinterpret_cast<const unsigned char *>("");
+	return {true, da, si};
 }
 
 bool DBsqliteKV::get(const std::string &key, common::BinaryArray &value) const {
 	auto result = ::get(stmt_get, key);
-	if (!result.first)
+	if (!result.found)
 		return false;
-	value.assign(result.first, result.first + result.second);
+	value.assign(result.data, result.data + result.size);
 	return true;
 }
 
 bool DBsqliteKV::get(const std::string &key, std::string &value) const {
 	auto result = ::get(stmt_get, key);
-	if (!result.first)
+	if (!result.found)
 		return false;
-	value.assign(result.first, result.first + result.second);
+	value.assign(result.data, result.data + result.size);
 	return true;
 }
 
@@ -389,6 +401,21 @@ void DBsqliteKV::run_tests() {
 		db.put("history/ha", "ua", false);
 		db.put("history/hb", "ub", false);
 		db.put("history/hc", "uc", false);
+		db.put("empty/string", std::string{}, false);
+		db.put("empty/array", common::BinaryArray{}, false);
+		std::string empty_string = "sentinel";
+		common::BinaryArray empty_array{1};
+		invariant(db.get("empty/string", empty_string) && empty_string.empty(),
+		    "sqlite get confused a present empty string with a missing key");
+		invariant(db.get("empty/array", empty_array) && empty_array.empty(),
+		    "sqlite get confused a present empty byte array with a missing key");
+		size_t empty_cursor_values = 0;
+		for (auto cur = db.begin("empty/"); !cur.end(); cur.next()) {
+			invariant(cur.get_value_string().empty() && cur.get_value_array().empty(),
+			    "sqlite cursor did not preserve a present empty value");
+			++empty_cursor_values;
+		}
+		invariant(empty_cursor_values == 2, "sqlite cursor omitted a present empty value");
 
 		db.put("history/ha", "uaa", false);
 		try {

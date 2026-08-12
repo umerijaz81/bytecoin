@@ -4,6 +4,7 @@
 #include "BlockChain.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include "Config.hpp"
 #include "CryptoNoteTools.hpp"
@@ -199,6 +200,7 @@ bool BlockChain::add_block(
 			m_archive.add(Archive::BLOCK, pb.block_data, pb.bid, source_address);
 		return false;
 	}
+	bool reorganized = false;
 	try {
 		if (!have_block) {                       // have block, but not header during internal_import
 			store_block(pb.bid, pb.block_data);  // Do not commit between here and
@@ -228,8 +230,9 @@ bool BlockChain::add_block(
 				push_chain(*info);
 				if (m_config.paranoid_checks)
 					debug_check_transaction_invariants(pb.raw_block, pb.block, *info, pb.base_transaction_hash);
-			} else
-				reorganize_blocks(pb.bid, pb, *info);
+			} else {
+				reorganized = reorganize_blocks(pb.bid, pb, *info);
+			}
 		}
 	} catch (const ConsensusError &) {
 		throw;  // The only exception which is safe here
@@ -239,8 +242,17 @@ bool BlockChain::add_block(
 		std::exit(api::BYTECOIND_DATABASE_ERROR);
 	}
 	if (get_tip_height() % m_config.db_commit_every_n_blocks ==
-	    m_config.db_commit_every_n_blocks - 1)  // no commit on genesis
+	    m_config.db_commit_every_n_blocks - 1) {  // no commit on genesis
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+		onyx_crash_test_point(reorganized ? "reorg-before-commit" : "apply-before-commit",
+		    reorganized ? 95 : 92);
+#endif
 		db_commit();
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+		onyx_crash_test_point(reorganized ? "reorg-after-commit" : "apply-after-commit",
+		    reorganized ? 96 : 93);
+#endif
+	}
 	return info->hash == get_tip_bid();
 }
 
@@ -638,6 +650,15 @@ void BlockChain::for_each_reversed_tip_segment(const api::BlockHeader &prev_info
 		fun(*header);
 	}
 }
+
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+void BlockChain::onyx_crash_test_point(const char *point, int exit_code) const {
+	if (m_config.onyx_crash_test_point != point)
+		return;
+	std::cerr << "ONYX_CRASH_TEST_POINT=" << point << " exit=" << exit_code << std::endl;
+	std::_Exit(exit_code);
+}
+#endif
 
 Hash BlockChain::get_ancestor_hash(const api::BlockHeader &prev_info, Height height) const {
 	if (height > prev_info.height)

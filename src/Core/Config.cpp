@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <boost/algorithm/string.hpp>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include "CryptoNoteConfig.hpp"
 #include "common/Base64.hpp"
@@ -188,6 +189,19 @@ Config::Config(common::CommandLine &cmd)
 		multicast_port += 3000;
 		payment_queue_confirmations = 30;
 	}
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+	if (const char *point = cmd.get("--onyx-crash-test-point")) {
+		static const std::set<std::string> allowed{
+		    "disabled", "apply-after-state-write", "apply-before-commit", "apply-after-commit",
+		    "reorg-after-undo", "reorg-before-commit", "reorg-after-commit"};
+		if (net != "onyx")
+			throw ConfigError("--onyx-crash-test-point is restricted to --net=onyx");
+		if (allowed.count(point) == 0)
+			throw ConfigError("Unknown --onyx-crash-test-point value");
+		onyx_crash_test_point    = point;
+		db_commit_every_n_blocks = 1;
+	}
+#endif
 	if (const char *pa = cmd.get("--p2p-bind-address")) {
 		ewrap(common::parse_ip_address_and_port(pa, &p2p_bind_ip, &p2p_bind_port),
 		    ConfigError("Command line option --p2p-bind-address has wrong format"));

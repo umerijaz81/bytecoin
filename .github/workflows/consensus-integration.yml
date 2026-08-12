@@ -76,6 +76,8 @@ jobs:
         run: python3 tests/security/test_wallet_auth_process.py --walletd build-consensus/artifacts/bin/walletd
       - name: Exclude hardware emulator from release-capable walletd
         run: python3 tests/security/test_release_emulator_absence.py --walletd build-consensus/artifacts/bin/walletd
+      - name: Exclude Onyx crash controls from release-capable bytecoind
+        run: python3 tests/security/test_release_crash_hook_absence.py --bytecoind build-consensus/artifacts/bin/bytecoind
       - name: Exclude privacy-sensitive RPC body logging
         run: python3 tests/security/test_sensitive_log_absence.py --walletd build-consensus/artifacts/bin/walletd
       - name: Enforce non-ZK Onyx qualification refusal and Jade invariants

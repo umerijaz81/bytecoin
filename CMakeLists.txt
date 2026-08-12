@@ -21,6 +21,14 @@ set(BYTECOIN_OUTPUT_ROOT "${CMAKE_BINARY_DIR}/artifacts" CACHE PATH
 # Onyx (V6) zero-knowledge backend (vendor/onyx-zk, Rust/Halo2). OFF by default so the C++-only
 # build needs no Rust toolchain; turn ON to build+link the ZK backend and the --zk test.
 option(ONYX_ZK "Build the Onyx ZK backend (requires Rust/cargo)" OFF)
+option(ONYX_CRASH_TESTS "Compile hidden Onyx daemon crash-injection qualification points" OFF)
+if(ONYX_CRASH_TESTS AND NOT ONYX_ZK)
+    message(FATAL_ERROR "ONYX_CRASH_TESTS requires ONYX_ZK=ON")
+endif()
+if(ONYX_CRASH_TESTS)
+    add_definitions(-DBYTECOIN_ONYX_CRASH_TESTS=1)
+    message(WARNING "Onyx daemon crash-injection points are compiled in; do not distribute these qualification binaries")
+endif()
 get_filename_component(PARENT_DIR ${CMAKE_SOURCE_DIR} DIRECTORY)
 
 if(REPRODUCIBLE_BUILD)

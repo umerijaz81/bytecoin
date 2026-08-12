@@ -73,6 +73,10 @@ public:
 	Timestamp db_commit_period_peers        = 60;
 	size_t db_commit_every_n_blocks         = 50000;
 	// This affects DB transaction size. TODO - sum size of blocks instead
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+	// Hidden qualification-only option. This field and all consumers are absent from normal builds.
+	std::string onyx_crash_test_point;
+#endif
 
 	std::string walletd_authorization;
 	uint16_t walletd_bind_port;

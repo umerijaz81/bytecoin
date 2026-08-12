@@ -87,7 +87,16 @@ def rpc_call(port, method, params=None, authorization=None):
 
 class Node:
     def __init__(
-        self, binary, root, name, net, p2p_port, rpc_port, exclusive_port=None, data=None
+        self,
+        binary,
+        root,
+        name,
+        net,
+        p2p_port,
+        rpc_port,
+        exclusive_port=None,
+        data=None,
+        extra_args=None,
     ):
         self.name = name
         self.rpc_port = rpc_port
@@ -104,6 +113,7 @@ class Node:
         ]
         if exclusive_port is not None:
             command.append(f"--exclusive-node-address=127.0.0.1:{exclusive_port}")
+        command.extend(extra_args or ())
         self.process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
