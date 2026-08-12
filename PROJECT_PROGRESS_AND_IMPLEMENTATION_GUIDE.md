@@ -287,9 +287,10 @@ Still required:
    behavior, and explicit WAL/journal checkpoint plus OS flush/power-loss simulation. The current
    campaign already proves exact pre-commit rollback and post-commit recovery for tip, root, supply,
    program state, snapshot, undo rows, and SQLite integrity.
-4. Corrupt snapshot, WAL/database image, combined-maxima, and partial-write recovery fuzz campaigns.
-   Maximum-plus-one anchor/nullifier/program-state counts fail before allocation; separate exact
-   one-million-entry valid snapshots now decode/re-encode under retained CPU/RSS/output measurements.
+4. Coverage-guided/sanitizer snapshot fuzzing plus corrupt WAL/database image, combined-maxima, and
+   partial-write recovery campaigns. Maximum-plus-one counts fail before allocation, exact
+   one-million-entry valid snapshots are measured, and the retained structured campaign covers four
+   fixture shapes, six targeted decoder failures, and 80,000 seeded mutations.
 5. Repeat exact-limit measurements through production SQLite reopen on named release hardware and
    qualify a deliberately provisioned combined-maxima snapshot outside ordinary CI.
 
@@ -304,7 +305,8 @@ Current implementation and next task:
   enforces portable resource ceilings and retains a digest-bound minimal trace for reproducible
   divergences. Next, establish named-host baselines, broaden operation/size/failure coverage, and
   compare immutable-revision reports from clean Linux, macOS, and Windows hosts. The opt-in
-  `snapshot_limit_campaign.py` also qualifies all three exact accepted collection maxima weekly.
+  `snapshot_limit_campaign.py` qualifies all exact accepted collection maxima weekly, while
+  `snapshot_corruption_campaign.py` retains bounded reject-or-canonicalize mutation evidence.
 
 ## 9. O2 — private native transfers and authorization
 

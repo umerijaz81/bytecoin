@@ -142,6 +142,48 @@ the configured counts are accepted and canonical on this implementation. They do
 snapshot containing all maxima simultaneously, corrupt SQLite/WAL images, arbitrary coverage-guided
 mutations, or named-hardware production database reopen behavior.
 
+## Structured snapshot corruption campaign
+
+`state::tests::snapshot_structured_corruption_campaign` starts from four canonical version-7
+snapshots: empty state and nonempty anchor, nullifier, and program-state collections. Before seeded
+exploration it requires exact failure classes for nonminimal and overflowing varints, adjacent
+duplicate anchors, duplicate/out-of-order nullifiers, duplicate/out-of-order program-state keys, and
+a noncanonical program-state field.
+
+Seeded cases then perform bounded bit flips, byte overwrites, truncation, trailing-byte insertion,
+slice deletion, slice insertion, `0xff` range overwrites, and 32-byte segment copies. Every mutation
+must satisfy one of two outcomes:
+
+- decoding rejects it; or
+- decoding succeeds, canonical re-encoding succeeds, reopening succeeds, and a current-version input
+  is byte-for-byte identical to the canonical encoding.
+
+This rejects silent acceptance of nonminimal current-version encodings while allowing explicit
+legacy-version migration to stabilize after one current-version encode. Inputs remain below 1 MiB.
+
+Run the retained four-seed campaign:
+
+```text
+python tools/onyx/snapshot_corruption_campaign.py \
+  --cases 20000 \
+  --timeout-per-seed 180 \
+  --max-seed-cpu-seconds 150 \
+  --max-seed-rss-mib 1024 \
+  --max-seed-output-mib 2 \
+  --revision <full-commit> \
+  --report build/onyx-qualification/snapshot-corruption.json
+```
+
+Schema `bytecoin-onyx-snapshot-corruption-campaign-v1` binds revision, manifest, lockfile, executable,
+seed, case count, classifications, output digest, platform, and sampled resources. The 2026-08-12
+local Windows campaign passed 80,000 cases: 65,706 rejected and 14,294 accepted as canonical current
+snapshots. Maximum per-seed observations were 19.234 wall seconds, 19.21875 CPU seconds, 5,763,072
+peak RSS bytes, 338 output bytes, and 1,083 input bytes. Weekly CI retains the report and any full
+failure log.
+
+This is structured deterministic mutation evidence, not coverage-guided fuzzing. It does not mutate
+SQLite database/WAL images, simulate torn writes, or prove parser coverage under ASan/UBSan.
+
 ## Continuation tasks
 
 For the next implementation milestone:
@@ -150,9 +192,9 @@ For the next implementation milestone:
    tighten the deliberately portable weekly ceilings where platform evidence supports it.
 2. Repeat exact-limit snapshot cases on named release hardware and through production SQLite
    persistence/reopen, including a deliberately provisioned combined-maxima case outside ordinary CI.
-3. Add coverage-guided snapshot and database-image fuzz targets, including count encodings, ordering,
-   duplicates, canonical fields, truncation, trailing bytes, WAL/checkpoint interruption, and partial
-   writes.
+3. Add coverage-guided and sanitizer-backed snapshot/database-image fuzz targets. Structured snapshot
+   mutations now cover count encodings, ordering, duplicates, canonical fields, truncation, trailing
+   bytes, and bounded splices; SQLite/WAL checkpoint interruption and partial writes remain.
 4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
 5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,

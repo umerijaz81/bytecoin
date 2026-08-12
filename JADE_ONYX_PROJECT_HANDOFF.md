@@ -180,6 +180,9 @@ Implemented:
 - Snapshot maximum-plus-one anchor, nullifier, and program-state count rejection before allocation.
 - Separate exact one-million-entry anchor, nullifier, and program-state snapshots with decode,
   canonical re-encode, resource ceilings, revision/executable binding, and weekly artifact retention.
+- Four-seed structured snapshot corruption campaign with six exact malformed-structure checks, eight
+  mutation families, reject-or-byte-stable-canonical acceptance, resource ceilings, and weekly
+  reports. The first retained local configuration passed 80,000 cases.
 - Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
   state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
@@ -204,8 +207,9 @@ Still required:
   transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and
   explicit WAL/journal checkpoint plus OS flush/power-loss boundaries. The current bounded campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
-- Combined-maxima and production-SQLite named-hardware qualification plus snapshot/database
-  corruption fuzzing. Separate exact collection maxima are now measured.
+- Combined-maxima and production-SQLite named-hardware qualification, coverage-guided/sanitizer
+  snapshot fuzzing, and corrupt database/WAL/partial-write recovery. Structured snapshot mutation and
+  separate exact collection maxima are now measured.
 
 ### O2 — Private transfers and authorization
 

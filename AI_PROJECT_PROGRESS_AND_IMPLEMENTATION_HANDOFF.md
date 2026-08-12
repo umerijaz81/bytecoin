@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `1c0adc5` (`Qualify exact Onyx snapshot limits`)
+- Committed revision reviewed: `9755f10` (`Harden Onyx snapshot corruption handling`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -317,6 +317,11 @@ Primary implementation:
   runner binds resource/output/executable identities and executes weekly. All three local cases
   passed; the largest was a 64,000,053-byte program-state snapshot with 285,687,808 bytes peak RSS
   under the final 20 ms sampling interval.
+- A structured snapshot corruption campaign uses four canonical fixture shapes, six targeted decoder
+  failures, eight mutation families, four published seeds, 20,000 cases per seed, exact
+  reject-or-canonicalize invariants, process resource ceilings, and retained revision-bound reports.
+  The local 80,000-case run rejected 65,706 inputs and accepted 14,294 only as byte-stable canonical
+  snapshots; its maximum seed time was 19.234 seconds.
 - `tests/network/test_onyx_db_crash_process.py` repeatedly terminates the native C++ test process at
   three real SQLite transaction boundaries using the production DB adapter and Onyx state/undo key
   shapes: after the state write, after the complete state/undo pair but before commit, and directly
@@ -328,7 +333,7 @@ Primary implementation:
   `local-process-crash-not-release-evidence`.
 - Weekly qualification CI builds the native `tests` target, runs the crash harness, and uploads its
   revision-bound JSON report. The ordinary Onyx Rust matrix maps the new model module exactly once;
-  local shard validation currently reports 109 tests total and 75 in the core shard.
+  local shard validation currently reports 111 tests total and 77 in the core shard.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after
@@ -364,9 +369,10 @@ Primary implementation:
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
    I/O failures, and explicit SQLite WAL/journal checkpoint and OS flush/power-loss simulation.
-3. Fuzz corrupt snapshots, WAL/database images, partial writes, and combined boundary-sized state.
-   Extend the separate exact-limit in-memory cases through production SQLite reopen and named-host
-   resource qualification. Prove bounded CPU and memory as well as fail-closed recovery.
+3. Add sustained coverage-guided/sanitizer snapshot fuzzing and corrupt WAL/database-image, partial
+   write, and combined boundary-sized state campaigns. The structured in-memory mutation campaign is
+   retained but is not coverage evidence. Extend exact-limit cases through production SQLite reopen
+   and named-host resource qualification.
 4. Run the same campaigns on clean Linux, macOS, and Windows builds and archive reports for one
    immutable revision. A local Windows pass is regression evidence only.
 5. Submit the state transition, snapshot, persistence, rollback, and reference-model assumptions to

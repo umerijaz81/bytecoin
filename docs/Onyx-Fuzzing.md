@@ -59,3 +59,15 @@ campaigns, minimized crash retention, and independent review. Reproduce it local
 ```text
 python tools/onyx/structured_fuzz_v1.py --cases 48 --backend vendor/onyx-zk/target/release/onyx-compiler-backend
 ```
+
+## Shielded-state snapshot structured campaign
+
+`tools/onyx/snapshot_corruption_campaign.py` runs four published seeds through the Rust snapshot
+decoder using canonical empty/anchor/nullifier/program-state fixtures. Six targeted structural errors
+must produce their exact decoder classes; seeded bit, overwrite, truncate, append, delete, insert,
+range-fill, and segment-copy mutations must reject or canonicalize byte-for-byte. The weekly retained
+configuration runs 20,000 cases per seed with CPU/RSS/output/time ceilings.
+
+This campaign is deterministic regression evidence and gives exact replay identities. It complements
+the sanitizer/libFuzzer harness above; it does not provide edge coverage, mutate SQLite/WAL images,
+or replace sustained coverage-guided campaigns.
