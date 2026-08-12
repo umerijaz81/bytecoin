@@ -236,6 +236,12 @@ seconds, left verifier acquisitions unchanged at 2, incremented the authenticate
 counter from 0 to 1, and kept the pool at one. Live cold/warm and broader parallel-load measurements
 remain required.
 
+The `59b0721` extension resubmits the accepted binary exactly after the conflict check. It returns
+below timer resolution, leaves verifier acquisitions at 2, leaves the authenticated conflict counter
+at 1, and preserves the one-entry pool. Its report records the pool count at duplicate-check time,
+before the later block intentionally removes the accepted transaction. The combined live run passed
+all nine checks with 143 successful health samples, peak verifier one, and exact post-load progress.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused

@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `715d019` on this branch.
+- **Committed**: present at or before Git revision `59b0721` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -915,6 +915,14 @@ pool. It rejected in 0.016 seconds, kept verifier acquisitions exactly 2 to 2, i
 private `onyx_verifier_precheck_conflicts` counter from 0 to 1, and left the pool at one transaction.
 Peak verifier activity remained one; 140 daemon samples succeeded with no sampling or submission
 transport errors, and both nodes/wallets reached height 5 with exact supply equality.
+
+Commit `59b0721` adds the adjacent exact-duplicate live invariant. After the accepted transaction was
+in the pool, resubmitting its identical binary returned below timer resolution, kept verifier
+acquisitions exactly 2 to 2, kept precheck conflicts exactly 1 to 1, and preserved a one-transaction
+pool. The report freezes the pool observation before mining so its final check does not incorrectly
+compare against the intentionally emptied post-block pool. The combined run passed all nine checks
+with 143 successful health samples, zero sampling/transport errors, peak verifier one, and exact
+post-load chain, wallet, and supply progress.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 

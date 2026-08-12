@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `715d019` (`Reject Onyx pool conflicts before proof work`)
+- Committed revision reviewed: `59b0721` (`Qualify proof-free Onyx duplicate admission`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `715d019` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `59b0721` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `715d019`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `59b0721`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -874,12 +874,20 @@ errors, 552,927,232-byte peak RSS, 266,080,256-byte RSS growth, and exact height
 This proves the asynchronous entry point no longer spends Halo2 work on that authenticated pending
 transfer conflict. It remains local evidence and does not establish a release RSS or latency limit.
 
+Commit `59b0721` adds an exact duplicate resubmission to the same real-proof scenario. It completed
+below timer resolution with verifier acquisitions unchanged at 2, precheck conflicts unchanged at 1,
+and pool count still exactly one. The temporally frozen observation prevents the final report from
+mistaking the expected post-mining empty pool for a duplicate-admission failure. The combined run
+passed all nine wrapper checks with 143 successful daemon samples, zero sampling/transport errors,
+peak verifier one, 552,902,656-byte peak RSS, 266,117,120-byte RSS growth, and exact height-5 supply
+equality. These memory measurements remain host-local evidence, not release limits.
+
 The report scope is `local-load-not-release-evidence`. It proves the specific event-loop liveness
 failure is fixed on this host; it does not establish cross-platform, cold/warm, sustained-load, or
 public-testnet thresholds. The runner now requires at least two successful in-load daemon samples,
 zero sampling errors, zero submission transport errors, and peak verifier concurrency at most one.
 
-Validation at `715d019`: ZK and non-ZK Release `bytecoind`/`tests` builds passed; both
+Validation through `59b0721`: ZK and non-ZK Release `bytecoind`/`tests` builds passed; both
 `tests.exe --jade` runs passed; Python compilation and the load-runner unit suite passed; the complete
 C++ `--zk` suite passed; and the expanded two-node process campaign passed. The normal non-ZK daemon
 still excludes the crash/fault controls.
@@ -887,9 +895,9 @@ still excludes the crash/fault controls.
 ### 15.4 Remaining verifier qualification work
 
 1. Repeat separate cold-start and warm-cache runs on named x86-64 and ARM64 hosts.
-2. Exercise exact duplicates, deployment/issuance/bridge/program-call authenticated conflicts,
-   invalid proofs, source disconnect, node shutdown, and stale-chain completion under deterministic
-   and live conditions. The pending private-transfer conflict is now live-qualified.
+2. Exercise deployment/issuance/bridge/program-call authenticated conflicts, invalid proofs, source
+   disconnect, node shutdown, and stale-chain completion under deterministic and live conditions.
+   Pending private-transfer conflict and exact duplicate resubmission are now live-qualified.
 3. Run repeated RPC-only, P2P-only, and mixed-ingress campaigns while ordinary RPC, wallet scanning,
    mining, and block application remain active.
 4. Add malformed-proof and valid-proof floods while proving queue/download/cooldown bounds and no
@@ -985,10 +993,10 @@ state mutation:
 Do not simply move all of `BlockChainState::add_transaction` to another thread. Its maps, database,
 archive, chain view, relay machinery, and event-loop assumptions are not established as thread-safe.
 
-After the async boundary passes, run separate cold-start and warm-cache processes; exact duplicates;
-authenticated non-transfer conflicts; malformed-proof floods; RPC and P2P ingress; mixed ordinary
-RPC/mining load; and repeated runs for defensible CPU, latency, and RSS thresholds. The pending
-transfer conflict is now live-qualified in `715d019`.
+After the async boundary passes, run separate cold-start and warm-cache processes; authenticated
+non-transfer conflicts; malformed-proof floods; RPC and P2P ingress; mixed ordinary RPC/mining load;
+and repeated runs for defensible CPU, latency, and RSS thresholds. The pending transfer conflict is
+live-qualified in `715d019`, and exact duplicate resubmission is live-qualified in `59b0721`.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
