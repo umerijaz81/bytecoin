@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `cef868c` on this branch.
+- **Committed**: present at or before Git revision `715d019` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -906,6 +906,16 @@ growth on this host. This closes the synchronous-dispatch blocker but remains lo
 repeated cold/warm, invalid-proof, mixed-ingress, named-hardware, and sustained campaigns are still
 required before setting release thresholds.
 
+Commit `715d019` fixes the remaining asynchronous ordering gap: the authenticated transfer,
+deployment, issuance, bridge, and standard-call pool/state prechecks now execute before verifier
+permit acquisition and worker submission. Mutable checks still rerun when the worker completes, and
+eligible mempool plus every block path still performs the authoritative stateful proof. The expanded
+live run submitted a distinct valid sibling transfer after the accepted transaction reached the
+pool. It rejected in 0.016 seconds, kept verifier acquisitions exactly 2 to 2, incremented the new
+private `onyx_verifier_precheck_conflicts` counter from 0 to 1, and left the pool at one transaction.
+Peak verifier activity remained one; 140 daemon samples succeeded with no sampling or submission
+transport errors, and both nodes/wallets reached height 5 with exact supply equality.
+
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 
 Native and private-token transfer envelopes now have a state-independent authenticated metadata
@@ -1022,8 +1032,9 @@ RSS, responsiveness, P2P propagation, wallet progress, and block progress; repea
 are still required for defensible fairness and resource ceilings.
 
 The private `get_statistics` response now exposes active and peak verifier count, successful permit
-acquisitions, global/per-source permit rejections, active transaction-body downloads, and current
-retry-cooldown table size. These counters are updated under the same lock as permit state, allowing a
+acquisitions, global/per-source permit rejections, proof-free precheck conflicts, active
+transaction-body downloads, and current retry-cooldown table size. These counters are updated under
+the same lock as permit state, allowing a
 load report to prove both resource behavior and whether the intended limiter engaged. Optional
 zero-valued fields may be absent from JSON; qualification readers must treat absence as zero.
 

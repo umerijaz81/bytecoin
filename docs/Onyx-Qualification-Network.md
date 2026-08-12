@@ -211,7 +211,10 @@ and block consensus is unchanged. The clean rerun recorded the already-built com
 `0.015` seconds and the competing swap branch at `0.0` seconds (below timer resolution), under a
 conservative 30-second ceiling, in `build/codex-zk/onyx-precheck-qualification.json`.
 
-The first bounded parallel valid-proof HTTP/P2P run now passes in `585bc4d`. Cold/warm repetition,
+The first bounded parallel valid-proof HTTP/P2P run passes in `585bc4d`, and `715d019` closes a
+worker-ordering gap found during follow-up review. Authenticated pool/state conflicts are now checked
+before acquiring a verifier permit or submitting Halo2 work, rather than only when the worker result
+returns to the event loop. Cold/warm repetition,
 named-hardware variance, invalid-proof floods, sustained sequential load, and memory-pressure
 qualification remain open. Authenticated cheap filters cover standard calls, transfers, deployments,
 issuance, and bridges. No precheck may become a substitute for full canonical consensus verification.
@@ -227,8 +230,11 @@ Private-transfer admission also authenticates the signed public transaction meta
 Pending or committed nullifier conflicts therefore fail before proof verification, and fee-only
 queries no longer invoke Halo2. Eligible transfers still execute the complete stateful proof/apply
 operation exactly once before acceptance. The focused optimized regression covers fresh eligibility,
-full application, and the resulting spent-nullifier conflict; live cold/warm and parallel-load
-measurements remain required.
+full application, and the resulting spent-nullifier conflict. The `715d019` two-node run then
+submitted a distinct valid sibling after the first transfer entered the pool: it rejected in 0.016
+seconds, left verifier acquisitions unchanged at 2, incremented the authenticated precheck-conflict
+counter from 0 to 1, and kept the pool at one. Live cold/warm and broader parallel-load measurements
+remain required.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
@@ -257,9 +263,10 @@ feature-mode builds pass. These controls must still be exercised under real para
 recording peak RSS, CPU, latency, ordinary wallet progress, and block application progress.
 
 The authenticated private `get_statistics` endpoint supplies `onyx_verifier_active`,
-`onyx_verifier_peak_active`, acquisition and rejection counters, active transaction downloads, and
-retry-cooldown count. Load evidence must sample these alongside process RSS/CPU and treat an omitted
-optional zero-valued field as zero.
+`onyx_verifier_peak_active`, acquisition and overload-rejection counters,
+`onyx_verifier_precheck_conflicts`, active transaction downloads, and retry-cooldown count. Load
+evidence must sample these alongside process RSS/CPU and treat an omitted optional zero-valued field
+as zero.
 
 `tools/onyx_verifier_load.py` is the bounded live runner. Supply at least two distinct, unsubmitted,
 fully formed Onyx transaction files (plain hex or JSON containing `binary_transaction`), the daemon

@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-12
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `cef868c` (`Qualify representative Onyx torn writes`)
+Last implementation revision reviewed: `715d019` (`Reject Onyx pool conflicts before proof work`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `cef868c`.
+- **Implemented and committed** means the code is in the branch history at or before `715d019`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -778,14 +778,21 @@ Validation performed before commit:
   Authenticated standard-call replay and stable-key conflict prechecks are now implemented before
   Halo2 while all eligible mempool and block paths retain full verification. The clean three-node
   precheck rerun finished at height 81 and recorded `0.015` seconds for the competing NFT admission
-  and `0.0` seconds (below timer resolution) for the competing swap branch. Bounded verifier queues
-  and the other transaction families remain the immediate DoS work.
+  and `0.0` seconds (below timer resolution) for the competing swap branch. Broader repeated,
+  mixed-ingress, invalid-proof, and named-hardware load qualification remains immediate DoS work.
 - External Onyx mempool proof work now has a fail-fast RAII bound of one active verifier globally and
   per source plus, in `585bc4d`, a one-job asynchronous worker shared by HTTP and P2P. The worker
   verifies against a captured immutable tip/height/snapshot; the event loop rejects stale results,
   reruns mutable conflicts, and alone mutates chain/pool/peer state. Contention returns retryable RPC
   `-104`; P2P overload is not a ban reason. Blocks still verify independently. ZK/non-ZK Release
   builds and Jade tests pass, and the real two-node valid-proof HTTP/P2P harness passes locally.
+- Commit `715d019` moves every authenticated pool/state conflict check ahead of verifier permit
+  acquisition and worker submission for transfers, deployments, issuance, bridges, and standard
+  calls. The completion path still reruns mutable conflicts, and eligible mempool/block paths retain
+  full stateful proof verification. In the expanded live run, a distinct valid sibling transfer
+  rejected in 0.016 seconds, verifier acquisitions remained 2 to 2, the authenticated conflict
+  counter moved 0 to 1, and the pool remained at one transaction. The run retained peak verifier one,
+  140 successful health samples, post-load mining/wallet progress, and exact two-node supply equality.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -802,17 +809,19 @@ Validation performed before commit:
   function schema, issuer signature, issuance binding signature, anchor, sequence, and cumulative cap
   before a conflict can reject early. Eligible issuance still runs the complete stateful proof/apply
   verifier once and must reproduce program ID, sequence, and amount. Fee-only reads are proof-free;
-  the real issuance regression and both build modes pass. Bridge fee extraction is now the remaining
-  proof-backed read path.
+  the real issuance regression and both build modes pass. Bridge fee extraction was subsequently
+  made proof-free and ownership-authenticated in `7e46efb`.
 - P2P transaction-body downloads are now capped at 32 active requests per peer and 128 process-wide,
   regardless of the larger descriptor chunk allowed on the wire. Verifier-overloaded transaction IDs
   enter a bounded 30-second cooldown; the table holds at most 1,024 IDs and evicts the soonest-expiring
   entry when full. Alternate peers and reannouncements consult the same cooldown, overload remains a
   non-ban event, and later announcements may retry. Duplicate hashes within one descriptor message
   now cause a controlled protocol disconnect rather than an insertion invariant. Deterministic policy tests and both feature-mode
-  builds pass; live parallel proof/RSS/fairness qualification remains open.
+  builds pass; the first live parallel proof/RSS/progress run passes, while repeated fairness,
+  mixed-ingress, and named-hardware qualification remains open.
 - Private daemon statistics expose current/peak Onyx verifier concurrency, permit acquisitions,
-  global/per-source overload rejections, active transaction downloads, and current cooldown entries.
+  global/per-source overload rejections, proof-free precheck conflicts, active transaction downloads,
+  and current cooldown entries.
   These are the authoritative limiter-engagement inputs for live load reports; absent optional fields
   mean zero.
 - `tools/onyx_verifier_load.py` turns distinct prebuilt Onyx transactions into a barrier-synchronized
@@ -985,9 +994,10 @@ Remaining:
 
 - Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
   HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
-- Add live invalid-proof floods, exact-duplicate/conflict load, disconnect/shutdown cancellation,
-  mixed RPC/P2P ingress, and explicit permit-leak/fairness checks. Extend cheap rejection only through
-  authenticated metadata extractors.
+- Add live invalid-proof floods, exact-duplicate and non-transfer conflict load,
+  disconnect/shutdown cancellation, mixed RPC/P2P ingress, and explicit permit-leak/fairness checks.
+  Extend cheap rejection only through authenticated metadata extractors. The pending transfer
+  conflict is covered in `715d019`.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 
