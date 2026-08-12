@@ -302,8 +302,10 @@ std::string DBsqliteKV::clean_key(const std::string &key) {
 
 void DBsqliteKV::delete_db(const std::string &path) {
 	auto ep = platform::expand_path(path);
-	std::remove((ep + ".sqlite").c_str());
 	std::remove((ep + ".sqlite-journal").c_str());
+	std::remove((ep + ".sqlite-wal").c_str());
+	std::remove((ep + ".sqlite-shm").c_str());
+	std::remove((ep + ".sqlite").c_str());
 }
 void DBsqliteKV::backup_db(const std::string &path, const std::string &dst_path) {
 	const std::string src_path = platform::expand_path(path + ".sqlite");
@@ -370,6 +372,38 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 		db.commit_db_txn();
 		return 0;
 	}
+	if (mode == "wal-prepare") {
+		delete_db(path);
+		DBsqliteKV db(platform::O_CREATE_NEW, path);
+		db.db_dbi.commit_txn();
+		sqlite::Stmt journal_mode;
+		journal_mode.prepare(db.db_dbi, "PRAGMA journal_mode=WAL");
+		if (!journal_mode.step())
+			throw sqlite::Error("SQLite did not return its requested WAL journal mode");
+		const size_t mode_size = journal_mode.column_bytes(0);
+		const auto *mode_data  = journal_mode.column_blob(0);
+		const std::string actual_mode(
+		    mode_size == 0 ? "" : reinterpret_cast<const char *>(mode_data), mode_size);
+		if (actual_mode != "wal" || journal_mode.step())
+			throw sqlite::Error("SQLite refused the requested WAL journal mode");
+		db.db_dbi.begin_txn();
+		db.put(state_key, before, false);
+		db.commit_db_txn();
+		std::_Exit(90);
+	}
+	if (mode == "wal-commit-after") {
+		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+		db.put(state_key, after, false);
+		db.put(undo_key, before, true);
+		db.commit_db_txn();
+		std::_Exit(91);
+	}
+	if (mode == "wal-checkpoint") {
+		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+		db.db_dbi.commit_txn();
+		db.db_dbi.exec("PRAGMA wal_checkpoint(TRUNCATE)", "SQLite WAL checkpoint failed");
+		return 0;
+	}
 	if (mode == "crash-after-state-write" || mode == "crash-before-commit" ||
 	    mode == "crash-after-commit") {
 		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
@@ -427,6 +461,20 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 void DBsqliteKV::run_tests() {
 	delete_db("temp_db");
 	delete_db("temp_db_backup");
+	for (const char *suffix : {".sqlite-journal", ".sqlite-wal", ".sqlite-shm"}) {
+		const std::string sidecar = "temp_db" + std::string(suffix);
+		FILE *file                = std::fopen(sidecar.c_str(), "wb");
+		invariant(file != nullptr, "sqlite delete test could not create a disposable sidecar");
+		std::fclose(file);
+	}
+	delete_db("temp_db");
+	for (const char *suffix : {".sqlite-journal", ".sqlite-wal", ".sqlite-shm"}) {
+		const std::string sidecar = "temp_db" + std::string(suffix);
+		FILE *file                = std::fopen(sidecar.c_str(), "rb");
+		if (file != nullptr)
+			std::fclose(file);
+		invariant(file == nullptr, "sqlite delete left a stale journal, WAL, or shared-memory sidecar");
+	}
 	{
 		DBsqliteKV db(platform::O_CREATE_NEW, "temp_db");
 		std::string str;
