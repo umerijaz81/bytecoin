@@ -41,6 +41,18 @@ jobs:
           --max-case-output-mib 2
           --revision "${{ github.sha }}"
           --report build/onyx-qualification/snapshot-limit.json
+      - name: Run seeded structured snapshot corruption campaign
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          python3 tools/onyx/snapshot_corruption_campaign.py
+          --cases 20000
+          --timeout-per-seed 180
+          --max-seed-cpu-seconds 150
+          --max-seed-rss-mib 1024
+          --max-seed-output-mib 2
+          --revision "${{ github.sha }}"
+          --report build/onyx-qualification/snapshot-corruption.json
       - name: Upload campaign identity and failure logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -52,6 +64,8 @@ jobs:
             build/onyx-qualification/state-model-seed-*.log
             build/onyx-qualification/snapshot-limit.json
             build/onyx-qualification/snapshot-limit-*.log
+            build/onyx-qualification/snapshot-corruption.json
+            build/onyx-qualification/snapshot-corruption-*.log
           if-no-files-found: error
           compression-level: 0
           retention-days: 90

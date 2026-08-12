@@ -1827,13 +1827,14 @@ mod tests {
         );
     }
 
-    fn exact_limit_snapshot(kind: &str) -> (Vec<u8>, usize) {
-        let count = match kind {
+    fn collection_snapshot(kind: &str, count: usize) -> Vec<u8> {
+        let limit = match kind {
             "anchors" => MAX_SNAPSHOT_ANCHORS,
             "nullifiers" => MAX_SNAPSHOT_NULLIFIERS,
             "program_states" => MAX_SNAPSHOT_PROGRAM_STATES,
             _ => panic!("unknown ONYX_SNAPSHOT_LIMIT_KIND: {kind}"),
         };
+        assert!(count > 0 && count <= limit);
         let estimated_size = match kind {
             "anchors" => count * 36,
             "nullifiers" => count * 32,
@@ -1918,7 +1919,7 @@ mod tests {
                 snapshot.extend_from_slice(&Fp::from(index as u64).to_repr());
             }
         }
-        (snapshot, count)
+        snapshot
     }
 
     #[test]
@@ -1926,7 +1927,13 @@ mod tests {
     fn snapshot_accepts_exact_configured_collection_limit() {
         let kind = std::env::var("ONYX_SNAPSHOT_LIMIT_KIND")
             .expect("set ONYX_SNAPSHOT_LIMIT_KIND to anchors, nullifiers, or program_states");
-        let (snapshot, count) = exact_limit_snapshot(&kind);
+        let count = match kind.as_str() {
+            "anchors" => MAX_SNAPSHOT_ANCHORS,
+            "nullifiers" => MAX_SNAPSHOT_NULLIFIERS,
+            "program_states" => MAX_SNAPSHOT_PROGRAM_STATES,
+            _ => panic!("unknown ONYX_SNAPSHOT_LIMIT_KIND: {kind}"),
+        };
+        let snapshot = collection_snapshot(&kind, count);
         let restored = ShieldedState::<8>::decode_snapshot(&snapshot).unwrap();
         match kind.as_str() {
             "anchors" => assert_eq!(restored.anchors.len(), count),
@@ -1939,6 +1946,159 @@ mod tests {
         println!(
             "ONYX_SNAPSHOT_LIMIT_RESULT kind={kind} count={count} snapshot_bytes={}",
             canonical.len()
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct MutationRng(u64);
+
+    impl MutationRng {
+        fn next(&mut self) -> u64 {
+            let mut value = self.0;
+            value ^= value << 13;
+            value ^= value >> 7;
+            value ^= value << 17;
+            self.0 = value;
+            value
+        }
+
+        fn below(&mut self, limit: usize) -> usize {
+            (self.next() as usize) % limit
+        }
+    }
+
+    #[test]
+    fn snapshot_structured_corruption_campaign() {
+        let configured_seed = std::env::var("ONYX_SNAPSHOT_CORRUPTION_SEED")
+            .ok()
+            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+            .unwrap_or(0x534e_4150_434f_5252)
+            .max(1);
+        let cases = std::env::var("ONYX_SNAPSHOT_CORRUPTION_CASES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(4_096)
+            .clamp(64, 1_000_000);
+        let fixtures = [
+            ShieldedState::<8>::new(3).encode_snapshot(),
+            collection_snapshot("anchors", 16),
+            collection_snapshot("nullifiers", 16),
+            collection_snapshot("program_states", 16),
+        ];
+
+        let mut overlong_leaf_count = fixtures[0].clone();
+        overlong_leaf_count.splice(2..=2, [0x80, 0]);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&overlong_leaf_count).err(),
+            Some(SnapshotError::Decode(DecodeError::NonMinimalVarint))
+        );
+        let mut overflowing_leaf_count = fixtures[0].clone();
+        overflowing_leaf_count.splice(2..=2, [0xff; 10]);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&overflowing_leaf_count).err(),
+            Some(SnapshotError::Decode(DecodeError::VarintOverflow))
+        );
+        let mut duplicate_anchor = fixtures[1].clone();
+        duplicate_anchor.copy_within(11..43, 44);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&duplicate_anchor).err(),
+            Some(SnapshotError::InvalidAnchorHistory)
+        );
+        let mut duplicate_nullifier = fixtures[2].clone();
+        duplicate_nullifier.copy_within(45..77, 77);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&duplicate_nullifier).err(),
+            Some(SnapshotError::DuplicateNullifier)
+        );
+        let mut duplicate_program_state = fixtures[3].clone();
+        duplicate_program_state.copy_within(51..83, 115);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&duplicate_program_state).err(),
+            Some(SnapshotError::InvalidProgramState)
+        );
+        let mut noncanonical_program_value = fixtures[3].clone();
+        noncanonical_program_value[83..115].fill(0xff);
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&noncanonical_program_value).err(),
+            Some(SnapshotError::Decode(DecodeError::NonCanonicalField))
+        );
+
+        let mut rng = MutationRng(configured_seed);
+        let mut rejected = 0usize;
+        let mut accepted_current = 0usize;
+        let mut accepted_migrated = 0usize;
+        let mut max_input_bytes = 0usize;
+        for case in 0..cases {
+            let fixture_index = rng.below(fixtures.len());
+            let mut mutated = fixtures[fixture_index].clone();
+            let mutation = rng.below(8);
+            match mutation {
+                0 => {
+                    let offset = rng.below(mutated.len());
+                    mutated[offset] ^= 1u8 << rng.below(8);
+                }
+                1 => {
+                    let offset = rng.below(mutated.len());
+                    mutated[offset] = rng.next() as u8;
+                }
+                2 => mutated.truncate(rng.below(mutated.len())),
+                3 => {
+                    let added = 1 + rng.below(8);
+                    mutated.extend((0..added).map(|_| rng.next() as u8));
+                }
+                4 => {
+                    let offset = rng.below(mutated.len());
+                    let removed = (1 + rng.below(8)).min(mutated.len() - offset);
+                    mutated.drain(offset..offset + removed);
+                }
+                5 => {
+                    let offset = rng.below(mutated.len() + 1);
+                    let added = 1 + rng.below(8);
+                    let bytes = (0..added).map(|_| rng.next() as u8).collect::<Vec<_>>();
+                    mutated.splice(offset..offset, bytes);
+                }
+                6 => {
+                    let offset = rng.below(mutated.len());
+                    let end = (offset + 1 + rng.below(8)).min(mutated.len());
+                    mutated[offset..end].fill(0xff);
+                }
+                7 => {
+                    if mutated.len() >= 64 {
+                        let source = rng.below(mutated.len() - 31);
+                        let target = rng.below(mutated.len() - 31);
+                        let bytes = mutated[source..source + 32].to_vec();
+                        mutated[target..target + 32].copy_from_slice(&bytes);
+                    }
+                }
+                _ => unreachable!(),
+            }
+            max_input_bytes = max_input_bytes.max(mutated.len());
+            match ShieldedState::<8>::decode_snapshot(&mutated) {
+                Err(_) => rejected += 1,
+                Ok(restored) => {
+                    let canonical = restored.encode_snapshot();
+                    let reopened = ShieldedState::<8>::decode_snapshot(&canonical)
+                        .expect("accepted mutation did not survive canonical reopen");
+                    assert_eq!(reopened.encode_snapshot(), canonical);
+                    if mutated.first() == Some(&SNAPSHOT_VERSION) {
+                        assert_eq!(
+                            canonical, mutated,
+                            "accepted noncanonical current snapshot seed={configured_seed:#018x} case={case} mutation={mutation} fixture={fixture_index}"
+                        );
+                        accepted_current += 1;
+                    } else {
+                        accepted_migrated += 1;
+                    }
+                }
+            }
+        }
+        assert!(rejected > 0, "campaign did not exercise rejection");
+        assert!(
+            accepted_current + accepted_migrated > 0,
+            "campaign did not exercise accepted canonical mutation"
+        );
+        println!(
+            "ONYX_SNAPSHOT_CORRUPTION_RESULT seed=0x{configured_seed:016x} cases={cases} targeted=6 rejected={rejected} accepted_current={accepted_current} accepted_migrated={accepted_migrated} max_input_bytes={max_input_bytes}"
         );
     }
 
