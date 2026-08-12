@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `e04ff20` (`Add Onyx differential state crash qualification`)
+- Committed revision reviewed: `6f3bc08` (`Qualify Onyx daemon crash recovery`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -146,7 +146,7 @@ builds, incident rehearsal, and governance approval for one exact frozen commit.
 |---|---|---|
 | Jade hardening | Committed and locally tested | Independent review, historical compatibility, platform/long-run qualification |
 | O0 ZK foundation | Substantially repository-complete | Independent circuit/FFI audit, long valid/malformed fuzzing, benchmarks |
-| O1 shielded state | Deterministic reference-ledger and SQLite crash-boundary runners implemented locally | Long/full-daemon campaigns, maximum-size corruption testing, independent consensus audit |
+| O1 shielded state | Reference-ledger, SQLite-boundary, and proof-bearing full-daemon crash runners implemented locally | Long/multi-platform campaigns, maximum-size corruption and checkpoint testing, independent consensus audit |
 | O2 private transfers | Committed, functionally process-qualified, and locally valid-proof load-qualified over HTTP and P2P | Cold/warm and sustained load campaigns, public testnet, independent crypto/wallet audit |
 | O3 wallet/RPC | Committed | Hardware-wallet acceptance, multi-operator recovery tests, external review |
 | O4 migration | Committed and locally process-qualified | Public supply evidence, independent review, incident rehearsal |
@@ -308,15 +308,41 @@ Primary implementation:
 - Weekly qualification CI builds the native `tests` target, runs the crash harness, and uploads its
   revision-bound JSON report. The ordinary Onyx Rust matrix maps the new model module exactly once;
   local shard validation currently reports 108 tests total and 74 in the core shard.
+- `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
+  through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
+  after commit, reorganization after undo, reorganization before commit, and reorganization after
+  commit. Exit codes 91 through 96 and matching log markers prove that each named point was reached.
+- The apply cases reuse one signed bridge transaction from a committed height-3 baseline. Recovery
+  before commit must reproduce the exact baseline tip/audit and contain no Onyx state rows; recovery
+  after commit must reproduce the bridge root, count, bridged amount, fee, circulation, state value,
+  and one correctly shaped empty prior-snapshot undo entry.
+- The reorganization cases use a real deployed/activated NFT program and its first proved state
+  transition. A longer branch forked immediately before the call removes that state. Pre-commit
+  crashes must reopen the exact stateful height-26 branch and `found=true` program value; the
+  post-commit crash must reopen the exact longer height-27 branch, restore the pre-call root/supply,
+  return `found=false`, and contain the exact pre-call Onyx database rows.
+- Every recovered database is independently opened by Python in read-only mode, checked with
+  `PRAGMA integrity_check`, and compared by exact state/undo key, value size, and SHA-256 identity.
+  The passing local report is schema `bytecoin-onyx-daemon-crash-v1`, scope
+  `local-full-daemon-crash-not-release-evidence`.
+- The first live reorganization run found a real SQLite adapter defect: a present zero-length BLOB
+  was treated as a missing key because `sqlite3_column_blob` may return null for empty values. The
+  first bridge's valid empty prior snapshot therefore could not be loaded during undo. The adapter
+  now tracks row presence independently of its data pointer, supplies a safe empty range to callers,
+  and has string/byte-array/cursor regressions. The six-point campaign passes with the fix.
+- Fault points exist only when configured with `ONYX_CRASH_TESTS=ON`, which requires `ONYX_ZK=ON`
+  and emits a non-distributable build warning. Normal binaries compile out the field, option,
+  markers, and calls. `tests/security/test_release_crash_hook_absence.py` scans the binary and proves
+  the hidden option is rejected as unknown.
 
 ### 9.3 Still required
 
 1. Extend the deterministic runner into long revision-bound campaigns with many published seeds,
    higher operation counts, resource ceilings, retained reports, and automated minimization beyond
    the already printed divergent prefix.
-2. Add full-daemon kill points during actual Onyx block application, undo, longer-chain reorg, DB
-   flush/checkpoint, and restart. The current harness proves SQLite transaction atomicity through the
-   production adapter, but it does not yet kill `bytecoind` inside a live block/reorg path.
+2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
+   transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
+   I/O failures, and explicit SQLite WAL/journal checkpoint and OS flush/power-loss simulation.
 3. Fuzz corrupt snapshots, WAL/database images, partial writes, and boundary-sized state at every
    configured maximum. Prove bounded CPU and memory as well as fail-closed recovery.
 4. Run the same campaigns on clean Linux, macOS, and Windows builds and archive reports for one
@@ -1076,16 +1102,18 @@ thresholds without changing consensus validity or skipping verification.
 
 ### Priority 2 - deterministic differential state/crash runner
 
-Status: **bounded runner implemented and passing locally; long/full-daemon qualification remains**.
+Status: **bounded model plus proof-bearing full-daemon apply/reorg runner implemented and passing
+locally; long and platform-diverse qualification remains**.
 
 Implemented in the current working milestone: independent ledger comparisons after generated
 apply/undo/fork/reopen sequences, deterministic seed/step replay, failure-prefix output, snapshot
-prefix/corruption rejection, and forced-process SQLite state/undo transaction tests. See section 9.2
+prefix/corruption rejection, forced-process SQLite state/undo transaction tests, and six real-daemon
+apply/reorganization termination points over bridge and stateful NFT transitions. See section 9.2
 for exact coverage and section 9.3 for the remaining scope.
 
 Exit condition: long campaigns produce no unexplained root, supply, nullifier, or program-state
-divergence, and full-daemon block/reorg crash campaigns recover without corruption. The bounded local
-runner alone does not satisfy this exit condition.
+divergence, and extended full-daemon block/reorg/checkpoint campaigns recover without corruption. The
+current bounded local campaigns alone do not satisfy the long, multi-platform exit condition.
 
 ### Priority 3 - compiler and valid-envelope fuzz campaigns
 

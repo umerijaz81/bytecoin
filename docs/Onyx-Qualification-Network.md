@@ -315,5 +315,45 @@ python tests/network/test_onyx_db_crash_process.py \
 ```
 
 The report scope is `local-process-crash-not-release-evidence`. This verifies transaction atomicity
-at the production SQLite adapter boundary; it does not replace a future campaign that kills a live
-`bytecoind` during block application, undo, reorganization, flush, or checkpoint.
+at the production SQLite adapter boundary and complements the live-daemon campaign below.
+
+## Full-daemon apply and reorganization crash qualification
+
+Configure a dedicated, non-distributable build with `ONYX_CRASH_TESTS=ON`. CMake rejects that option
+unless `ONYX_ZK=ON`; enabled builds emit a warning. Normal builds compile out the configuration field,
+CLI option, marker strings, and fault calls. The consensus workflow runs
+`tests/security/test_release_crash_hook_absence.py` against an ordinary artifact to prove both binary
+absence and unknown-option rejection.
+
+`tests/network/test_onyx_daemon_crash_process.py` reaches six named transaction points in real daemon
+processes with exact exit codes 91 through 96:
+
+1. bridge apply after writing the prior snapshot undo and new state;
+2. bridge apply immediately before SQLite commit;
+3. bridge apply immediately after commit;
+4. longer-chain reorganization after restoring/deleting the stateful NFT call's undo snapshot;
+5. that reorganization immediately before commit;
+6. that reorganization immediately after commit.
+
+The harness constructs a real signed bridge, deploys and activates the pinned NFT program, proves its
+first state transition, and creates a longer branch forked immediately before the call. Pre-commit
+terminations must restore the exact old tip, root, supply, program response, state snapshot, and undo
+rows. Post-commit terminations must restore the exact committed branch. Every database is opened
+independently, must pass `PRAGMA integrity_check`, and has each Onyx state/undo value hashed and sized.
+
+```text
+cmake -S . -B build-onyx-crash \
+  -DCMAKE_BUILD_TYPE=Release -DUSE_SQLITE=ON -DONYX_ZK=ON -DONYX_CRASH_TESTS=ON
+cmake --build build-onyx-crash --target bytecoind walletd minerd
+python tests/network/test_onyx_daemon_crash_process.py \
+  --bytecoind build-onyx-crash/artifacts/bin/bytecoind \
+  --walletd build-onyx-crash/artifacts/bin/walletd \
+  --minerd build-onyx-crash/artifacts/bin/minerd \
+  --revision <full-commit> \
+  --report build-onyx-crash/onyx-daemon-crash.json
+```
+
+The local schema is `bytecoin-onyx-daemon-crash-v1` and the scope is
+`local-full-daemon-crash-not-release-evidence`. It does not yet simulate disk-full errors, corrupted
+WAL/journals, OS power-loss/flush behavior, checkpoint interruption, maximum-sized states, or long
+repeated campaigns on independent platforms.

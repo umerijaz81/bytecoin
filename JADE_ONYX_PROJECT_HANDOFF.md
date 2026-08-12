@@ -152,8 +152,8 @@ Still required:
 
 ### O1 — Canonical Onyx state
 
-Status: **Repository implementation plus bounded independent-model/SQLite crash runners complete;
-independent consensus audit and long/full-daemon campaigns remain.**
+Status: **Repository implementation plus bounded independent-model, SQLite, and proof-bearing daemon
+crash runners complete; independent consensus audit and long/multi-platform campaigns remain.**
 
 Implemented:
 
@@ -172,6 +172,10 @@ Implemented:
   seed/prefix diagnostics run after every step.
 - Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
   state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
+- Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
+  Reopen checks bind exact tip/root/supply/program-state and raw state/undo rows. This campaign found
+  and fixed SQLite empty-BLOB reads being misclassified as missing keys, which had prevented undo of
+  the first bridge's empty prior snapshot.
 
 Primary locations:
 
@@ -185,9 +189,10 @@ Still required:
 
 - Independent consensus-state audit.
 - Long, multi-platform, revision-bound extensions of the bounded deterministic campaigns.
-- Full `bytecoind` kill/restart campaigns during actual block apply, undo, reorg, flush, and
-  checkpoint paths; the current test terminates the native test child around real SQLite commits but
-  does not yet interrupt a live daemon consensus transition.
+- Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
+  transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and
+  explicit WAL/journal checkpoint plus OS flush/power-loss boundaries. The current bounded campaign
+  covers bridge apply and a stateful NFT reorganization at six transaction points.
 - Maximum-size snapshot/database corruption fuzzing and state resource measurements.
 
 ### O2 — Private transfers and authorization

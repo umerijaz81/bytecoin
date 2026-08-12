@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-12**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `e04ff20` (`Add Onyx differential state crash qualification`)
+Implementation revision documented: `6f3bc08` (`Qualify Onyx daemon crash recovery`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -34,7 +34,7 @@ Current overall status:
 | Area | Status | Meaning |
 |---|---|---|
 | O0 proof foundation | Implemented in repository | Needs independent crypto/FFI review, benchmarks, and sustained fuzzing |
-| O1 canonical shielded state | Bounded independent-model and SQLite crash runners implemented locally | Needs long/full-daemon campaigns and independent consensus audit |
+| O1 canonical shielded state | Bounded model, SQLite-boundary, and proof-bearing daemon crash runners implemented locally | Needs long/multi-platform campaigns and independent consensus audit |
 | O2 private transfers | Implemented and process-qualified locally | Real two-wallet transfer is committed; hosted CI and independent/public qualification remain |
 | O3 wallet and RPC | Implemented in repository | Needs real hardware-wallet and multi-operator acceptance |
 | O4 legacy migration | Implemented and committed | Local three-node migration passes; public supply evidence and incident drill remain |
@@ -279,19 +279,22 @@ Still required:
 2. Long, multi-platform, revision-bound extensions of the new deterministic apply/undo/fork/reopen
    campaign. The bounded runner already uses an independent reference ledger, fixed plus overridable
    seeds, per-step snapshot reopen, exact state/supply comparisons, and replayable failing prefixes.
-3. Full-daemon kill/restart tests inside live block apply, undo, reorg, flush, and checkpoint paths.
-   The current native child-process harness already verifies rollback before SQLite commit and exact
-   state/undo survival after commit through both the production DB adapter and raw SQLite.
+3. Extend the implemented six-point live-daemon bridge/NFT apply and reorg crash campaign to
+   multi-transaction and multi-block undo/redo, transfer/issuance cases, repeated failures, disk-full
+   behavior, and explicit WAL/journal checkpoint plus OS flush/power-loss simulation. The current
+   campaign already proves exact pre-commit rollback and post-commit recovery for tip, root, supply,
+   program state, snapshot, undo rows, and SQLite integrity.
 4. Maximum-size corrupt snapshot, WAL/database image, and partial-write recovery fuzz campaigns.
 5. Resource measurements for large valid state snapshots at configured limits.
 
 Current implementation and next task:
 
-- `vendor/onyx-zk/src/state_model_tests.rs` now performs the deterministic reference-ledger work
-  described above. `tests/network/test_onyx_db_crash_process.py` and the hidden native test-child
-  modes cover SQLite transaction crash boundaries. Next, add explicit daemon-only crash hooks guarded
-  out of production builds, drive a two-branch reorg through them, and compare the reopened canonical
-  root, nullifiers, supply, undo records, program state, and block tip against an uninterrupted node.
+- `vendor/onyx-zk/src/state_model_tests.rs` performs the deterministic reference-ledger work.
+  `tests/network/test_onyx_db_crash_process.py` covers direct adapter transaction boundaries, and
+  `tests/network/test_onyx_daemon_crash_process.py` now drives compile-time-only daemon fault points
+  through a bridge apply and stateful NFT reorganization. The campaign discovered and fixed SQLite's
+  zero-length-value presence bug. Next, broaden operation/size/failure coverage and retain long
+  revision-bound reports from clean Linux, macOS, and Windows hosts.
 
 ## 9. O2 — private native transfers and authorization
 
