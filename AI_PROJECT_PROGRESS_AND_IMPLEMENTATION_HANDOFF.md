@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `3eb9c42` (`Retain Onyx state model campaigns`)
+- Committed revision reviewed: `e301b47` (`Bound and minimize Onyx state campaigns`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -302,6 +302,13 @@ Primary implementation:
   seed. The 2026-08-12 local Windows run passed all 16,000 iterations with 11,333 recorded operations
   and nonzero bridge, transfer, deployment, issuance, contextual, rejection, undo, fork, and reopen
   coverage for every seed. See `docs/Onyx-State-Model-Qualification.md` for schema and replay details.
+- Schema v2 builds the test once, binds the executable digest, and samples the test process itself.
+  Weekly limits are 180 wall seconds, 120 CPU seconds, 1,024 MiB peak RSS, and 2 MiB output per seed;
+  missing samples or any exceeded ceiling fail closed. A divergence is rerun at `step + 1` and its
+  predecessor; exact reproduction plus predecessor absence produces a digest-bound minimized trace.
+- The v2 local repeat preserved the 16,000/11,333 coverage totals and observed maxima of 7.61 wall
+  seconds, 7.640625 CPU seconds, 5,832,704 peak RSS bytes, and 504 output bytes. An injected failure
+  proved minimization from 100 to 38 requested steps and absence at 37.
 - Snapshot tests reject every truncated prefix, a supply-field corruption, and anchor/nullifier/
   program-state counts at configured maximum plus one before allocation. These are bounded
   regressions, not yet exact-maximum resource or coverage-guided corruption campaigns.
@@ -316,7 +323,7 @@ Primary implementation:
   `local-process-crash-not-release-evidence`.
 - Weekly qualification CI builds the native `tests` target, runs the crash harness, and uploads its
   revision-bound JSON report. The ordinary Onyx Rust matrix maps the new model module exactly once;
-  local shard validation currently reports 108 tests total and 74 in the core shard.
+  local shard validation currently reports 109 tests total and 75 in the core shard.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after
@@ -346,9 +353,9 @@ Primary implementation:
 
 ### 9.3 Still required
 
-1. Extend the retained eight-seed deterministic campaign with peak-RSS/CPU ceilings, automated
-   failing-prefix minimization, more published seeds/operation counts, and cross-platform root
-   comparison.
+1. Establish immutable-revision Linux/macOS/Windows resource baselines, tighten the portable weekly
+   ceilings where supported, add more published seeds/operation counts, and compare roots across
+   platforms.
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
    I/O failures, and explicit SQLite WAL/journal checkpoint and OS flush/power-loss simulation.

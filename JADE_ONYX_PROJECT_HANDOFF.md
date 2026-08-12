@@ -174,6 +174,9 @@ Implemented:
   atomic JSON progress, exact input/output identities, per-operation coverage, failure logs, and
   weekly 90-day artifact retention. The first full local run passed 16,000 requested iterations and
   11,333 trace operations.
+- Schema-v2 process sampling and CI wall/CPU/RSS/output ceilings, with build/test separation and
+  executable identity. Exact divergence replay verifies the `step + 1` prefix and its predecessor,
+  retaining a digest-bound minimal trace. The v2 local run passed all ceilings.
 - Snapshot maximum-plus-one anchor, nullifier, and program-state count rejection before allocation.
 - Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
   state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
@@ -193,7 +196,7 @@ Primary locations:
 Still required:
 
 - Independent consensus-state audit.
-- Multi-platform immutable-revision comparisons, resource ceilings, failing-prefix minimization, and
+- Multi-platform immutable-revision comparisons, named-host resource baselines/tighter ceilings, and
   broader/longer extensions of the retained deterministic campaign.
 - Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
   transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and

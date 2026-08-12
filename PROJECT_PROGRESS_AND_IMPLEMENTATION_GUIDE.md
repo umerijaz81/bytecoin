@@ -276,11 +276,12 @@ Primary implementation:
 Still required:
 
 1. Independent consensus/state audit.
-2. Cross-platform and resource-bounded extensions of the retained deterministic
+2. Cross-platform extensions of the retained deterministic
    apply/undo/fork/reopen campaign. The runner now uses eight published seeds and 2,000 iterations per
    seed, records revision/manifest/lockfile/output identities and per-operation coverage, retains
-   failure logs, and runs weekly. It still needs RSS/CPU ceilings, minimization, more immutable-revision
-   runs, and comparison across Linux, macOS, and Windows.
+   failure logs, measures/enforces wall/CPU/RSS/output ceilings, proves divergent-prefix minimality,
+   and runs weekly. It still needs named-host baselines, tighter platform-supported ceilings, more
+   immutable-revision runs, and comparison across Linux, macOS, and Windows.
 3. Extend the implemented six-point live-daemon bridge/NFT apply and reorg crash campaign to
    multi-transaction and multi-block undo/redo, transfer/issuance cases, repeated failures, disk-full
    behavior, and explicit WAL/journal checkpoint plus OS flush/power-loss simulation. The current
@@ -298,9 +299,10 @@ Current implementation and next task:
   `tests/network/test_onyx_daemon_crash_process.py` now drives compile-time-only daemon fault points
   through a bridge apply and stateful NFT reorganization. The campaign discovered and fixed SQLite's
   zero-length-value presence bug. `tools/onyx/state_model_campaign.py` and
-  `docs/Onyx-State-Model-Qualification.md` define the retained eight-seed campaign. Next, add resource
-  ceilings/minimization, broaden operation/size/failure coverage, and compare immutable-revision
-  reports from clean Linux, macOS, and Windows hosts.
+  `docs/Onyx-State-Model-Qualification.md` define the retained eight-seed campaign. The v2 runner
+  enforces portable resource ceilings and retains a digest-bound minimal trace for reproducible
+  divergences. Next, establish named-host baselines, broaden operation/size/failure coverage, and
+  compare immutable-revision reports from clean Linux, macOS, and Windows hosts.
 
 ## 9. O2 — private native transfers and authorization
 

@@ -36,22 +36,38 @@ Run the default qualification from the repository root:
 ```text
 python tools/onyx/state_model_campaign.py \
   --steps 2000 \
+  --timeout-per-seed 180 \
+  --max-seed-cpu-seconds 120 \
+  --max-seed-rss-mib 1024 \
+  --max-seed-output-mib 2 \
   --revision <full-commit> \
   --report build/onyx-qualification/state-model.json
 ```
 
-The runner invokes the exact Rust test with `cargo test --release --locked --offline`, one seed at a
-time and one test thread at a time. Its eight default 64-bit seeds are explicit in the script. Use a
-repeated `--seed 0x...` argument to replay or narrow a campaign, and
-`--timeout-per-seed <seconds>` to change the default 900-second per-seed ceiling.
+The runner first performs one `cargo test --release --locked --offline --no-run` build, parses Cargo's
+JSON artifact stream, requires exactly one Onyx library test executable, and records that executable's
+SHA-256. It then invokes the exact Rust test binary for each seed, one test thread at a time. This
+separates build resources from campaign resources. Its eight default 64-bit seeds are explicit in the
+script. Use a repeated `--seed 0x...` argument to replay or narrow a campaign.
 
-The JSON schema is `bytecoin-onyx-state-model-campaign-v1`. It records the requested revision,
-manifest and lockfile SHA-256 identities, seeds, step count, elapsed time, command result, captured
-output digest, final root and snapshot size, successful checkpoint count, trace length, and count of
-each required operation family. The runner rejects a missing/duplicate summary, identity mismatch,
-noncanonical root, empty operation family, invalid trace length, empty snapshot, or failed process.
-It writes the report atomically after every seed. On failure it also retains the complete combined
-Cargo/test output in `state-model-seed-<hex>.log` and records that file's digest.
+The JSON schema is `bytecoin-onyx-state-model-campaign-v2`. In addition to revision, manifest,
+lockfile, executable, output, root, checkpoint, trace, and operation identities, it records platform,
+logical CPU count, wall time, sampled CPU time, peak RSS, sample count, and output bytes per seed.
+`--timeout-per-seed`, `--max-seed-cpu-seconds`, `--max-seed-rss-mib`, and
+`--max-seed-output-mib` are independently enforced. Missing process samples also fail the campaign.
+
+The runner rejects a missing/duplicate summary, identity mismatch, noncanonical root, empty operation
+family, invalid trace length, empty snapshot, failed process, timeout, or resource-limit violation. It
+writes the report atomically after the build and every seed. On failure it retains the complete test
+output in `state-model-seed-<hex>.log` and records that file's digest. Build failures similarly retain
+`state-model-build.log`.
+
+When output contains exactly one state-model divergence, the runner derives the smallest possible
+requested prefix as `failing step + 1` (subject to the test's ten-step minimum), reruns it, and reruns
+the immediately shorter prefix. It reports minimality only if the candidate reproduces the exact
+message/seed/step tuple and its predecessor does not. The candidate's full replayable operation trace
+is retained in `state-model-seed-<hex>-minimized.log` with a SHA-256 identity. A test-only environment
+hook, `ONYX_STATE_MODEL_TEST_FAIL_STEP`, exists solely in the Rust test module to qualify this path.
 
 The scheduled `Onyx sustained qualification` workflow runs all eight seeds at 2,000 requested
 iterations each and retains the report (and any failure log) for 90 days, keyed by Git revision.
@@ -67,6 +83,19 @@ The first full Windows working-tree run passed:
 - every required operation family nonzero for every seed;
 - approximately 183 seconds total including a one-time optimized rebuild;
 - approximately 7 to 9 seconds per seed after the build.
+
+The v2 resource-bound repeat passed the same 16,000 iterations and 11,333 operations with these
+maximum per-seed observations on the named local platform in the JSON report:
+
+- 7.61 seconds wall time;
+- 7.640625 seconds sampled CPU time;
+- 5,832,704 bytes peak RSS;
+- 504 output bytes.
+
+An injected step-37 divergence from a 100-step request reproduced at 38 requested steps and did not
+reproduce at 37, proving the minimizer and both artifact digests end to end. A separate 1 MiB RSS
+ceiling probe failed closed while preserving its successful semantic summary and failed resource
+check.
 
 The local report used revision label `working-tree-state-model`; it is useful regression evidence but
 is deliberately not committed as release evidence. CI reports must use `${{ github.sha }}`.
@@ -86,20 +115,18 @@ it cover corrupt SQLite/WAL images or arbitrary coverage-guided mutations.
 
 For the next implementation milestone:
 
-1. Add a minimizer that consumes a failing generated prefix and emits the smallest replayable
-   operation sequence; retain both original and minimized digests.
-2. Add peak RSS, CPU-time, and output-size ceilings to the campaign report and fail CI on documented
-   regressions.
-3. Generate valid snapshots at each exact configured maximum and measure decode/reopen resources on
+1. Establish immutable-revision resource baselines on named Linux, macOS, and Windows hosts, then
+   tighten the deliberately portable weekly ceilings where platform evidence supports it.
+2. Generate valid snapshots at each exact configured maximum and measure decode/reopen resources on
    named hardware. Do not create million-entry fixtures in ordinary unit-test CI.
-4. Add coverage-guided snapshot and database-image fuzz targets, including count encodings, ordering,
+3. Add coverage-guided snapshot and database-image fuzz targets, including count encodings, ordering,
    duplicates, canonical fields, truncation, trailing bytes, WAL/checkpoint interruption, and partial
    writes.
-5. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
+4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
-6. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,
+5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,
    deployment rollback, repeated failures, disk-full/I/O faults, and OS flush/power-loss boundaries.
-7. Submit the reference-model assumptions and production state transition to an independent
+6. Submit the reference-model assumptions and production state transition to an independent
    consensus and cryptographic review.
 
 Do not describe O1 as release-complete until those external and resource-bound gates are satisfied.
