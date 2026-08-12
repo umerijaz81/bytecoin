@@ -224,6 +224,16 @@ committed positive control in 0.203 seconds; failed database images were byte-id
 after. This safely qualifies SQLite page exhaustion in CI without consuming the host disk. It does
 not inject journal-write/fsync errors, enforce real filesystem quotas, or emulate device removal.
 
+### Test-only VFS I/O-fault extension
+
+The compile-time qualification VFS forwards the platform VFS but fails exactly one journal/database
+write or sync. Four native cases require exact extended codes 778 or 1034 at their named state/commit
+stage, exactly one trigger, and exact old-state recovery through both the production adapter and an
+independent SQLite reader. The final local campaign passed all four faults plus a committed control in 0.375
+seconds. Normal artifacts compile out the VFS and markers, which the release-absence regression scans.
+This closes bounded single-call rollback-journal write/sync injection; partial writes, repeated faults,
+WAL I/O faults, device behavior, and power loss remain.
+
 ## Continuation tasks
 
 For the next implementation milestone:
@@ -240,9 +250,9 @@ For the next implementation milestone:
 4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
 5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,
-   deployment rollback, repeated failures, real filesystem quota exhaustion, injected write/fsync
-   I/O faults, and OS flush/power-loss boundaries. Bounded SQLite page exhaustion is now covered at
-   the production adapter boundary.
+   deployment rollback, repeated failures, real filesystem quota exhaustion, partial/repeated/WAL I/O
+   faults, and OS flush/power-loss boundaries. Bounded SQLite page exhaustion and single-call rollback-
+   journal/database write/sync faults are covered at the production adapter boundary.
 6. Submit the reference-model assumptions and production state transition to an independent
    consensus and cryptographic review.
 

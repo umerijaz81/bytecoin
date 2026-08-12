@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `647ca47` (`Qualify atomic Onyx SQLite disk-full recovery`)
+- Committed revision reviewed: `e770691` (`Inject isolated Onyx SQLite I/O faults`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -370,6 +370,17 @@ Primary implementation:
   time/output/report limits, raw rows, page counts, and image digests. It is deterministic SQLite
   page-exhaustion evidence, not physical host-disk, quota, journal-write, fsync, or device-failure
   evidence.
+- With `ONYX_CRASH_TESTS=ON`, `DBsqlite3.cpp` compiles `onyx-fault-vfs`, a forwarding wrapper around
+  the platform default VFS. It preserves the underlying I/O-method ABI version and delegates every
+  call except one armed main-journal/main-database `xWrite` or `xSync`. Four hidden native modes report
+  target, operation, state/undo/commit stage, exact extended SQLite code, and trigger count. Ordinary
+  builds compile out the wrapper, modes, marker, and case strings; the release-absence scan enforces
+  that boundary.
+- `tests/network/test_onyx_db_ioerr_process.py` runs journal write at state, journal sync at commit,
+  database write at commit, and database sync at commit failures. Each must trigger once with code 778
+  (`SQLITE_IOERR_WRITE`) or 1034 (`SQLITE_IOERR_FSYNC`), then recover the exact old raw rows through
+  both native and independent SQLite readers. A committed control must advance. The 2026-08-12 final
+  Windows run passed all five cases in 0.375 seconds; its retained report was 10,941 bytes.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after
@@ -404,10 +415,10 @@ Primary implementation:
    platforms.
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, real
-   filesystem quota exhaustion and injected journal-write/fsync failures, and real in-checkpoint
-   process termination plus OS flush/power-loss simulation. Bounded SQLite page exhaustion,
-   rollback-journal/WAL mutation, and checkpoint-bundle mixing are covered, but they are not
-   substitutes for those storage boundaries.
+   filesystem quota exhaustion and partial/repeated/WAL/directory-sync I/O failures, and real
+   in-checkpoint process termination plus OS flush/power-loss simulation. Bounded SQLite page
+   exhaustion, one-shot rollback-journal-mode write/sync faults, rollback-journal/WAL mutation, and
+   checkpoint-bundle mixing are covered, but they are not substitutes for those storage boundaries.
 3. Add sustained coverage-guided/sanitizer snapshot and database-image fuzzing, arbitrary partial
    writes, and combined boundary-sized state campaigns. The structured in-memory and deterministic
    SQLite mutation campaigns are retained regression evidence, not coverage evidence. Extend

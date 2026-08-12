@@ -72,5 +72,6 @@ This campaign is deterministic regression evidence and gives exact replay identi
 the sanitizer/libFuzzer harness above; it does not provide edge coverage. A separate deterministic
 process campaigns mutate small SQLite/rollback-journal images and deterministic WAL/checkpoint file
 bundles. A separate bounded runner forces `SQLITE_FULL` during state and undo writes. These do not
-fuzz a live checkpoint routine, inject arbitrary I/O errors, or replace sustained coverage-guided
-campaigns.
+fuzz a live checkpoint routine or replace sustained coverage-guided campaigns. A compile-time-only
+forwarding VFS also injects one journal/database write or sync error per case; arbitrary partial,
+repeated, and WAL I/O errors remain.

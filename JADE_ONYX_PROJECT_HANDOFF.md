@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-11
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `647ca47` (`Qualify atomic Onyx SQLite disk-full recovery`)
+Last implementation revision reviewed: `e770691` (`Inject isolated Onyx SQLite I/O faults`)
 
 ## 1. Purpose and status vocabulary
 
@@ -197,6 +197,10 @@ Implemented:
 - Deterministic SQLite page-exhaustion campaign forcing primary code 13 during a 1 MiB state write and
   during an undo write after the new state was staged. Both failed transactions reopen at the exact,
   byte-identical prior state; a committed positive control proves the harness can observe progress.
+- Compile-time-only forwarding SQLite VFS and five-case process campaign covering one journal write,
+  journal sync, database write, or database sync failure plus a committed control. Every fault fires
+  once with exact extended code 778/1034 and recovers the exact old state. Normal artifacts exclude
+  the VFS, modes, markers, and case strings.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
   Reopen checks bind exact tip/root/supply/program-state and raw state/undo rows. This campaign found
   and fixed SQLite empty-BLOB reads being misclassified as missing keys, which had prevented undo of
@@ -217,8 +221,9 @@ Still required:
   broader/longer extensions of the retained deterministic campaign.
 - Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
   transitions, transfer/issuance/deployment variants, repeated failures, real filesystem quotas,
-  injected write/fsync errors, and real in-checkpoint termination plus OS flush/power-loss boundaries.
-  Bounded adapter-level SQLite page exhaustion is covered; the current full-daemon campaign
+  partial/repeated/WAL I/O faults, and real in-checkpoint termination plus OS flush/power-loss
+  boundaries. Bounded adapter-level SQLite page exhaustion and single rollback-journal-mode
+  write/sync faults are covered; the current full-daemon campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
 - Combined-maxima and production-SQLite named-hardware qualification, coverage-guided/sanitizer
   snapshot/database fuzzing, and real checkpoint interruption, arbitrary partial-write, disk-fault,

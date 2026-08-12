@@ -419,6 +419,49 @@ and image identities. Scope
 SQLite page-exhaustion atomicity, not physical filesystem exhaustion, quota behavior, journal-write or
 fsync I/O errors, device removal, storage latency, or power-loss durability.
 
+## Test-only SQLite write and sync I/O-fault qualification
+
+When and only when configured with `ONYX_CRASH_TESTS=ON`, `DBsqlite3.cpp` compiles a forwarding SQLite
+VFS named `onyx-fault-vfs`. It wraps the platform's default VFS and delegates every operation except
+one armed `xWrite` or `xSync` call on either the main rollback journal or main database. The wrapper
+mirrors each underlying file's exact I/O-method ABI version. The four modes therefore return real
+extended SQLite codes `SQLITE_IOERR_WRITE` (`778`) or `SQLITE_IOERR_FSYNC` (`1034`) from the intended
+storage object without modifying production VFS behavior.
+
+`tests/network/test_onyx_db_ioerr_process.py` runs four independent fixtures:
+
+1. journal write failure during the state replacement;
+2. journal sync failure during commit;
+3. database write failure during commit;
+4. database sync failure during commit.
+
+Every native child must identify the target, operation, state/undo/commit stage, exact extended code,
+and exactly one injected call. A new production-adapter process must then return the exact old state
+with no undo. Independent read-only SQLite inspection requires integrity `ok` and identical raw rows.
+A normal committed control must recover the new state/undo pair.
+
+```text
+cmake -S . -B build-onyx-ioerr -DUSE_SQLITE=ON -DONYX_ZK=ON -DONYX_CRASH_TESTS=ON
+cmake --build build-onyx-ioerr --target tests
+python tests/network/test_onyx_db_ioerr_process.py \
+  --tests build-onyx-ioerr/artifacts/bin/tests \
+  --revision <full-commit> \
+  --report build-onyx-ioerr/onyx-db-ioerr-process.json
+```
+
+The 2026-08-12 final Windows run passed all five cases in 0.375 seconds. All four faults fired once with
+the expected target, stage, and code; all recovered exactly. The 10,941-byte report uses schema
+`bytecoin-onyx-db-ioerr-campaign-v1` and scope
+`compile-time-test-vfs-single-write-or-sync-fault-local-or-ci-not-device-release-evidence`. It binds
+revision/executable identity, process/report/output bounds, before/fault/recovery file manifests, and
+both native and independent state oracles.
+
+Ordinary builds compile out the VFS, modes, marker, and fault strings. The release-absence regression
+scans a normal `bytecoind` and requires the hidden daemon option to remain unknown. This campaign
+injects one deterministic rollback-journal-mode call at a time; it does not model partial successful
+writes, repeated or combined failures, directory sync, lock/shared-memory faults, WAL-mode I/O faults,
+device removal, kernel/controller behavior, or physical power loss.
+
 ## Full-daemon apply and reorganization crash qualification
 
 Configure a dedicated, non-distributable build with `ONYX_CRASH_TESTS=ON`. CMake rejects that option

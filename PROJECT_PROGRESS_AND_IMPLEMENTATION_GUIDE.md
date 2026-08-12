@@ -284,7 +284,7 @@ Still required:
    immutable-revision runs, and comparison across Linux, macOS, and Windows.
 3. Extend the implemented six-point live-daemon bridge/NFT apply and reorg crash campaign to
    multi-transaction and multi-block undo/redo, transfer/issuance cases, repeated failures, real
-   filesystem quota and injected write/fsync failures, and real in-checkpoint termination plus OS
+   filesystem quota and partial/repeated/WAL I/O failures, and real in-checkpoint termination plus OS
    flush/power-loss simulation. The current campaign already proves exact pre-commit rollback and
    post-commit recovery for tip, root, supply,
    program state, snapshot, undo rows, and SQLite integrity.
@@ -320,7 +320,11 @@ Current implementation and next task:
   `tests/network/test_onyx_db_full_process.py` fixes SQLite's page ceiling at the current database
   size, forces code 13 during a 1 MiB state replacement and after a small state write at the undo
   stage, then proves byte-identical exact rollback plus a committed positive control. Real filesystem
-  quotas and write/fsync injection remain separate gates.
+  quotas and broader partial/repeated/WAL I/O injection remain separate gates.
+  `tests/network/test_onyx_db_ioerr_process.py` uses a compile-time-only forwarding VFS to fail exactly
+  one main-journal/main-database write or sync, requires codes 778/1034 at the exact stage, and proves
+  old-state recovery plus a committed control. Ordinary artifacts exclude its VFS and strings;
+  partial, repeated, WAL, directory-sync, and device faults remain.
 
 ## 9. O2 — private native transfers and authorization
 
