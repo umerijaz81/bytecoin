@@ -182,9 +182,10 @@ peak RSS bytes, 338 output bytes, and 1,083 input bytes. Weekly CI retains the r
 failure log.
 
 This is structured deterministic mutation evidence, not coverage-guided fuzzing. A separate
-production-adapter campaign now mutates small SQLite database and rollback-journal images, but neither
-campaign proves arbitrary parser coverage, WAL/checkpoint safety, torn-write or power-loss behavior,
-or sanitizer cleanliness.
+production-adapter campaign now mutates small SQLite database and rollback-journal images, and a
+second campaign covers deterministic WAL and checkpoint-bundle combinations. None proves arbitrary
+parser coverage, real checkpoint interruption, torn-write or power-loss behavior, or sanitizer
+cleanliness.
 
 ## Production SQLite corruption boundary
 
@@ -199,8 +200,19 @@ and three semantic mismatches detected before acceptance.
 The campaign found and fixed an adapter gap: a corrupted schema name could remain readable through an
 already resolved root page even though independent schema inspection rejected it. `DBsqliteKV` now
 requires the exact canonical `kv_table` declaration on every open. This is useful corruption-boundary
-regression evidence, but it is deliberately not power-loss, WAL-mode, maximum-state, or release
-evidence. Detailed invocation and case definitions are in `docs/Onyx-Qualification-Network.md`.
+regression evidence, but it is deliberately not power-loss, maximum-state, or release evidence.
+Detailed invocation and case definitions are in `docs/Onyx-Qualification-Network.md`.
+
+### WAL and checkpoint-bundle extension
+
+The WAL campaign uses the production adapter to retain two committed frames, checkpoint a clone, and
+exercise eleven WAL mutations plus four pre/post-checkpoint main/WAL/shared-memory combinations. The
+local 15-case run produced five exact committed recoveries and ten semantic mismatches, all confirmed
+by an independent raw-row/integrity oracle. It also verifies that database deletion removes stale
+rollback-journal, WAL, and shared-memory sidecars. Schema `bytecoin-onyx-db-wal-campaign-v1` binds the
+revision, executable, WAL geometry, source/output digests, classifications, timeouts, and report size
+ceiling. This closes the bounded deterministic WAL-image gap; it does not close real power-loss,
+filesystem ordering, in-checkpoint process termination, disk-fault, or coverage-guided gates.
 
 ## Continuation tasks
 
@@ -213,7 +225,8 @@ For the next implementation milestone:
 3. Add coverage-guided and sanitizer-backed snapshot/database-image fuzz targets. Structured snapshot
    mutations now cover count encodings, ordering, duplicates, canonical fields, truncation, trailing
    bytes, and bounded splices. Deterministic small SQLite and rollback-journal mutations are covered;
-   WAL-mode checkpoint interruption, arbitrary torn writes, and coverage evidence remain.
+   Real in-checkpoint interruption, arbitrary torn writes, storage ordering, and coverage evidence
+   remain after the deterministic WAL/checkpoint-bundle campaign.
 4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
 5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,

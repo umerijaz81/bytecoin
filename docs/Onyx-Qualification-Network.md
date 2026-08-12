@@ -352,6 +352,43 @@ journals and deterministic file mutations. It does not emulate controller caches
 flush ordering, abrupt power loss, WAL-mode checkpoint interruption, disk-full behavior, arbitrary
 I/O faults, maximum-sized state, or coverage-guided fuzzing.
 
+## SQLite WAL and checkpoint-bundle qualification
+
+`tests/network/test_onyx_db_wal_process.py` opts a disposable `DBsqliteKV` fixture into WAL mode,
+commits `snapshot-before`, commits the exact state/undo pair in a second WAL transaction, and exits
+without a clean connection close so both commit frames remain on disk. It then checkpoints a cloned
+bundle through the production adapter. The runner parses and records the 32-byte WAL header, page and
+frame sizes, complete-frame count, trailing bytes, and commit-frame boundaries.
+
+Eleven WAL cases cover an intact control, header magic and checksum changes, a frame-checksum change,
+empty/header/first-commit/final-byte truncations, state and undo payload changes, and trailing garbage.
+Four checkpoint-bundle cases combine pre-checkpoint or post-checkpoint main images with present or
+missing WAL/shared-memory sidecars. Every case is opened by the native adapter's exact state oracle,
+then independently checked with Python SQLite, `PRAGMA integrity_check`, journal mode, and raw rows.
+Only the exact committed state may be classified `exact`; adapter failures and semantic mismatches are
+retained as detected corruption/recovery failures rather than accepted state.
+
+```text
+python tests/network/test_onyx_db_wal_process.py \
+  --tests build/codex-zk/artifacts/bin/Release/tests.exe \
+  --revision <full-commit> \
+  --report build/codex-zk/onyx-db-wal-process.json
+```
+
+The 2026-08-12 final Windows run passed all 15 bounded cases in 1.047 seconds. Five recovered the exact
+committed pair and ten were classified as semantic mismatches. The two-frame, 4,096-byte-page fixture
+had an 8,272-byte WAL with commit boundaries at bytes 4,152 and 8,272. A missing shared-memory file
+was rebuilt safely when the complete WAL remained. Corrupt/truncated WALs were generally discarded by
+SQLite, exposing the older main image; the higher-level exact state oracle detected every such case.
+This is why SQLite integrity `ok` alone is not evidence that the latest consensus state survived.
+
+The report schema is `bytecoin-onyx-db-wal-campaign-v1`, with an 8 MiB report ceiling, 1 MiB child
+output ceiling, per-child timeout, executable/revision binding, and all image digests/sizes. Its scope
+is `disposable-sqlite-wal-checkpoint-mix-local-or-ci-not-power-loss-release-evidence`. It models
+deterministic WAL corruption and checkpoint file-bundle combinations, not a process killed inside
+SQLite's checkpoint routine, real storage write reordering, controller-cache loss, torn sectors,
+disk-full/I/O injection, or physical power interruption.
+
 ## Full-daemon apply and reorganization crash qualification
 
 Configure a dedicated, non-distributable build with `ONYX_CRASH_TESTS=ON`. CMake rejects that option

@@ -284,15 +284,16 @@ Still required:
    immutable-revision runs, and comparison across Linux, macOS, and Windows.
 3. Extend the implemented six-point live-daemon bridge/NFT apply and reorg crash campaign to
    multi-transaction and multi-block undo/redo, transfer/issuance cases, repeated failures, disk-full
-   behavior, and explicit WAL/journal checkpoint plus OS flush/power-loss simulation. The current
+   behavior, and real in-checkpoint termination plus OS flush/power-loss simulation. The current
    campaign already proves exact pre-commit rollback and post-commit recovery for tip, root, supply,
    program state, snapshot, undo rows, and SQLite integrity.
 4. Coverage-guided/sanitizer snapshot fuzzing plus corrupt WAL/database image, combined-maxima, and
    partial-write recovery campaigns. Maximum-plus-one counts fail before allocation, exact
    one-million-entry valid snapshots are measured, and the retained structured campaign covers four
-   fixture shapes, six targeted decoder failures, and 80,000 seeded mutations. A separate 15-case
+   fixture shapes, six targeted decoder failures, and 80,000 seeded mutations. Separate 15-case
    production-adapter campaign now covers deterministic small main-database and rollback-journal
-   corruption, but not WAL mode, power-loss ordering, arbitrary I/O faults, or parser coverage.
+   corruption, and another 15-case campaign covers WAL corruption and checkpoint-bundle mixes. Real
+   checkpoint interruption, power-loss ordering, arbitrary I/O faults, and parser coverage remain.
 5. Repeat exact-limit measurements through production SQLite reopen on named release hardware and
    qualify a deliberately provisioned combined-maxima snapshot outside ordinary CI.
 
@@ -312,6 +313,9 @@ Current implementation and next task:
   `tests/network/test_onyx_db_corruption_process.py` retains exact/fail-closed classification for
   eight database and seven rollback-journal mutations. Its first run exposed a schema-corruption
   fail-open gap; the adapter now validates the exact canonical `kv_table` declaration on every open.
+  `tests/network/test_onyx_db_wal_process.py` retains two real committed WAL frames, checkpoints a
+  clone, and qualifies eleven WAL mutations plus four pre/post-checkpoint sidecar mixes. It proves
+  exact-state detection across these bounded bundles, not physical power-loss durability.
 
 ## 9. O2 — private native transfers and authorization
 

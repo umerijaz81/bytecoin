@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `62c1f11` (`Fail closed on corrupt Onyx SQLite images`)
+- Committed revision reviewed: `b774a78` (`Qualify Onyx SQLite WAL recovery`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -346,6 +346,19 @@ Primary implementation:
   inspection reject the schema while the embedded adapter still returned the expected rows through
   the old root page. `DBsqliteKV` now queries `sqlite_master` and requires the exact canonical table
   declaration on every open. The fixed campaign, original crash campaign, and native DB suite pass.
+- `tests/network/test_onyx_db_wal_process.py` uses hidden native modes to commit two real WAL frames,
+  retain them across abrupt process exits, checkpoint a cloned bundle, and execute eleven WAL
+  mutations plus four pre/post-checkpoint main/WAL/shared-memory combinations. Its report records WAL
+  geometry and commit boundaries, every source/output size and SHA-256 digest, child time/output
+  bounds, executable/revision identity, independent SQLite integrity/journal mode/raw rows, and exact
+  native classifications.
+- The final Windows WAL run passed all 15 bounded cases in 1.047 seconds: five exact recoveries and
+  ten semantic mismatches, with no malformed bundle accepted as the committed state. The fixture used
+  two 4,120-byte frames around 4,096-byte pages, with commit boundaries at 4,152 and 8,272 bytes.
+  SQLite commonly discarded a corrupt WAL and returned the older main image with integrity `ok`; the
+  exact state/undo oracle rejected every such result. Missing shared memory was safely reconstructed
+  when the full WAL remained. `delete_db` now removes `.sqlite-journal`, `.sqlite-wal`, and
+  `.sqlite-shm` so a recreated database cannot inherit stale sidecars.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after
@@ -380,8 +393,9 @@ Primary implementation:
    platforms.
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
-   I/O failures, and explicit SQLite WAL checkpoint and OS flush/power-loss simulation. Small
-   rollback-journal mutation is now covered, but it is not a substitute for those storage boundaries.
+   I/O failures, and real in-checkpoint process termination plus OS flush/power-loss simulation.
+   Bounded rollback-journal/WAL mutation and checkpoint-bundle mixing are now covered, but they are
+   not substitutes for those storage boundaries.
 3. Add sustained coverage-guided/sanitizer snapshot and database-image fuzzing, arbitrary partial
    writes, and combined boundary-sized state campaigns. The structured in-memory and deterministic
    SQLite mutation campaigns are retained regression evidence, not coverage evidence. Extend

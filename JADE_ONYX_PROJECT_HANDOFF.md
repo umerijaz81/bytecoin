@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-11
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `62c1f11` (`Fail closed on corrupt Onyx SQLite images`)
+Last implementation revision reviewed: `b774a78` (`Qualify Onyx SQLite WAL recovery`)
 
 ## 1. Purpose and status vocabulary
 
@@ -190,6 +190,10 @@ Implemented:
   readable semantic mismatch, then independently checks SQLite integrity/raw rows. The first run
   found a corrupt-schema fail-open gap; every adapter open now requires the exact canonical table
   declaration.
+- Fifteen-case WAL/checkpoint-bundle campaign retaining two production-adapter commit frames, eleven
+  WAL mutations, and four pre/post-checkpoint main/WAL/shared-memory combinations. Five local cases
+  recovered the exact committed state and ten exposed older/missing state that the semantic oracle
+  rejected. Database deletion now removes stale journal, WAL, and shared-memory sidecars.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
   Reopen checks bind exact tip/root/supply/program-state and raw state/undo rows. This campaign found
   and fixed SQLite empty-BLOB reads being misclassified as missing keys, which had prevented undo of
@@ -210,12 +214,12 @@ Still required:
   broader/longer extensions of the retained deterministic campaign.
 - Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
   transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and
-  explicit WAL/journal checkpoint plus OS flush/power-loss boundaries. The current bounded campaign
+  real in-checkpoint termination plus OS flush/power-loss boundaries. The current bounded campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
 - Combined-maxima and production-SQLite named-hardware qualification, coverage-guided/sanitizer
-  snapshot/database fuzzing, and WAL-mode checkpoint, arbitrary partial-write, disk-fault, and real
-  power-loss recovery. Structured snapshot mutation, separate exact collection maxima, and bounded
-  small rollback-journal/database mutations are now measured.
+  snapshot/database fuzzing, and real checkpoint interruption, arbitrary partial-write, disk-fault,
+  and power-loss recovery. Structured snapshot mutation, separate exact collection maxima, bounded
+  small rollback-journal/database mutations, and deterministic WAL bundle mixes are now measured.
 
 ### O2 — Private transfers and authorization
 
