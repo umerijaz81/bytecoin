@@ -404,6 +404,39 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 		db.db_dbi.exec("PRAGMA wal_checkpoint(TRUNCATE)", "SQLite WAL checkpoint failed");
 		return 0;
 	}
+	if (mode == "full-state-write" || mode == "full-undo-write") {
+		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+		sqlite::Stmt page_count;
+		page_count.prepare(db.db_dbi, "PRAGMA page_count");
+		if (!page_count.step())
+			throw sqlite::Error("SQLite did not return its page count");
+		const size_t page_count_size = page_count.column_bytes(0);
+		const auto *page_count_data  = page_count.column_blob(0);
+		const std::string pages(page_count_size == 0 ? "" : reinterpret_cast<const char *>(page_count_data),
+		    page_count_size);
+		if (pages.empty() || page_count.step())
+			throw sqlite::Error("SQLite returned an invalid page count");
+		const std::string limit = "PRAGMA max_page_count=" + pages;
+		db.db_dbi.exec(limit.c_str(), "setting SQLite disk-full page limit failed");
+		const std::string oversized(1024 * 1024, 'F');
+		const char *stage = mode == "full-state-write" ? "state" : "undo";
+		try {
+			if (mode == "full-state-write") {
+				db.put(state_key, oversized, false);
+			} else {
+				db.put(state_key, after, false);
+				db.put(undo_key, oversized, true);
+			}
+		} catch (const std::exception &) {
+			const int code = sqlite3_extended_errcode(db.db_dbi.handle);
+			std::cerr << "ONYX_DB_FULL stage=" << stage << " sqlite_code=" << code << std::endl;
+			if ((code & 0xff) == SQLITE_FULL)
+				std::_Exit(mode == "full-state-write" ? 92 : 93);
+			return 94;
+		}
+		std::cerr << "ONYX_DB_FULL stage=" << stage << " sqlite_code=0 detail=no-failure" << std::endl;
+		return 95;
+	}
 	if (mode == "crash-after-state-write" || mode == "crash-before-commit" ||
 	    mode == "crash-after-commit") {
 		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
