@@ -357,3 +357,8 @@ The local schema is `bytecoin-onyx-daemon-crash-v1` and the scope is
 `local-full-daemon-crash-not-release-evidence`. It does not yet simulate disk-full errors, corrupted
 WAL/journals, OS power-loss/flush behavior, checkpoint interruption, maximum-sized states, or long
 repeated campaigns on independent platforms.
+
+The complementary independent-ledger campaign is documented in
+`docs/Onyx-State-Model-Qualification.md`. It retains revision-bound results for eight deterministic
+2,000-iteration seeds and checks snapshot maximum-plus-one collection counts before allocation; it
+does not replace these full-daemon persistence tests.

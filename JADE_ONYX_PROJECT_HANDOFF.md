@@ -152,8 +152,8 @@ Still required:
 
 ### O1 — Canonical Onyx state
 
-Status: **Repository implementation plus bounded independent-model, SQLite, and proof-bearing daemon
-crash runners complete; independent consensus audit and long/multi-platform campaigns remain.**
+Status: **Repository implementation plus retained independent-model, SQLite, and proof-bearing daemon
+crash runners complete; independent consensus audit and multi-platform/resource campaigns remain.**
 
 Implemented:
 
@@ -170,6 +170,11 @@ Implemented:
 - Independent deterministic reference ledger with generated bridge, transfer, deployment, issuance,
   contextual-program, rejection, undo, fork, and reopen sequences; exact comparisons and replayable
   seed/prefix diagnostics run after every step.
+- Revision-bound campaign wrapper with eight published seeds, 2,000 requested iterations per seed,
+  atomic JSON progress, exact input/output identities, per-operation coverage, failure logs, and
+  weekly 90-day artifact retention. The first full local run passed 16,000 requested iterations and
+  11,333 trace operations.
+- Snapshot maximum-plus-one anchor, nullifier, and program-state count rejection before allocation.
 - Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
   state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
@@ -188,12 +193,13 @@ Primary locations:
 Still required:
 
 - Independent consensus-state audit.
-- Long, multi-platform, revision-bound extensions of the bounded deterministic campaigns.
+- Multi-platform immutable-revision comparisons, resource ceilings, failing-prefix minimization, and
+  broader/longer extensions of the retained deterministic campaign.
 - Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
   transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and
   explicit WAL/journal checkpoint plus OS flush/power-loss boundaries. The current bounded campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
-- Maximum-size snapshot/database corruption fuzzing and state resource measurements.
+- Exact-maximum snapshot resource measurements and snapshot/database corruption fuzzing.
 
 ### O2 — Private transfers and authorization
 

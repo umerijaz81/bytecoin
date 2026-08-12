@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `6f3bc08` (`Qualify Onyx daemon crash recovery`)
+- Committed revision reviewed: `3eb9c42` (`Retain Onyx state model campaigns`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -291,11 +291,20 @@ Primary implementation:
 - Rejected operations must agree between the production and reference ledgers and leave the encoded
   production state byte-for-byte unchanged. A failure prints the seed, failing step, and complete
   shortest generated prefix needed to replay that divergence.
-- The default campaign runs two fixed seeds for at least 74 steps. Replay or extend it with
+- The ordinary unit campaign runs two fixed seeds for at least 74 steps. Replay or extend it with
   `ONYX_STATE_MODEL_SEED=<hex>` and `ONYX_STATE_MODEL_STEPS=<count>` before invoking the focused Rust
   test.
-- Snapshot tests reject every truncated prefix and a supply-field corruption. These are bounded
-  regression tests, not yet a maximum-size coverage-guided corruption campaign.
+- `tools/onyx/state_model_campaign.py` runs the model as a locked, offline release test, validates a
+  machine-readable result for every seed, writes its JSON atomically after each seed, and preserves
+  full digest-bound output on failure. The scheduled qualification workflow retains the report for
+  the exact Git revision for 90 days.
+- The default retained campaign uses eight published 64-bit seeds and 2,000 requested iterations per
+  seed. The 2026-08-12 local Windows run passed all 16,000 iterations with 11,333 recorded operations
+  and nonzero bridge, transfer, deployment, issuance, contextual, rejection, undo, fork, and reopen
+  coverage for every seed. See `docs/Onyx-State-Model-Qualification.md` for schema and replay details.
+- Snapshot tests reject every truncated prefix, a supply-field corruption, and anchor/nullifier/
+  program-state counts at configured maximum plus one before allocation. These are bounded
+  regressions, not yet exact-maximum resource or coverage-guided corruption campaigns.
 - `tests/network/test_onyx_db_crash_process.py` repeatedly terminates the native C++ test process at
   three real SQLite transaction boundaries using the production DB adapter and Onyx state/undo key
   shapes: after the state write, after the complete state/undo pair but before commit, and directly
@@ -337,9 +346,9 @@ Primary implementation:
 
 ### 9.3 Still required
 
-1. Extend the deterministic runner into long revision-bound campaigns with many published seeds,
-   higher operation counts, resource ceilings, retained reports, and automated minimization beyond
-   the already printed divergent prefix.
+1. Extend the retained eight-seed deterministic campaign with peak-RSS/CPU ceilings, automated
+   failing-prefix minimization, more published seeds/operation counts, and cross-platform root
+   comparison.
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
    I/O failures, and explicit SQLite WAL/journal checkpoint and OS flush/power-loss simulation.
