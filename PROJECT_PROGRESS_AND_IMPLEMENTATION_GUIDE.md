@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-12**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `6f3bc08` (`Qualify Onyx daemon crash recovery`)
+Implementation revision documented: `933eb94` (`Qualify graceful Onyx verifier shutdown`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
