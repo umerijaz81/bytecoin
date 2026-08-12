@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-11
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `b774a78` (`Qualify Onyx SQLite WAL recovery`)
+Last implementation revision reviewed: `647ca47` (`Qualify atomic Onyx SQLite disk-full recovery`)
 
 ## 1. Purpose and status vocabulary
 
@@ -194,6 +194,9 @@ Implemented:
   WAL mutations, and four pre/post-checkpoint main/WAL/shared-memory combinations. Five local cases
   recovered the exact committed state and ten exposed older/missing state that the semantic oracle
   rejected. Database deletion now removes stale journal, WAL, and shared-memory sidecars.
+- Deterministic SQLite page-exhaustion campaign forcing primary code 13 during a 1 MiB state write and
+  during an undo write after the new state was staged. Both failed transactions reopen at the exact,
+  byte-identical prior state; a committed positive control proves the harness can observe progress.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
   Reopen checks bind exact tip/root/supply/program-state and raw state/undo rows. This campaign found
   and fixed SQLite empty-BLOB reads being misclassified as missing keys, which had prevented undo of
@@ -213,8 +216,9 @@ Still required:
 - Multi-platform immutable-revision comparisons, named-host resource baselines/tighter ceilings, and
   broader/longer extensions of the retained deterministic campaign.
 - Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
-  transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and
-  real in-checkpoint termination plus OS flush/power-loss boundaries. The current bounded campaign
+  transitions, transfer/issuance/deployment variants, repeated failures, real filesystem quotas,
+  injected write/fsync errors, and real in-checkpoint termination plus OS flush/power-loss boundaries.
+  Bounded adapter-level SQLite page exhaustion is covered; the current full-daemon campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
 - Combined-maxima and production-SQLite named-hardware qualification, coverage-guided/sanitizer
   snapshot/database fuzzing, and real checkpoint interruption, arbitrary partial-write, disk-fault,

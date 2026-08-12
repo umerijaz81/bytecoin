@@ -71,4 +71,6 @@ configuration runs 20,000 cases per seed with CPU/RSS/output/time ceilings.
 This campaign is deterministic regression evidence and gives exact replay identities. It complements
 the sanitizer/libFuzzer harness above; it does not provide edge coverage. A separate deterministic
 process campaigns mutate small SQLite/rollback-journal images and deterministic WAL/checkpoint file
-bundles, but do not fuzz a live checkpoint routine or replace sustained coverage-guided campaigns.
+bundles. A separate bounded runner forces `SQLITE_FULL` during state and undo writes. These do not
+fuzz a live checkpoint routine, inject arbitrary I/O errors, or replace sustained coverage-guided
+campaigns.

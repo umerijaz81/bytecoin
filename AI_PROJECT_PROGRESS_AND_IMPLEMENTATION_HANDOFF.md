@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `b774a78` (`Qualify Onyx SQLite WAL recovery`)
+- Committed revision reviewed: `647ca47` (`Qualify atomic Onyx SQLite disk-full recovery`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -359,6 +359,17 @@ Primary implementation:
   exact state/undo oracle rejected every such result. Missing shared memory was safely reconstructed
   when the full WAL remained. `delete_db` now removes `.sqlite-journal`, `.sqlite-wal`, and
   `.sqlite-shm` so a recreated database cannot inherit stale sidecars.
+- `tests/network/test_onyx_db_full_process.py` sets SQLite's connection-local maximum page count to the
+  fixture's current two pages, then attempts a fixed 1 MiB state value either directly or at the undo
+  stage after staging the small new state. Native children must return primary code 13 at the named
+  stage. Fresh production-adapter and independent SQLite probes require the exact old state, no undo,
+  integrity `ok`, and unchanged raw database identity; a committed control must recover the new pair.
+- The 2026-08-12 final Windows page-exhaustion run passed both fault cases and the positive control in 0.203
+  seconds. Both failed images remained byte-identical at 8,192 bytes. Report schema
+  `bytecoin-onyx-db-full-campaign-v1` binds revision/executable identity, the 1 MiB attempt, error code,
+  time/output/report limits, raw rows, page counts, and image digests. It is deterministic SQLite
+  page-exhaustion evidence, not physical host-disk, quota, journal-write, fsync, or device-failure
+  evidence.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after
@@ -392,10 +403,11 @@ Primary implementation:
    ceilings where supported, add more published seeds/operation counts, and compare roots across
    platforms.
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
-   transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
-   I/O failures, and real in-checkpoint process termination plus OS flush/power-loss simulation.
-   Bounded rollback-journal/WAL mutation and checkpoint-bundle mixing are now covered, but they are
-   not substitutes for those storage boundaries.
+   transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, real
+   filesystem quota exhaustion and injected journal-write/fsync failures, and real in-checkpoint
+   process termination plus OS flush/power-loss simulation. Bounded SQLite page exhaustion,
+   rollback-journal/WAL mutation, and checkpoint-bundle mixing are covered, but they are not
+   substitutes for those storage boundaries.
 3. Add sustained coverage-guided/sanitizer snapshot and database-image fuzzing, arbitrary partial
    writes, and combined boundary-sized state campaigns. The structured in-memory and deterministic
    SQLite mutation campaigns are retained regression evidence, not coverage evidence. Extend

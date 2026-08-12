@@ -389,6 +389,36 @@ deterministic WAL corruption and checkpoint file-bundle combinations, not a proc
 SQLite's checkpoint routine, real storage write reordering, controller-cache loss, torn sectors,
 disk-full/I/O injection, or physical power interruption.
 
+## Deterministic SQLite disk-full qualification
+
+`tests/network/test_onyx_db_full_process.py` uses SQLite's connection-local `max_page_count` at the
+fixture's current two-page size. This produces a real `SQLITE_FULL` result without filling the CI
+host's disk. Two independent disposable cases attempt a 1 MiB value: one replaces the Onyx state row;
+the other first writes the small new state and then attempts the oversized undo row. The native child
+must report SQLite primary code 13 at the intended `state` or `undo` stage and exit immediately.
+
+After each failure, a fresh production-adapter process must read exactly `snapshot-before` with no undo
+row. An independent read-only SQLite connection must report integrity `ok`, the exact same raw rows,
+and unchanged page count. The retained report also records pre/post database sizes and SHA-256
+digests; both failed cases were byte-identical before and after recovery. A positive control commits
+and recovers the exact new state/undo pair so a uniformly non-writing harness cannot pass.
+
+```text
+python tests/network/test_onyx_db_full_process.py \
+  --tests build/codex-zk/artifacts/bin/Release/tests.exe \
+  --revision <full-commit> \
+  --report build/codex-zk/onyx-db-full-process.json
+```
+
+The 2026-08-12 final Windows run passed all three cases in 0.203 seconds. Both fault cases returned code 13,
+retained the exact 8,192-byte pre-transaction image, and reopened with one state row and no undo. The
+control recovered the committed pair. Schema `bytecoin-onyx-db-full-campaign-v1` binds the revision,
+executable, fixed 1 MiB attempted value, expected error code, process/report bounds, raw-row evidence,
+and image identities. Scope
+`sqlite-max-page-count-local-or-ci-not-host-disk-exhaustion-release-evidence` means this proves bounded
+SQLite page-exhaustion atomicity, not physical filesystem exhaustion, quota behavior, journal-write or
+fsync I/O errors, device removal, storage latency, or power-loss durability.
+
 ## Full-daemon apply and reorganization crash qualification
 
 Configure a dedicated, non-distributable build with `ONYX_CRASH_TESTS=ON`. CMake rejects that option

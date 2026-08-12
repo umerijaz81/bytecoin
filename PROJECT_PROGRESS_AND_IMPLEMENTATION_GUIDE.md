@@ -283,9 +283,10 @@ Still required:
    and runs weekly. It still needs named-host baselines, tighter platform-supported ceilings, more
    immutable-revision runs, and comparison across Linux, macOS, and Windows.
 3. Extend the implemented six-point live-daemon bridge/NFT apply and reorg crash campaign to
-   multi-transaction and multi-block undo/redo, transfer/issuance cases, repeated failures, disk-full
-   behavior, and real in-checkpoint termination plus OS flush/power-loss simulation. The current
-   campaign already proves exact pre-commit rollback and post-commit recovery for tip, root, supply,
+   multi-transaction and multi-block undo/redo, transfer/issuance cases, repeated failures, real
+   filesystem quota and injected write/fsync failures, and real in-checkpoint termination plus OS
+   flush/power-loss simulation. The current campaign already proves exact pre-commit rollback and
+   post-commit recovery for tip, root, supply,
    program state, snapshot, undo rows, and SQLite integrity.
 4. Coverage-guided/sanitizer snapshot fuzzing plus corrupt WAL/database image, combined-maxima, and
    partial-write recovery campaigns. Maximum-plus-one counts fail before allocation, exact
@@ -316,6 +317,10 @@ Current implementation and next task:
   `tests/network/test_onyx_db_wal_process.py` retains two real committed WAL frames, checkpoints a
   clone, and qualifies eleven WAL mutations plus four pre/post-checkpoint sidecar mixes. It proves
   exact-state detection across these bounded bundles, not physical power-loss durability.
+  `tests/network/test_onyx_db_full_process.py` fixes SQLite's page ceiling at the current database
+  size, forces code 13 during a 1 MiB state replacement and after a small state write at the undo
+  stage, then proves byte-identical exact rollback plus a committed positive control. Real filesystem
+  quotas and write/fsync injection remain separate gates.
 
 ## 9. O2 — private native transfers and authorization
 

@@ -214,6 +214,16 @@ revision, executable, WAL geometry, source/output digests, classifications, time
 ceiling. This closes the bounded deterministic WAL-image gap; it does not close real power-loss,
 filesystem ordering, in-checkpoint process termination, disk-fault, or coverage-guided gates.
 
+### SQLite page-exhaustion extension
+
+The disk-full campaign fixes `max_page_count` at the current two-page database size and attempts a
+1 MiB state value either directly or after a small state write at the undo stage. Both native paths
+must return `SQLITE_FULL` (primary code 13), and fresh production-adapter plus independent SQLite
+oracles must recover the exact pre-transaction rows. The local run passed both fault cases and a
+committed positive control in 0.203 seconds; failed database images were byte-identical before and
+after. This safely qualifies SQLite page exhaustion in CI without consuming the host disk. It does
+not inject journal-write/fsync errors, enforce real filesystem quotas, or emulate device removal.
+
 ## Continuation tasks
 
 For the next implementation milestone:
@@ -230,7 +240,9 @@ For the next implementation milestone:
 4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
 5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,
-   deployment rollback, repeated failures, disk-full/I/O faults, and OS flush/power-loss boundaries.
+   deployment rollback, repeated failures, real filesystem quota exhaustion, injected write/fsync
+   I/O faults, and OS flush/power-loss boundaries. Bounded SQLite page exhaustion is now covered at
+   the production adapter boundary.
 6. Submit the reference-model assumptions and production state transition to an independent
    consensus and cryptographic review.
 
