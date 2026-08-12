@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 
 try:
     from .test_onyx_qualification_process import (
@@ -21,6 +22,7 @@ try:
         create_wallet,
         mine_blocks,
         rpc_call,
+        rpc_response,
         transaction_known,
         unused_port,
         wait_until,
@@ -35,6 +37,7 @@ except ImportError:  # Direct execution places this script's directory on sys.pa
         create_wallet,
         mine_blocks,
         rpc_call,
+        rpc_response,
         transaction_known,
         unused_port,
         wait_until,
@@ -258,6 +261,199 @@ def main():
                 write_transaction(path, transaction)
                 transaction_paths.append(path)
 
+            shutdown_p2p_port, shutdown_rpc_port = unused_port(), unused_port()
+            shutdown_auth = "shutdown:qualification"
+            shutdown_data = root / "onyx-shutdown-node-data"
+            shutdown_node = Node(
+                bytecoind,
+                root,
+                "onyx-shutdown-node",
+                "onyx",
+                shutdown_p2p_port,
+                shutdown_rpc_port,
+                exclusive_port=p2p_port,
+                data=shutdown_data,
+                extra_args=[
+                    f"--bytecoind-authorization-private={shutdown_auth}"
+                ],
+            )
+            nodes.append(shutdown_node)
+            wait_until(
+                "shutdown node synchronization",
+                lambda: shutdown_node.status()["top_block_height"] >= funded_height
+                and connected(
+                    rpc_call(
+                        shutdown_rpc_port,
+                        "get_statistics",
+                        authorization=shutdown_auth,
+                    )
+                ),
+                nodes + [source_wallet, receiver_wallet],
+                timeout=120,
+            )
+            unauthorized_shutdown_rejected = False
+            unauthorized_shutdown_response = None
+            try:
+                unauthorized_shutdown_response = rpc_response(
+                    shutdown_rpc_port,
+                    "stop_daemon",
+                    {"confirm": True},
+                )
+                # JSON-RPC handler exceptions are returned as a JSON-RPC error with HTTP 200.
+                # The HTTP layer itself can also reject authorization before dispatch.
+                unauthorized_shutdown_rejected = (
+                    "error" in unauthorized_shutdown_response
+                )
+            except urllib.error.HTTPError as error:
+                unauthorized_shutdown_rejected = error.code in (401, 403)
+            if not unauthorized_shutdown_rejected or shutdown_node.process.poll() is not None:
+                raise RuntimeError("stop_daemon accepted an unauthenticated request")
+            refused_shutdown = rpc_response(
+                shutdown_rpc_port,
+                "stop_daemon",
+                {"confirm": False},
+                authorization=shutdown_auth,
+            )
+            if "error" not in refused_shutdown or shutdown_node.process.poll() is not None:
+                raise RuntimeError(
+                    "stop_daemon did not require explicit confirmation: "
+                    f"{refused_shutdown!r}"
+                )
+
+            shutdown_stats_before = rpc_call(
+                shutdown_rpc_port,
+                "get_statistics",
+                authorization=shutdown_auth,
+            )
+            shutdown_body = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "shutdown-valid-proof",
+                    "method": "send_transaction",
+                    "params": {
+                        "binary_transaction": transactions[0]["binary_transaction"]
+                    },
+                },
+                separators=(",", ":"),
+            ).encode("ascii")
+            shutdown_request = (
+                f"POST /json_rpc HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{shutdown_rpc_port}\r\n"
+                "Content-Type: application/json-rpc\r\n"
+                f"Content-Length: {len(shutdown_body)}\r\n"
+                "Connection: keep-alive\r\n\r\n"
+            ).encode("ascii") + shutdown_body
+            shutdown_socket = socket.create_connection(
+                ("127.0.0.1", shutdown_rpc_port), timeout=10
+            )
+            shutdown_socket.sendall(shutdown_request)
+            wait_until(
+                "shutdown node active verifier",
+                lambda: rpc_call(
+                    shutdown_rpc_port,
+                    "get_statistics",
+                    authorization=shutdown_auth,
+                ).get("onyx_verifier_acquired", 0)
+                == shutdown_stats_before.get("onyx_verifier_acquired", 0) + 1
+                and rpc_call(
+                    shutdown_rpc_port,
+                    "get_statistics",
+                    authorization=shutdown_auth,
+                ).get("onyx_verifier_active", 0)
+                == 1,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=30,
+            )
+            shutdown_started = time.monotonic()
+            stop_result = rpc_call(
+                shutdown_rpc_port,
+                "stop_daemon",
+                {"confirm": True},
+                authorization=shutdown_auth,
+            )
+            if stop_result.get("stopping") is not True:
+                raise RuntimeError(f"stop_daemon did not acknowledge shutdown: {stop_result!r}")
+            try:
+                shutdown_node.process.wait(timeout=args.rpc_timeout)
+            finally:
+                try:
+                    shutdown_socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                shutdown_socket.close()
+            shutdown_elapsed = time.monotonic() - shutdown_started
+            shutdown_return_code = shutdown_node.process.returncode
+            if shutdown_return_code != 0:
+                raise RuntimeError(
+                    f"shutdown node exited with {shutdown_return_code}: "
+                    f"{shutdown_node.read_log()}"
+                )
+            shutdown_node.stop()
+            nodes.remove(shutdown_node)
+
+            reopened_p2p_port, reopened_rpc_port = unused_port(), unused_port()
+            reopened_node = Node(
+                bytecoind,
+                root,
+                "onyx-shutdown-reopened",
+                "onyx",
+                reopened_p2p_port,
+                reopened_rpc_port,
+                exclusive_port=p2p_port,
+                data=shutdown_data,
+                extra_args=[
+                    f"--bytecoind-authorization-private={shutdown_auth}"
+                ],
+            )
+            nodes.append(reopened_node)
+            wait_until(
+                "shutdown database reopen",
+                lambda: reopened_node.status()["top_block_height"] >= funded_height,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=120,
+            )
+            reopened_stats = rpc_call(
+                reopened_rpc_port,
+                "get_statistics",
+                authorization=shutdown_auth,
+            )
+            graceful_shutdown = {
+                "transaction_hash": transactions[0]["transaction_hash"],
+                "confirm_false_rejected": "error" in refused_shutdown,
+                "unauthenticated_rejected": unauthorized_shutdown_rejected,
+                "unauthenticated_response": unauthorized_shutdown_response,
+                "stop_acknowledged": stop_result.get("stopping") is True,
+                "shutdown_elapsed_seconds": round(shutdown_elapsed, 6),
+                "return_code": shutdown_return_code,
+                "reopened_height": reopened_node.status()["top_block_height"],
+                "reopened_pool_count": reopened_stats.get("transaction_pool_count", 0),
+                "reopened_transaction_known": transaction_known(
+                    reopened_node, transactions[0]["transaction_hash"]
+                ),
+            }
+            if (
+                graceful_shutdown["reopened_height"] != funded_height
+                or graceful_shutdown["reopened_pool_count"] != 0
+                or graceful_shutdown["reopened_transaction_known"]
+            ):
+                raise RuntimeError(
+                    "graceful verifier shutdown did not reopen at the exact clean state: "
+                    f"{graceful_shutdown!r}"
+                )
+            reopened_stop = rpc_call(
+                reopened_rpc_port,
+                "stop_daemon",
+                {"confirm": True},
+                authorization=shutdown_auth,
+            )
+            if reopened_stop.get("stopping") is not True:
+                raise RuntimeError("reopened node did not acknowledge graceful stop")
+            reopened_node.process.wait(timeout=30)
+            if reopened_node.process.returncode != 0:
+                raise RuntimeError("reopened node did not exit cleanly")
+            reopened_node.stop()
+            nodes.remove(reopened_node)
+
             abandoned_before = node.statistics()
             abandoned_body = json.dumps(
                 {
@@ -359,6 +555,8 @@ def main():
                 str(transaction_paths[1]),
                 "--parallel",
                 "2",
+                "--sample-interval",
+                "0.05",
                 "--rpc-timeout",
                 str(args.rpc_timeout),
                 "--revision",
@@ -571,6 +769,15 @@ def main():
             )
             checks = {
                 "raw_load_report_passed": bool(load_report.get("passed")),
+                "graceful_shutdown_during_verification": (
+                    graceful_shutdown["confirm_false_rejected"]
+                    and graceful_shutdown["unauthenticated_rejected"]
+                    and graceful_shutdown["stop_acknowledged"]
+                    and graceful_shutdown["return_code"] == 0
+                    and graceful_shutdown["reopened_height"] == funded_height
+                    and graceful_shutdown["reopened_pool_count"] == 0
+                    and not graceful_shutdown["reopened_transaction_known"]
+                ),
                 "abandoned_rpc_released_without_admission": (
                     abandoned_rpc_cleanup["verifier_acquired_after"]
                     == abandoned_rpc_cleanup["verifier_acquired_before"] + 1
@@ -631,6 +838,7 @@ def main():
                     "checks": load_report.get("checks"),
                 },
                 "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
+                "graceful_shutdown": graceful_shutdown,
                 "transactions": [
                     {
                         "transaction_hash": transaction["transaction_hash"],

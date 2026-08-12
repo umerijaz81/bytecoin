@@ -37,7 +37,8 @@ Node::Node(logging::ILogger &log, const Config &config, BlockChainState &block_c
     , m_multicast_timer(std::bind(&Node::send_multicast, this))
     , m_start_time(m_p2p.get_local_time())
     , m_commit_timer(std::bind(&Node::db_commit, this))
-    , m_dandelion_embargo_timer(std::bind(&Node::on_dandelion_embargo, this))
+	, m_dandelion_embargo_timer(std::bind(&Node::on_dandelion_embargo, this))
+	, m_shutdown_timer([] { platform::EventLoop::cancel_current(); })
 	, log_request_timestamp(std::chrono::steady_clock::now())
 	, log_response_timestamp(std::chrono::steady_clock::now())
 	, m_pow_checker(block_chain.get_currency(), platform::EventLoop::current())
@@ -353,6 +354,7 @@ std::unordered_map<std::string, Node::JSONRPCHandlerFunction> Node::m_jsonrpc_ha
     {api::cnd::GetOnyxStandardProgramState::method(),
         json_rpc::make_member_method(&Node::on_get_onyx_standard_program_state)},
     {api::cnd::GetStatistics::method(), json_rpc::make_member_method(&Node::on_get_statistics)},
+    {api::cnd::StopDaemon::method(), json_rpc::make_member_method(&Node::on_stop_daemon)},
     {api::cnd::GetArchive::method(), json_rpc::make_member_method(&Node::on_get_archive)},
     {api::cnd::SendTransaction::method(), json_rpc::make_member_method(&Node::on_send_transaction)},
     {api::cnd::CheckSendproof::method(), json_rpc::make_member_method(&Node::on_check_sendproof)},
@@ -1058,6 +1060,24 @@ bool Node::on_send_transaction(http::Client *who, http::RequestBody &&raw_reques
 		std::throw_with_nested(api::cnd::SendTransaction::Error(
 		    api::cnd::SendTransaction::INVALID_TRANSACTION_BINARY_FORMAT, common::what(ex), 0));
 	}
+	return true;
+}
+
+bool Node::on_stop_daemon(http::Client *, http::RequestBody &&http_request, json_rpc::Request &&,
+    api::cnd::StopDaemon::Request &&req, api::cnd::StopDaemon::Response &res) {
+	// Unlike read-only private methods, shutdown is disabled when no explicit private credential was
+	// configured. Never inherit the legacy "empty credential allows local private RPC" convention for
+	// a state-changing process-control operation.
+	if (m_config.bytecoind_authorization_private.empty() ||
+	    !m_config.good_bytecoind_auth_private(http_request.r.basic_authorization))
+		throw http::ErrorAuthorization("authorization-private");
+	if (!req.confirm)
+		throw std::runtime_error("stop_daemon requires confirm=true");
+	res.stopping = true;
+	// Allow the success response to reach the authenticated operator before stopping the event loop.
+	// Normal stack unwinding then destroys Node, whose bounded verifier worker joins before its
+	// pending request maps and captured proof inputs are destroyed.
+	m_shutdown_timer.once(0.1f);
 	return true;
 }
 

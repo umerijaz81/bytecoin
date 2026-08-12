@@ -713,6 +713,10 @@ void ser_members(cn::api::cnd::GetStatistics::Request &v, ISeria &s) {
 	seria_kv("need_peer_lists", v.need_peer_lists, s);
 }
 
+void ser_members(cn::api::cnd::StopDaemon::Request &v, ISeria &s) { seria_kv("confirm", v.confirm, s); }
+
+void ser_members(cn::api::cnd::StopDaemon::Response &v, ISeria &s) { seria_kv("stopping", v.stopping, s); }
+
 void ser_members(api::cnd::GetArchive::ArchiveRecord &v, ISeria &s) {
 	seria_kv("timestamp", v.timestamp, s);
 	seria_kv("timestamp_usec", v.timestamp_usec, s);

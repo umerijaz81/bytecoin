@@ -995,6 +995,17 @@ struct GetStatistics {
 	typedef CoreStatistics Response;
 };
 
+struct StopDaemon {
+	static std::string method() { return "stop_daemon"; }
+
+	struct Request {
+		bool confirm = false;
+	};
+	struct Response {
+		bool stopping = false;
+	};
+};
+
 // This method is highly experimental
 struct GetArchive {
 	static std::string method() { return "get_archive"; }
@@ -1241,6 +1252,8 @@ void ser_members(cn::api::cnd::SendTransaction::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::CheckSendproof::Request &v, ISeria &s);
 void ser_members(cn::api::cnd::CheckSendproof::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetStatistics::Request &v, ISeria &s);
+void ser_members(cn::api::cnd::StopDaemon::Request &v, ISeria &s);
+void ser_members(cn::api::cnd::StopDaemon::Response &v, ISeria &s);
 void ser_members(cn::api::cnd::GetArchive::ArchiveRecord &v, ISeria &s);
 void ser_members(cn::api::cnd::GetArchive::ArchiveBlock &v, ISeria &s);
 void ser_members(cn::api::cnd::GetArchive::Request &v, ISeria &s);

@@ -59,6 +59,8 @@ public:
 	    api::cnd::GetOnyxStandardProgramState::Request &&, api::cnd::GetOnyxStandardProgramState::Response &);
 	bool on_get_statistics(http::Client *, http::RequestBody &&, json_rpc::Request &&,
 	    api::cnd::GetStatistics::Request &&, api::cnd::GetStatistics::Response &);
+	bool on_stop_daemon(http::Client *, http::RequestBody &&, json_rpc::Request &&,
+	    api::cnd::StopDaemon::Request &&, api::cnd::StopDaemon::Response &);
 	bool on_get_archive(http::Client *, http::RequestBody &&, json_rpc::Request &&, api::cnd::GetArchive::Request &&,
 	    api::cnd::GetArchive::Response &);
 	bool on_get_random_outputs(http::Client *, http::RequestBody &&, json_rpc::Request &&,
@@ -129,6 +131,7 @@ protected:
 	std::map<P2PProtocolBytecoin *, int> m_dandelion_peer_scores;
 	std::chrono::steady_clock::time_point m_dandelion_epoch_end{};
 	platform::Timer m_dandelion_embargo_timer;
+	platform::Timer m_shutdown_timer;
 
 	bool check_trust(const p2p::ProofOfTrust &);
 	Timestamp m_last_stat_request_time = 0;
