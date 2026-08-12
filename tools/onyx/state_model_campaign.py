@@ -264,6 +264,10 @@ def run_measured(
             stop.wait(sample_interval)
 
     started = time.monotonic()
+    try:
+        samples.append(process_sample(process.pid))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
     sampler = threading.Thread(target=sample_process, name="onyx-state-sampler", daemon=True)
     sampler.start()
     timed_out = False

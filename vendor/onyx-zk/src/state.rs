@@ -1827,6 +1827,121 @@ mod tests {
         );
     }
 
+    fn exact_limit_snapshot(kind: &str) -> (Vec<u8>, usize) {
+        let count = match kind {
+            "anchors" => MAX_SNAPSHOT_ANCHORS,
+            "nullifiers" => MAX_SNAPSHOT_NULLIFIERS,
+            "program_states" => MAX_SNAPSHOT_PROGRAM_STATES,
+            _ => panic!("unknown ONYX_SNAPSHOT_LIMIT_KIND: {kind}"),
+        };
+        let estimated_size = match kind {
+            "anchors" => count * 36,
+            "nullifiers" => count * 32,
+            "program_states" => count * 64,
+            _ => unreachable!(),
+        };
+        let mut snapshot = Vec::with_capacity(estimated_size + 128);
+        snapshot.push(SNAPSHOT_VERSION);
+        snapshot.push(8);
+        write_varint(0, &mut snapshot); // empty commitment tree
+        write_varint(0, &mut snapshot); // empty frontier bitmap
+        snapshot.push(0); // no full-tree root
+
+        let empty_root = IncrementalMerkleTree::<8>::default().root();
+        let current_height = if kind == "anchors" {
+            count as u64 - 1
+        } else {
+            0
+        };
+        write_varint(current_height, &mut snapshot);
+        write_varint(0, &mut snapshot); // total bridged
+        write_varint(0, &mut snapshot); // total fees
+        write_varint(0, &mut snapshot); // circulating supply
+        write_varint(
+            if kind == "anchors" { count as u64 } else { 1 },
+            &mut snapshot,
+        );
+        write_varint(
+            if kind == "anchors" { count as u64 } else { 1 },
+            &mut snapshot,
+        );
+        if kind == "anchors" {
+            for index in 0..count - 1 {
+                let mut root = field(1 + (index % 2) as u64);
+                if root == empty_root {
+                    root = field(3);
+                }
+                snapshot.extend_from_slice(&root.bytes());
+                write_varint(index as u64, &mut snapshot);
+            }
+            snapshot.extend_from_slice(&empty_root.bytes());
+            write_varint(current_height, &mut snapshot);
+        } else {
+            snapshot.extend_from_slice(&empty_root.bytes());
+            write_varint(0, &mut snapshot);
+        }
+
+        write_varint(
+            if kind == "nullifiers" {
+                count as u64
+            } else {
+                0
+            },
+            &mut snapshot,
+        );
+        if kind == "nullifiers" {
+            for index in 0..count {
+                let mut key = [0u8; 32];
+                key[24..].copy_from_slice(&(index as u64).to_be_bytes());
+                snapshot.extend_from_slice(&key);
+            }
+        }
+
+        let programs = ProgramRegistry::default().encode();
+        write_varint(programs.len() as u64, &mut snapshot);
+        snapshot.extend_from_slice(&programs);
+        write_varint(0, &mut snapshot); // current block program cost
+        write_varint(0, &mut snapshot); // issuance count
+        write_varint(
+            if kind == "program_states" {
+                count as u64
+            } else {
+                0
+            },
+            &mut snapshot,
+        );
+        if kind == "program_states" {
+            for index in 0..count {
+                let mut key = [0u8; 32];
+                key[24..].copy_from_slice(&(index as u64).to_be_bytes());
+                snapshot.extend_from_slice(&key);
+                snapshot.extend_from_slice(&Fp::from(index as u64).to_repr());
+            }
+        }
+        (snapshot, count)
+    }
+
+    #[test]
+    #[ignore = "allocates and decodes a configured one-million-entry snapshot"]
+    fn snapshot_accepts_exact_configured_collection_limit() {
+        let kind = std::env::var("ONYX_SNAPSHOT_LIMIT_KIND")
+            .expect("set ONYX_SNAPSHOT_LIMIT_KIND to anchors, nullifiers, or program_states");
+        let (snapshot, count) = exact_limit_snapshot(&kind);
+        let restored = ShieldedState::<8>::decode_snapshot(&snapshot).unwrap();
+        match kind.as_str() {
+            "anchors" => assert_eq!(restored.anchors.len(), count),
+            "nullifiers" => assert_eq!(restored.nullifiers.values.len(), count),
+            "program_states" => assert_eq!(restored.program_states.len(), count),
+            _ => unreachable!(),
+        }
+        let canonical = restored.encode_snapshot();
+        assert_eq!(canonical, snapshot);
+        println!(
+            "ONYX_SNAPSHOT_LIMIT_RESULT kind={kind} count={count} snapshot_bytes={}",
+            canonical.len()
+        );
+    }
+
     #[test]
     fn wallet_witnesses_match_consensus_root() {
         let mut consensus = IncrementalMerkleTree::<4>::default();

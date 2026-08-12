@@ -29,6 +29,18 @@ jobs:
           --max-seed-output-mib 2
           --revision "${{ github.sha }}"
           --report build/onyx-qualification/state-model.json
+      - name: Decode and re-encode exact configured snapshot limits
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          python3 tools/onyx/snapshot_limit_campaign.py
+          --timeout-per-case 180
+          --sample-interval 0.02
+          --max-case-cpu-seconds 60
+          --max-case-rss-mib 1024
+          --max-case-output-mib 2
+          --revision "${{ github.sha }}"
+          --report build/onyx-qualification/snapshot-limit.json
       - name: Upload campaign identity and failure logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -38,6 +50,8 @@ jobs:
             build/onyx-qualification/state-model.json
             build/onyx-qualification/state-model-build.log
             build/onyx-qualification/state-model-seed-*.log
+            build/onyx-qualification/snapshot-limit.json
+            build/onyx-qualification/snapshot-limit-*.log
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
