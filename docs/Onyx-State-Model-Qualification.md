@@ -108,8 +108,39 @@ configured maxima. Each mutation must fail in the count decoder before an attack
 allocation or element loop begins. Existing tests also reject every truncated prefix and selected
 canonical-field corruption.
 
-This does not yet prove that maximum accepted snapshots fit production memory/time budgets, nor does
-it cover corrupt SQLite/WAL images or arbitrary coverage-guided mutations.
+`state::tests::snapshot_accepts_exact_configured_collection_limit` is an ignored, opt-in test that
+directly constructs valid current-version snapshots at each exact one-million-entry limit. Each case
+decodes the snapshot, verifies the resulting collection count, canonical re-encodes it, and requires
+byte-for-byte equality. The cases run separately so anchors, nullifiers, and program states do not
+artificially multiply one another's peak memory.
+
+Run all exact-limit cases with retained resource evidence:
+
+```text
+python tools/onyx/snapshot_limit_campaign.py \
+  --timeout-per-case 180 \
+  --sample-interval 0.02 \
+  --max-case-cpu-seconds 60 \
+  --max-case-rss-mib 1024 \
+  --max-case-output-mib 2 \
+  --revision <full-commit> \
+  --report build/onyx-qualification/snapshot-limit.json
+```
+
+Schema `bytecoin-onyx-snapshot-limit-campaign-v1` binds the platform, revision, manifest, lockfile,
+test executable, per-case output and resource observations. The weekly workflow retains it beside the
+state-model report. The 2026-08-12 local Windows run passed:
+
+| Collection | Count | Snapshot bytes | Wall seconds | CPU seconds | Peak RSS bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchors | 1,000,000 | 34,983,512 | 0.140 | 0.109375 | 73,945,088 |
+| nullifiers | 1,000,000 | 32,000,053 | 0.266 | 0.250000 | 184,213,504 |
+| program states | 1,000,000 | 64,000,053 | 0.594 | 0.593750 | 285,687,808 |
+
+These figures are local sampled regression evidence, not portable release limits. The fixtures prove
+the configured counts are accepted and canonical on this implementation. They do not cover a single
+snapshot containing all maxima simultaneously, corrupt SQLite/WAL images, arbitrary coverage-guided
+mutations, or named-hardware production database reopen behavior.
 
 ## Continuation tasks
 
@@ -117,8 +148,8 @@ For the next implementation milestone:
 
 1. Establish immutable-revision resource baselines on named Linux, macOS, and Windows hosts, then
    tighten the deliberately portable weekly ceilings where platform evidence supports it.
-2. Generate valid snapshots at each exact configured maximum and measure decode/reopen resources on
-   named hardware. Do not create million-entry fixtures in ordinary unit-test CI.
+2. Repeat exact-limit snapshot cases on named release hardware and through production SQLite
+   persistence/reopen, including a deliberately provisioned combined-maxima case outside ordinary CI.
 3. Add coverage-guided snapshot and database-image fuzz targets, including count encodings, ordering,
    duplicates, canonical fields, truncation, trailing bytes, WAL/checkpoint interruption, and partial
    writes.

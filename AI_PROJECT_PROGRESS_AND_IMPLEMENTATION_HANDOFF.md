@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `e301b47` (`Bound and minimize Onyx state campaigns`)
+- Committed revision reviewed: `1c0adc5` (`Qualify exact Onyx snapshot limits`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -311,7 +311,12 @@ Primary implementation:
   proved minimization from 100 to 38 requested steps and absence at 37.
 - Snapshot tests reject every truncated prefix, a supply-field corruption, and anchor/nullifier/
   program-state counts at configured maximum plus one before allocation. These are bounded
-  regressions, not yet exact-maximum resource or coverage-guided corruption campaigns.
+  regressions.
+- An ignored exact-limit Rust test separately constructs, decodes, and canonical re-encodes valid
+  snapshots containing exactly 1,000,000 anchors, nullifiers, or program states. The retained Python
+  runner binds resource/output/executable identities and executes weekly. All three local cases
+  passed; the largest was a 64,000,053-byte program-state snapshot with 285,687,808 bytes peak RSS
+  under the final 20 ms sampling interval.
 - `tests/network/test_onyx_db_crash_process.py` repeatedly terminates the native C++ test process at
   three real SQLite transaction boundaries using the production DB adapter and Onyx state/undo key
   shapes: after the state write, after the complete state/undo pair but before commit, and directly
@@ -359,8 +364,9 @@ Primary implementation:
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
    I/O failures, and explicit SQLite WAL/journal checkpoint and OS flush/power-loss simulation.
-3. Fuzz corrupt snapshots, WAL/database images, partial writes, and boundary-sized state at every
-   configured maximum. Prove bounded CPU and memory as well as fail-closed recovery.
+3. Fuzz corrupt snapshots, WAL/database images, partial writes, and combined boundary-sized state.
+   Extend the separate exact-limit in-memory cases through production SQLite reopen and named-host
+   resource qualification. Prove bounded CPU and memory as well as fail-closed recovery.
 4. Run the same campaigns on clean Linux, macOS, and Windows builds and archive reports for one
    immutable revision. A local Windows pass is regression evidence only.
 5. Submit the state transition, snapshot, persistence, rollback, and reference-model assumptions to

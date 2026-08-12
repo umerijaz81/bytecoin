@@ -178,6 +178,8 @@ Implemented:
   executable identity. Exact divergence replay verifies the `step + 1` prefix and its predecessor,
   retaining a digest-bound minimal trace. The v2 local run passed all ceilings.
 - Snapshot maximum-plus-one anchor, nullifier, and program-state count rejection before allocation.
+- Separate exact one-million-entry anchor, nullifier, and program-state snapshots with decode,
+  canonical re-encode, resource ceilings, revision/executable binding, and weekly artifact retention.
 - Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
   state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
@@ -202,7 +204,8 @@ Still required:
   transitions, transfer/issuance/deployment variants, repeated failures, disk-full/I/O errors, and
   explicit WAL/journal checkpoint plus OS flush/power-loss boundaries. The current bounded campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
-- Exact-maximum snapshot resource measurements and snapshot/database corruption fuzzing.
+- Combined-maxima and production-SQLite named-hardware qualification plus snapshot/database
+  corruption fuzzing. Separate exact collection maxima are now measured.
 
 ### O2 — Private transfers and authorization
 

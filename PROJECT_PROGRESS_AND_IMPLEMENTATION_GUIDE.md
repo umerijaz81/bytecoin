@@ -287,10 +287,11 @@ Still required:
    behavior, and explicit WAL/journal checkpoint plus OS flush/power-loss simulation. The current
    campaign already proves exact pre-commit rollback and post-commit recovery for tip, root, supply,
    program state, snapshot, undo rows, and SQLite integrity.
-4. Exact-maximum valid-state resource tests plus corrupt snapshot, WAL/database image, and
-   partial-write recovery fuzz campaigns. Maximum-plus-one anchor/nullifier/program-state count
-   rejection now executes before allocation, but exact accepted maxima are not qualified.
-5. Resource measurements for large valid state snapshots at configured limits.
+4. Corrupt snapshot, WAL/database image, combined-maxima, and partial-write recovery fuzz campaigns.
+   Maximum-plus-one anchor/nullifier/program-state counts fail before allocation; separate exact
+   one-million-entry valid snapshots now decode/re-encode under retained CPU/RSS/output measurements.
+5. Repeat exact-limit measurements through production SQLite reopen on named release hardware and
+   qualify a deliberately provisioned combined-maxima snapshot outside ordinary CI.
 
 Current implementation and next task:
 
@@ -302,7 +303,8 @@ Current implementation and next task:
   `docs/Onyx-State-Model-Qualification.md` define the retained eight-seed campaign. The v2 runner
   enforces portable resource ceilings and retains a digest-bound minimal trace for reproducible
   divergences. Next, establish named-host baselines, broaden operation/size/failure coverage, and
-  compare immutable-revision reports from clean Linux, macOS, and Windows hosts.
+  compare immutable-revision reports from clean Linux, macOS, and Windows hosts. The opt-in
+  `snapshot_limit_campaign.py` also qualifies all three exact accepted collection maxima weekly.
 
 ## 9. O2 — private native transfers and authorization
 
