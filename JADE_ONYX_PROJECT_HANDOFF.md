@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-11
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `5101111` (`Qualify Onyx rollback and recovery`)
+Last implementation revision reviewed: `62c1f11` (`Fail closed on corrupt Onyx SQLite images`)
 
 ## 1. Purpose and status vocabulary
 
@@ -185,6 +185,11 @@ Implemented:
   reports. The first retained local configuration passed 80,000 cases.
 - Native forced-process SQLite boundary harness proving rollback of partial/uncommitted Onyx
   state/undo writes and survival of a committed pair, with independent raw-SQLite integrity checks.
+- Fifteen-case deterministic production-adapter corruption campaign covering eight main database and
+  seven rollback-journal mutations. It classifies exact recovery, clean adapter failure, and
+  readable semantic mismatch, then independently checks SQLite integrity/raw rows. The first run
+  found a corrupt-schema fail-open gap; every adapter open now requires the exact canonical table
+  declaration.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
   Reopen checks bind exact tip/root/supply/program-state and raw state/undo rows. This campaign found
   and fixed SQLite empty-BLOB reads being misclassified as missing keys, which had prevented undo of
@@ -208,8 +213,9 @@ Still required:
   explicit WAL/journal checkpoint plus OS flush/power-loss boundaries. The current bounded campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
 - Combined-maxima and production-SQLite named-hardware qualification, coverage-guided/sanitizer
-  snapshot fuzzing, and corrupt database/WAL/partial-write recovery. Structured snapshot mutation and
-  separate exact collection maxima are now measured.
+  snapshot/database fuzzing, and WAL-mode checkpoint, arbitrary partial-write, disk-fault, and real
+  power-loss recovery. Structured snapshot mutation, separate exact collection maxima, and bounded
+  small rollback-journal/database mutations are now measured.
 
 ### O2 — Private transfers and authorization
 

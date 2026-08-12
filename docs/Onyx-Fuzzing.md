@@ -69,5 +69,6 @@ range-fill, and segment-copy mutations must reject or canonicalize byte-for-byte
 configuration runs 20,000 cases per seed with CPU/RSS/output/time ceilings.
 
 This campaign is deterministic regression evidence and gives exact replay identities. It complements
-the sanitizer/libFuzzer harness above; it does not provide edge coverage, mutate SQLite/WAL images,
-or replace sustained coverage-guided campaigns.
+the sanitizer/libFuzzer harness above; it does not provide edge coverage. A separate deterministic
+process campaign mutates small SQLite/rollback-journal images, but does not fuzz WAL checkpoints or
+replace sustained coverage-guided campaigns.

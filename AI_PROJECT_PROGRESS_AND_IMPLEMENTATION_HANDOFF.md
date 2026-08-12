@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `9755f10` (`Harden Onyx snapshot corruption handling`)
+- Committed revision reviewed: `62c1f11` (`Fail closed on corrupt Onyx SQLite images`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -334,6 +334,18 @@ Primary implementation:
 - Weekly qualification CI builds the native `tests` target, runs the crash harness, and uploads its
   revision-bound JSON report. The ordinary Onyx Rust matrix maps the new model module exactly once;
   local shard validation currently reports 111 tests total and 77 in the core shard.
+- `tests/network/test_onyx_db_corruption_process.py` creates disposable committed and hot-journal
+  fixtures through the production adapter, then executes eight deterministic main-image mutations
+  and seven rollback-journal mutations. Native probes classify exact state, adapter failure, or
+  semantic mismatch; an independent Python SQLite reader checks integrity and exact raw rows. Reports
+  bind the executable, revision, every source/result image size and digest, and the deliberately
+  limited scope `disposable-sqlite-image-local-or-ci-not-power-loss-release-evidence`.
+- The 2026-08-12 Windows run passed all 15 cases: five clean adapter failures, seven exact rollback
+  recoveries, and three readable state/undo mismatches caught by the exact semantic oracle. The first
+  run found that corrupting `kv_table` to `jv_table` in `sqlite_master` made independent SQLite
+  inspection reject the schema while the embedded adapter still returned the expected rows through
+  the old root page. `DBsqliteKV` now queries `sqlite_master` and requires the exact canonical table
+  declaration on every open. The fixed campaign, original crash campaign, and native DB suite pass.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after
@@ -368,11 +380,12 @@ Primary implementation:
    platforms.
 2. Extend the new full-daemon runner beyond its bridge and NFT-state cases: multi-transaction blocks,
    transfers, issuance, deployment undo, several-block undo/redo, repeated crash cycles, disk-full and
-   I/O failures, and explicit SQLite WAL/journal checkpoint and OS flush/power-loss simulation.
-3. Add sustained coverage-guided/sanitizer snapshot fuzzing and corrupt WAL/database-image, partial
-   write, and combined boundary-sized state campaigns. The structured in-memory mutation campaign is
-   retained but is not coverage evidence. Extend exact-limit cases through production SQLite reopen
-   and named-host resource qualification.
+   I/O failures, and explicit SQLite WAL checkpoint and OS flush/power-loss simulation. Small
+   rollback-journal mutation is now covered, but it is not a substitute for those storage boundaries.
+3. Add sustained coverage-guided/sanitizer snapshot and database-image fuzzing, arbitrary partial
+   writes, and combined boundary-sized state campaigns. The structured in-memory and deterministic
+   SQLite mutation campaigns are retained regression evidence, not coverage evidence. Extend
+   exact-limit cases through production SQLite reopen and named-host resource qualification.
 4. Run the same campaigns on clean Linux, macOS, and Windows builds and archive reports for one
    immutable revision. A local Windows pass is regression evidence only.
 5. Submit the state transition, snapshot, persistence, rollback, and reference-model assumptions to

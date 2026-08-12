@@ -317,6 +317,41 @@ python tests/network/test_onyx_db_crash_process.py \
 The report scope is `local-process-crash-not-release-evidence`. This verifies transaction atomicity
 at the production SQLite adapter boundary and complements the live-daemon campaign below.
 
+## SQLite database and rollback-journal corruption qualification
+
+`tests/network/test_onyx_db_corruption_process.py` copies two disposable images created through the
+production `platform::DBsqlite3` adapter: an exactly committed state/undo pair and a deliberately
+interrupted transaction with a hot rollback journal. It applies eight deterministic main-database
+mutations (header magic, page size, three truncations, state and undo payload bytes, and schema name)
+and seven rollback-journal mutations (intact control, header, three truncations, payload, and appended
+garbage). The original and resulting image sizes and SHA-256 digests are retained in the report.
+
+The native probe has three explicit outcomes: exact expected state, adapter failure, or semantic
+mismatch. Each surviving image is also opened independently with Python SQLite, checked with
+`PRAGMA integrity_check`, and compared by raw key/value bytes. A main-image mutation passes only when
+the adapter fails closed or the exact Onyx state oracle identifies a mismatch. A journal mutation
+passes only when recovery is exact or opening fails; silently returning a mixed state is forbidden.
+
+```text
+python tests/network/test_onyx_db_corruption_process.py \
+  --tests build/codex-zk/artifacts/bin/Release/tests.exe \
+  --revision <full-commit> \
+  --report build/codex-zk/onyx-db-corruption-process.json
+```
+
+The 2026-08-12 Windows run passed all 15 cases: five adapter failures, seven exact recoveries, and
+three semantic mismatches detected before acceptance. The first run exposed a fail-open condition in
+which a corrupted `sqlite_master` table name was rejected by independent SQLite inspection but the
+embedded adapter still read the old root page. `DBsqliteKV` now requires the exact canonical
+`kv_table` schema on every open; the fixed run classifies that case as an adapter failure. The normal
+database tests and the original three-boundary crash campaign also pass with this validation.
+
+The report schema is `bytecoin-onyx-db-corruption-v1` and its scope is
+`disposable-sqlite-image-local-or-ci-not-power-loss-release-evidence`. This campaign uses rollback
+journals and deterministic file mutations. It does not emulate controller caches, filesystem or OS
+flush ordering, abrupt power loss, WAL-mode checkpoint interruption, disk-full behavior, arbitrary
+I/O faults, maximum-sized state, or coverage-guided fuzzing.
+
 ## Full-daemon apply and reorganization crash qualification
 
 Configure a dedicated, non-distributable build with `ONYX_CRASH_TESTS=ON`. CMake rejects that option

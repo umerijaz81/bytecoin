@@ -181,8 +181,26 @@ snapshots. Maximum per-seed observations were 19.234 wall seconds, 19.21875 CPU 
 peak RSS bytes, 338 output bytes, and 1,083 input bytes. Weekly CI retains the report and any full
 failure log.
 
-This is structured deterministic mutation evidence, not coverage-guided fuzzing. It does not mutate
-SQLite database/WAL images, simulate torn writes, or prove parser coverage under ASan/UBSan.
+This is structured deterministic mutation evidence, not coverage-guided fuzzing. A separate
+production-adapter campaign now mutates small SQLite database and rollback-journal images, but neither
+campaign proves arbitrary parser coverage, WAL/checkpoint safety, torn-write or power-loss behavior,
+or sanitizer cleanliness.
+
+## Production SQLite corruption boundary
+
+`tests/network/test_onyx_db_corruption_process.py` creates committed and hot-journal fixtures through
+the native production adapter and applies 15 deterministic database/journal mutations. Its exact
+state oracle distinguishes fail-closed adapter errors from readable-but-corrupt Onyx state, while an
+independent SQLite reader runs `PRAGMA integrity_check` and compares raw rows. The retained report
+binds the executable, revision, source/result image sizes and SHA-256 digests, classifications, and
+scope. The 2026-08-12 Windows run passed with five adapter failures, seven exact rollback recoveries,
+and three semantic mismatches detected before acceptance.
+
+The campaign found and fixed an adapter gap: a corrupted schema name could remain readable through an
+already resolved root page even though independent schema inspection rejected it. `DBsqliteKV` now
+requires the exact canonical `kv_table` declaration on every open. This is useful corruption-boundary
+regression evidence, but it is deliberately not power-loss, WAL-mode, maximum-state, or release
+evidence. Detailed invocation and case definitions are in `docs/Onyx-Qualification-Network.md`.
 
 ## Continuation tasks
 
@@ -194,7 +212,8 @@ For the next implementation milestone:
    persistence/reopen, including a deliberately provisioned combined-maxima case outside ordinary CI.
 3. Add coverage-guided and sanitizer-backed snapshot/database-image fuzz targets. Structured snapshot
    mutations now cover count encodings, ordering, duplicates, canonical fields, truncation, trailing
-   bytes, and bounded splices; SQLite/WAL checkpoint interruption and partial writes remain.
+   bytes, and bounded splices. Deterministic small SQLite and rollback-journal mutations are covered;
+   WAL-mode checkpoint interruption, arbitrary torn writes, and coverage evidence remain.
 4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
 5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,

@@ -290,7 +290,9 @@ Still required:
 4. Coverage-guided/sanitizer snapshot fuzzing plus corrupt WAL/database image, combined-maxima, and
    partial-write recovery campaigns. Maximum-plus-one counts fail before allocation, exact
    one-million-entry valid snapshots are measured, and the retained structured campaign covers four
-   fixture shapes, six targeted decoder failures, and 80,000 seeded mutations.
+   fixture shapes, six targeted decoder failures, and 80,000 seeded mutations. A separate 15-case
+   production-adapter campaign now covers deterministic small main-database and rollback-journal
+   corruption, but not WAL mode, power-loss ordering, arbitrary I/O faults, or parser coverage.
 5. Repeat exact-limit measurements through production SQLite reopen on named release hardware and
    qualify a deliberately provisioned combined-maxima snapshot outside ordinary CI.
 
@@ -307,6 +309,9 @@ Current implementation and next task:
   compare immutable-revision reports from clean Linux, macOS, and Windows hosts. The opt-in
   `snapshot_limit_campaign.py` qualifies all exact accepted collection maxima weekly, while
   `snapshot_corruption_campaign.py` retains bounded reject-or-canonicalize mutation evidence.
+  `tests/network/test_onyx_db_corruption_process.py` retains exact/fail-closed classification for
+  eight database and seven rollback-journal mutations. Its first run exposed a schema-corruption
+  fail-open gap; the adapter now validates the exact canonical `kv_table` declaration on every open.
 
 ## 9. O2 — private native transfers and authorization
 
