@@ -102,8 +102,20 @@ DBsqliteKV::DBsqliteKV(OpenMode open_mode, const std::string &full_path, uint64_
 	//	create_directories_if_necessary(full_path);
 	bool created = false;
 	db_dbi.open_check_create(open_mode, platform::expand_path(this->full_path), &created);
+	const char *expected_schema =
+	    "CREATE TABLE kv_table(kk BLOB PRIMARY KEY COLLATE BINARY, vv BLOB NOT NULL) WITHOUT ROWID";
 	if (created)
-		db_dbi.exec("CREATE TABLE kv_table(kk BLOB PRIMARY KEY COLLATE BINARY, vv BLOB NOT NULL) WITHOUT ROWID");
+		db_dbi.exec(expected_schema);
+	sqlite::Stmt stmt_schema;
+	stmt_schema.prepare(db_dbi, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kv_table'");
+	if (!stmt_schema.step())
+		throw sqlite::Error("sqlite database is missing the expected kv_table schema");
+	const size_t schema_size = stmt_schema.column_bytes(0);
+	const auto *schema_data  = stmt_schema.column_blob(0);
+	const std::string actual_schema(
+	    schema_size == 0 ? "" : reinterpret_cast<const char *>(schema_data), schema_size);
+	if (actual_schema != expected_schema || stmt_schema.step())
+		throw sqlite::Error("sqlite database has an unexpected kv_table schema");
 	stmt_get.prepare(db_dbi, "SELECT kk, vv FROM kv_table WHERE kk = ?");
 	stmt_insert.prepare(db_dbi, "INSERT INTO kv_table (kk, vv) VALUES (?, ?)");
 	stmt_update.prepare(db_dbi, "REPLACE INTO kv_table (kk, vv) VALUES (?, ?)");
@@ -369,6 +381,29 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 			std::_Exit(86);
 		db.commit_db_txn();
 		std::_Exit(87);
+	}
+	if (mode == "probe-before" || mode == "probe-after") {
+		try {
+			DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+			std::string state;
+			std::string undo;
+			if (!db.get(state_key, state)) {
+				std::cerr << "ONYX_DB_PROBE result=semantic-mismatch detail=missing-state" << std::endl;
+				return 89;
+			}
+			const bool has_undo = db.get(undo_key, undo);
+			const bool exact_before = state == before && !has_undo;
+			const bool exact_after  = state == after && has_undo && undo == before;
+			if ((mode == "probe-before" && exact_before) || (mode == "probe-after" && exact_after)) {
+				std::cout << "ONYX_DB_PROBE result=exact" << std::endl;
+				return 0;
+			}
+			std::cerr << "ONYX_DB_PROBE result=semantic-mismatch detail=state-undo-pair" << std::endl;
+			return 89;
+		} catch (const std::exception &error) {
+			std::cerr << "ONYX_DB_PROBE result=adapter-failure detail=" << error.what() << std::endl;
+			return 88;
+		}
 	}
 	DBsqliteKV db(platform::O_OPEN_EXISTING, path);
 	std::string state;

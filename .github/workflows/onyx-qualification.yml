@@ -155,6 +155,12 @@ jobs:
           --tests build-onyx-load/artifacts/bin/tests
           --revision "${{ github.sha }}"
           --report build-onyx-load/onyx-db-crash-process.json
+      - name: Exercise corrupt SQLite image and rollback-journal recovery
+        run: >-
+          python3 tests/network/test_onyx_db_corruption_process.py
+          --tests build-onyx-load/artifacts/bin/tests
+          --revision "${{ github.sha }}"
+          --report build-onyx-load/onyx-db-corruption-process.json
       - name: Exercise full-daemon Onyx apply and reorganization crash boundaries
         run: >-
           python3 tests/network/test_onyx_daemon_crash_process.py
@@ -178,6 +184,7 @@ jobs:
           path: |
             build-onyx-load/onyx-verifier-load-process*.json
             build-onyx-load/onyx-db-crash-process.json
+            build-onyx-load/onyx-db-corruption-process.json
             build-onyx-load/onyx-daemon-crash-process.json
           if-no-files-found: error
           compression-level: 0
