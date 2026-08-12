@@ -747,6 +747,9 @@ fn run_campaign(
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(74)
         .max(10);
+    let injected_failure_step = std::env::var("ONYX_STATE_MODEL_TEST_FAIL_STEP")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok());
     for step in 0..steps {
         let next_height = campaign.reference.current_height + 1;
         // A fixed state-aware prelude guarantees every transition family, reopen, rejection, undo,
@@ -1179,6 +1182,14 @@ fn run_campaign(
             _ => continue,
         }
         campaign.check(seed, step);
+        if injected_failure_step == Some(step) {
+            fail(
+                seed,
+                step,
+                &campaign.trace,
+                "injected qualification failure",
+            );
+        }
     }
     let required = [
         (
