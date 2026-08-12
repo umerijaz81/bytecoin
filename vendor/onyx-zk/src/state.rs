@@ -1777,6 +1777,57 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_rejects_limit_plus_one_counts_before_allocation() {
+        fn replace_count(snapshot: &[u8], offset: usize, value: u64) -> Vec<u8> {
+            assert_eq!(snapshot[offset], 0);
+            let mut encoded = Vec::new();
+            write_varint(value, &mut encoded);
+            let mut result = snapshot.to_vec();
+            result.splice(offset..=offset, encoded);
+            result
+        }
+
+        // The canonical empty V7 snapshot has one anchor. Its compact fixed prefix is asserted so
+        // these mutations fail loudly if the wire layout changes instead of testing the wrong byte.
+        let encoded = ShieldedState::<8>::new(3).encode_snapshot();
+        assert_eq!(&encoded[..11], &[7, 8, 0, 0, 0, 0, 0, 0, 0, 3, 1]);
+        let too_many_anchors = {
+            let mut count = Vec::new();
+            write_varint(MAX_SNAPSHOT_ANCHORS as u64 + 1, &mut count);
+            let mut snapshot = encoded.clone();
+            snapshot.splice(10..=10, count);
+            snapshot
+        };
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&too_many_anchors).err(),
+            Some(SnapshotError::TooManyAnchors)
+        );
+
+        // version/depth/tree/accounting/window/count + one 32-byte root and its height.
+        const EMPTY_NULLIFIER_COUNT_OFFSET: usize = 44;
+        let too_many_nullifiers = replace_count(
+            &encoded,
+            EMPTY_NULLIFIER_COUNT_OFFSET,
+            MAX_SNAPSHOT_NULLIFIERS as u64 + 1,
+        );
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&too_many_nullifiers).err(),
+            Some(SnapshotError::TooManyNullifiers)
+        );
+
+        // Program-state count is the final zero field in an empty current-version snapshot.
+        let too_many_program_states = replace_count(
+            &encoded,
+            encoded.len() - 1,
+            MAX_SNAPSHOT_PROGRAM_STATES as u64 + 1,
+        );
+        assert_eq!(
+            ShieldedState::<8>::decode_snapshot(&too_many_program_states).err(),
+            Some(SnapshotError::InvalidProgramState)
+        );
+    }
+
+    #[test]
     fn wallet_witnesses_match_consensus_root() {
         let mut consensus = IncrementalMerkleTree::<4>::default();
         let mut wallet = WitnessTree::<4>::default();

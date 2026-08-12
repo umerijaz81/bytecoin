@@ -9,6 +9,34 @@ permissions:
   contents: read
 
 jobs:
+  differential-state-campaign:
+    name: deterministic state differential campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Run retained multi-seed state campaign
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: >-
+          python3 tools/onyx/state_model_campaign.py
+          --steps 2000
+          --revision "${{ github.sha }}"
+          --report build/onyx-qualification/state-model.json
+      - name: Upload campaign identity and failure logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onyx-state-model-${{ github.sha }}
+          path: |
+            build/onyx-qualification/state-model.json
+            build/onyx-qualification/state-model-seed-*.log
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
   structured-compiler-fuzz:
     name: structured compiler fuzz (${{ matrix.seed }})
     runs-on: ubuntu-24.04

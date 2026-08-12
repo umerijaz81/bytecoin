@@ -427,6 +427,7 @@ struct Campaign {
     history: Vec<(Vec<u8>, ReferenceState)>,
     trace: Vec<Operation>,
     all_roots: Vec<CanonicalField>,
+    successful_checkpoints: usize,
     counter: u64,
 }
 
@@ -441,6 +442,7 @@ impl Campaign {
             history: vec![(snapshot, reference)],
             trace: Vec::new(),
             all_roots: Vec::new(),
+            successful_checkpoints: 0,
             counter: 1,
         }
     }
@@ -455,6 +457,7 @@ impl Campaign {
         let snapshot = self.production.encode_snapshot();
         self.history.push((snapshot, self.reference.clone()));
         self.all_roots.push(self.reference.root());
+        self.successful_checkpoints += 1;
     }
 
     fn restore(&mut self, checkpoint: usize) {
@@ -1251,6 +1254,34 @@ fn run_campaign(
             );
         }
     }
+    let operation_count = |predicate: fn(&Operation) -> bool| {
+        campaign
+            .trace
+            .iter()
+            .filter(|operation| predicate(operation))
+            .count()
+    };
+    let root = campaign.reference.root().bytes();
+    let root_hex = root
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    println!(
+        "ONYX_STATE_MODEL_RESULT seed=0x{seed:016x} requested_steps={steps} trace_steps={} checkpoints={} snapshot_bytes={} root={} bridge={} transfer={} deployment={} issuance={} contextual={} rejection={} undo={} fork={} reopen={}",
+        campaign.trace.len(),
+        campaign.successful_checkpoints,
+        campaign.production.encode_snapshot().len(),
+        root_hex,
+        operation_count(|op| matches!(op, Operation::Bridge { .. })),
+        operation_count(|op| matches!(op, Operation::Transfer { .. })),
+        operation_count(|op| matches!(op, Operation::DeployToken { .. } | Operation::DeployNft { .. })),
+        operation_count(|op| matches!(op, Operation::Issue { .. })),
+        operation_count(|op| matches!(op, Operation::NftCall { .. })),
+        operation_count(|op| matches!(op, Operation::RejectDuplicate { .. } | Operation::RejectStaleAnchor { .. } | Operation::RejectProgramFork { .. })),
+        operation_count(|op| matches!(op, Operation::Undo { .. })),
+        operation_count(|op| matches!(op, Operation::Fork { .. })),
+        operation_count(|op| matches!(op, Operation::Reopen)),
+    );
 }
 
 #[test]
