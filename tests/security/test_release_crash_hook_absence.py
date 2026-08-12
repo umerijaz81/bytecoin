@@ -16,6 +16,8 @@ FORBIDDEN_MARKERS = (
     b"onyx-fault-vfs",
     b"ioerr-journal-write",
     b"ioerr-database-sync",
+    b"ioerr-journal-partial-write",
+    b"ioerr-wal-sync",
 )
 
 

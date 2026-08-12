@@ -22,8 +22,8 @@ AFTER = b"snapshot-after"
 SQLITE_IOERR_WRITE = 778
 SQLITE_IOERR_FSYNC = 1034
 IOERR_MARKER = re.compile(
-    r"ONYX_DB_IOERR target=(journal|database) operation=(write|sync) "
-    r"stage=(state|undo|commit) sqlite_code=(\d+) triggers=(\d+)"
+    r"ONYX_DB_IOERR target=(journal|database|wal) operation=(write|partial-write|sync) "
+    r"stage=(state|undo|commit) sqlite_code=(\d+) triggers=(\d+) partial_bytes=(\d+)"
 )
 
 
@@ -97,6 +97,7 @@ def run_child(
                 "sqlite_extended_code": int(marker.group(4)),
                 "sqlite_primary_code": int(marker.group(4)) & 0xFF,
                 "trigger_count": int(marker.group(5)),
+                "partial_bytes": int(marker.group(6)),
             }
         )
     if mode.startswith("probe-") and "ONYX_DB_PROBE result=exact" not in completed.stdout:
@@ -131,6 +132,11 @@ def fault_case_passed(case: dict[str, object]) -> bool:
         and fault.get("target") == case.get("expected_target")
         and fault.get("operation") == case.get("expected_operation")
         and fault.get("stage") == case.get("expected_stage")
+        and (
+            fault.get("partial_bytes", 0) > 0
+            if case.get("expected_operation") == "partial-write"
+            else fault.get("partial_bytes") == 0
+        )
         and recovery.get("return_code") == 0
         and independent_before.get("exact_before") is True
         and independent_after.get("integrity") == "ok"
@@ -147,9 +153,10 @@ def run_fault_case(
     expected_operation: str,
     expected_stage: str,
     expected_code: int,
+    cycle: int,
     timeout: float,
 ) -> dict[str, object]:
-    case_root = root / name
+    case_root = root / f"{name}-cycle-{cycle}"
     case_root.mkdir()
     database_base = case_root / "blockchain"
     database_path = pathlib.Path(str(database_base) + ".sqlite")
@@ -163,6 +170,7 @@ def run_fault_case(
     case: dict[str, object] = {
         "family": "sqlite-ioerr",
         "name": name,
+        "cycle": cycle,
         "expected_target": expected_target,
         "expected_operation": expected_operation,
         "expected_stage": expected_stage,
@@ -208,21 +216,23 @@ def main() -> int:
     parser.add_argument("--report", required=True, type=pathlib.Path)
     parser.add_argument("--child-timeout", type=float, default=30.0)
     parser.add_argument("--max-report-mib", type=float, default=4.0)
+    parser.add_argument("--cycles", type=int, default=3)
     args = parser.parse_args()
     executable = args.tests.resolve()
     if not executable.is_file():
         parser.error(f"tests executable does not exist: {executable}")
-    if args.child_timeout <= 0 or args.max_report_mib <= 0:
-        parser.error("timeouts and report limits must be positive")
+    if args.child_timeout <= 0 or args.max_report_mib <= 0 or args.cycles <= 0:
+        parser.error("timeouts, report limits, and cycles must be positive")
     max_report_bytes = int(args.max_report_mib * 1024 * 1024)
     report: dict[str, object] = {
-        "schema": "bytecoin-onyx-db-ioerr-campaign-v1",
-        "scope": "compile-time-test-vfs-single-write-or-sync-fault-local-or-ci-not-device-release-evidence",
+        "schema": "bytecoin-onyx-db-ioerr-campaign-v2",
+        "scope": "compile-time-test-vfs-repeated-independent-single-fault-local-or-ci-not-device-release-evidence",
         "revision": args.revision,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "tests_executable_sha256": sha256(executable),
         "child_timeout_seconds": args.child_timeout,
         "max_report_bytes": max_report_bytes,
+        "cycles_per_fault": args.cycles,
         "cases": [],
         "passed": False,
     }
@@ -233,17 +243,30 @@ def main() -> int:
         ("ioerr-journal-sync", 97, "journal", "sync", "commit", SQLITE_IOERR_FSYNC),
         ("ioerr-database-write", 98, "database", "write", "commit", SQLITE_IOERR_WRITE),
         ("ioerr-database-sync", 99, "database", "sync", "commit", SQLITE_IOERR_FSYNC),
+        ("ioerr-journal-partial-write", 102, "journal", "partial-write", "state", SQLITE_IOERR_WRITE),
+        ("ioerr-database-partial-write", 103, "database", "partial-write", "commit", SQLITE_IOERR_WRITE),
+        ("ioerr-wal-write", 104, "wal", "write", "commit", SQLITE_IOERR_WRITE),
+        ("ioerr-wal-sync", 105, "wal", "sync", "commit", SQLITE_IOERR_FSYNC),
     )
     with tempfile.TemporaryDirectory(prefix="bytecoin-onyx-db-ioerr-") as directory:
         root = pathlib.Path(directory)
-        for specification in specifications:
-            name = specification[0]
-            try:
-                case = run_fault_case(executable, root, *specification, args.child_timeout)
-            except (OSError, RuntimeError, sqlite3.DatabaseError, subprocess.SubprocessError) as error:
-                case = {"family": "sqlite-ioerr", "name": name, "passed": False, "error": str(error)}
-            report["cases"].append(case)
-            atomic_write(args.report, report, max_report_bytes)
+        for cycle in range(1, args.cycles + 1):
+            for specification in specifications:
+                name = specification[0]
+                try:
+                    case = run_fault_case(
+                        executable, root, *specification, cycle, args.child_timeout
+                    )
+                except (OSError, RuntimeError, sqlite3.DatabaseError, subprocess.SubprocessError) as error:
+                    case = {
+                        "family": "sqlite-ioerr",
+                        "name": name,
+                        "cycle": cycle,
+                        "passed": False,
+                        "error": str(error),
+                    }
+                report["cases"].append(case)
+                atomic_write(args.report, report, max_report_bytes)
         try:
             control = run_control(executable, root, args.child_timeout)
         except (OSError, RuntimeError, sqlite3.DatabaseError, subprocess.SubprocessError) as error:
