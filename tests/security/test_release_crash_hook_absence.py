@@ -12,6 +12,10 @@ FORBIDDEN_MARKERS = (
     b"--onyx-crash-test-point",
     b"apply-after-state-write",
     b"reorg-after-undo",
+    b"ONYX_DB_IOERR",
+    b"onyx-fault-vfs",
+    b"ioerr-journal-write",
+    b"ioerr-database-sync",
 )
 
 

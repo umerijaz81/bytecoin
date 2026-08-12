@@ -12,6 +12,239 @@
 
 using namespace platform;
 
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+namespace {
+
+enum class SQLiteFaultOperation { WRITE, SYNC };
+
+struct SQLiteFaultState {
+	bool armed                  = false;
+	int target_flags            = 0;
+	SQLiteFaultOperation action = SQLiteFaultOperation::WRITE;
+	unsigned trigger_count      = 0;
+};
+
+struct SQLiteFaultFile {
+	sqlite3_file facade;
+	sqlite3_file *real                         = nullptr;
+	const sqlite3_io_methods *real_methods     = nullptr;
+	int open_flags                             = 0;
+};
+
+SQLiteFaultState sqlite_fault_state;
+sqlite3_vfs sqlite_fault_vfs{};
+sqlite3_io_methods sqlite_fault_io_v1{};
+sqlite3_io_methods sqlite_fault_io_v2{};
+sqlite3_io_methods sqlite_fault_io_v3{};
+
+SQLiteFaultFile *fault_file(sqlite3_file *file) { return reinterpret_cast<SQLiteFaultFile *>(file); }
+sqlite3_vfs *real_vfs(sqlite3_vfs *vfs) { return static_cast<sqlite3_vfs *>(vfs->pAppData); }
+
+bool inject_fault(SQLiteFaultFile *file, SQLiteFaultOperation operation) {
+	if (!sqlite_fault_state.armed || sqlite_fault_state.action != operation ||
+	    (file->open_flags & sqlite_fault_state.target_flags) == 0)
+		return false;
+	sqlite_fault_state.armed = false;
+	++sqlite_fault_state.trigger_count;
+	return true;
+}
+
+int fault_close(sqlite3_file *file) {
+	auto *wrapped = fault_file(file);
+	const int result = wrapped->real_methods->xClose(wrapped->real);
+	wrapped->facade.pMethods = nullptr;
+	return result;
+}
+int fault_read(sqlite3_file *file, void *data, int amount, sqlite3_int64 offset) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xRead(wrapped->real, data, amount, offset);
+}
+int fault_write(sqlite3_file *file, const void *data, int amount, sqlite3_int64 offset) {
+	auto *wrapped = fault_file(file);
+	if (inject_fault(wrapped, SQLiteFaultOperation::WRITE))
+		return SQLITE_IOERR_WRITE;
+	return wrapped->real_methods->xWrite(wrapped->real, data, amount, offset);
+}
+int fault_truncate(sqlite3_file *file, sqlite3_int64 size) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xTruncate(wrapped->real, size);
+}
+int fault_sync(sqlite3_file *file, int flags) {
+	auto *wrapped = fault_file(file);
+	if (inject_fault(wrapped, SQLiteFaultOperation::SYNC))
+		return SQLITE_IOERR_FSYNC;
+	return wrapped->real_methods->xSync(wrapped->real, flags);
+}
+int fault_file_size(sqlite3_file *file, sqlite3_int64 *size) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xFileSize(wrapped->real, size);
+}
+int fault_lock(sqlite3_file *file, int lock) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xLock(wrapped->real, lock);
+}
+int fault_unlock(sqlite3_file *file, int lock) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xUnlock(wrapped->real, lock);
+}
+int fault_check_reserved_lock(sqlite3_file *file, int *result) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xCheckReservedLock(wrapped->real, result);
+}
+int fault_file_control(sqlite3_file *file, int operation, void *argument) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xFileControl(wrapped->real, operation, argument);
+}
+int fault_sector_size(sqlite3_file *file) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xSectorSize(wrapped->real);
+}
+int fault_device_characteristics(sqlite3_file *file) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xDeviceCharacteristics(wrapped->real);
+}
+int fault_shm_map(sqlite3_file *file, int page, int page_size, int extend, void volatile **mapped) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xShmMap(wrapped->real, page, page_size, extend, mapped);
+}
+int fault_shm_lock(sqlite3_file *file, int offset, int count, int flags) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xShmLock(wrapped->real, offset, count, flags);
+}
+void fault_shm_barrier(sqlite3_file *file) {
+	auto *wrapped = fault_file(file);
+	wrapped->real_methods->xShmBarrier(wrapped->real);
+}
+int fault_shm_unmap(sqlite3_file *file, int delete_flag) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xShmUnmap(wrapped->real, delete_flag);
+}
+int fault_fetch(sqlite3_file *file, sqlite3_int64 offset, int amount, void **data) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xFetch(wrapped->real, offset, amount, data);
+}
+int fault_unfetch(sqlite3_file *file, sqlite3_int64 offset, void *data) {
+	auto *wrapped = fault_file(file);
+	return wrapped->real_methods->xUnfetch(wrapped->real, offset, data);
+}
+
+int fault_open(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int flags, int *output_flags) {
+	auto *wrapped = fault_file(file);
+	std::memset(wrapped, 0, sizeof(*wrapped));
+	wrapped->real = reinterpret_cast<sqlite3_file *>(reinterpret_cast<unsigned char *>(file) +
+	                                              sizeof(SQLiteFaultFile));
+	const int result = real_vfs(vfs)->xOpen(real_vfs(vfs), name, wrapped->real, flags, output_flags);
+	if (result != SQLITE_OK)
+		return result;
+	wrapped->real_methods = wrapped->real->pMethods;
+	wrapped->open_flags   = flags;
+	wrapped->facade.pMethods = wrapped->real_methods->iVersion >= 3 ? &sqlite_fault_io_v3
+	                           : wrapped->real_methods->iVersion == 2 ? &sqlite_fault_io_v2
+	                                                                  : &sqlite_fault_io_v1;
+	return SQLITE_OK;
+}
+int fault_delete(sqlite3_vfs *vfs, const char *name, int sync_dir) {
+	return real_vfs(vfs)->xDelete(real_vfs(vfs), name, sync_dir);
+}
+int fault_access(sqlite3_vfs *vfs, const char *name, int flags, int *result) {
+	return real_vfs(vfs)->xAccess(real_vfs(vfs), name, flags, result);
+}
+int fault_full_pathname(sqlite3_vfs *vfs, const char *name, int output_size, char *output) {
+	return real_vfs(vfs)->xFullPathname(real_vfs(vfs), name, output_size, output);
+}
+void *fault_dl_open(sqlite3_vfs *vfs, const char *name) { return real_vfs(vfs)->xDlOpen(real_vfs(vfs), name); }
+void fault_dl_error(sqlite3_vfs *vfs, int size, char *message) {
+	real_vfs(vfs)->xDlError(real_vfs(vfs), size, message);
+}
+void (*fault_dl_sym(sqlite3_vfs *vfs, void *handle, const char *symbol))(void) {
+	return real_vfs(vfs)->xDlSym(real_vfs(vfs), handle, symbol);
+}
+void fault_dl_close(sqlite3_vfs *vfs, void *handle) { real_vfs(vfs)->xDlClose(real_vfs(vfs), handle); }
+int fault_randomness(sqlite3_vfs *vfs, int size, char *output) {
+	return real_vfs(vfs)->xRandomness(real_vfs(vfs), size, output);
+}
+int fault_sleep(sqlite3_vfs *vfs, int microseconds) {
+	return real_vfs(vfs)->xSleep(real_vfs(vfs), microseconds);
+}
+int fault_current_time(sqlite3_vfs *vfs, double *time) {
+	return real_vfs(vfs)->xCurrentTime(real_vfs(vfs), time);
+}
+int fault_last_error(sqlite3_vfs *vfs, int size, char *message) {
+	return real_vfs(vfs)->xGetLastError(real_vfs(vfs), size, message);
+}
+int fault_current_time_int64(sqlite3_vfs *vfs, sqlite3_int64 *time) {
+	return real_vfs(vfs)->xCurrentTimeInt64(real_vfs(vfs), time);
+}
+int fault_set_system_call(sqlite3_vfs *vfs, const char *name, sqlite3_syscall_ptr call) {
+	return real_vfs(vfs)->xSetSystemCall(real_vfs(vfs), name, call);
+}
+sqlite3_syscall_ptr fault_get_system_call(sqlite3_vfs *vfs, const char *name) {
+	return real_vfs(vfs)->xGetSystemCall(real_vfs(vfs), name);
+}
+const char *fault_next_system_call(sqlite3_vfs *vfs, const char *name) {
+	return real_vfs(vfs)->xNextSystemCall(real_vfs(vfs), name);
+}
+
+void register_sqlite_fault_vfs() {
+	sqlite3_vfs *base = sqlite3_vfs_find(nullptr);
+	if (base == nullptr)
+		throw sqlite::Error("SQLite has no default VFS for fault qualification");
+	sqlite_fault_io_v3 = {3,
+	    fault_close,
+	    fault_read,
+	    fault_write,
+	    fault_truncate,
+	    fault_sync,
+	    fault_file_size,
+	    fault_lock,
+	    fault_unlock,
+	    fault_check_reserved_lock,
+	    fault_file_control,
+	    fault_sector_size,
+	    fault_device_characteristics,
+	    fault_shm_map,
+	    fault_shm_lock,
+	    fault_shm_barrier,
+	    fault_shm_unmap,
+	    fault_fetch,
+	    fault_unfetch};
+	sqlite_fault_io_v2 = sqlite_fault_io_v3;
+	sqlite_fault_io_v2.iVersion = 2;
+	sqlite_fault_io_v2.xFetch   = nullptr;
+	sqlite_fault_io_v2.xUnfetch = nullptr;
+	sqlite_fault_io_v1 = sqlite_fault_io_v2;
+	sqlite_fault_io_v1.iVersion    = 1;
+	sqlite_fault_io_v1.xShmMap     = nullptr;
+	sqlite_fault_io_v1.xShmLock    = nullptr;
+	sqlite_fault_io_v1.xShmBarrier = nullptr;
+	sqlite_fault_io_v1.xShmUnmap   = nullptr;
+	sqlite_fault_vfs              = *base;
+	sqlite_fault_vfs.pNext        = nullptr;
+	sqlite_fault_vfs.zName        = "onyx-fault-vfs";
+	sqlite_fault_vfs.pAppData     = base;
+	sqlite_fault_vfs.szOsFile     = static_cast<int>(sizeof(SQLiteFaultFile)) + base->szOsFile;
+	sqlite_fault_vfs.xOpen        = fault_open;
+	sqlite_fault_vfs.xDelete      = fault_delete;
+	sqlite_fault_vfs.xAccess      = fault_access;
+	sqlite_fault_vfs.xFullPathname = fault_full_pathname;
+	sqlite_fault_vfs.xDlOpen      = fault_dl_open;
+	sqlite_fault_vfs.xDlError     = fault_dl_error;
+	sqlite_fault_vfs.xDlSym       = fault_dl_sym;
+	sqlite_fault_vfs.xDlClose     = fault_dl_close;
+	sqlite_fault_vfs.xRandomness  = fault_randomness;
+	sqlite_fault_vfs.xSleep       = fault_sleep;
+	sqlite_fault_vfs.xCurrentTime = fault_current_time;
+	sqlite_fault_vfs.xGetLastError = fault_last_error;
+	sqlite_fault_vfs.xCurrentTimeInt64 = fault_current_time_int64;
+	sqlite_fault_vfs.xSetSystemCall    = fault_set_system_call;
+	sqlite_fault_vfs.xGetSystemCall    = fault_get_system_call;
+	sqlite_fault_vfs.xNextSystemCall   = fault_next_system_call;
+	sqlite::check(sqlite3_vfs_register(&sqlite_fault_vfs, 1), "registering Onyx SQLite fault VFS failed");
+}
+
+}  // namespace
+#endif
+
 void sqlite::check(int rc, const char *msg) {
 	if (rc != SQLITE_OK)
 		throw Error((msg ? msg : "") + common::to_string(rc));
@@ -437,6 +670,45 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 		std::cerr << "ONYX_DB_FULL stage=" << stage << " sqlite_code=0 detail=no-failure" << std::endl;
 		return 95;
 	}
+#ifdef BYTECOIN_ONYX_CRASH_TESTS
+	if (mode == "ioerr-journal-write" || mode == "ioerr-journal-sync" ||
+	    mode == "ioerr-database-write" || mode == "ioerr-database-sync") {
+		register_sqlite_fault_vfs();
+		const bool journal = mode.find("journal") != std::string::npos;
+		const bool write   = mode.find("write") != std::string::npos;
+		sqlite_fault_state = {};
+		sqlite_fault_state.target_flags = journal ? SQLITE_OPEN_MAIN_JOURNAL : SQLITE_OPEN_MAIN_DB;
+		sqlite_fault_state.action = write ? SQLiteFaultOperation::WRITE : SQLiteFaultOperation::SYNC;
+		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
+		db.db_dbi.exec("PRAGMA cache_spill=OFF", "disabling cache spill for SQLite I/O qualification failed");
+		sqlite_fault_state.armed = true;
+		const char *stage        = "state";
+		try {
+			db.put(state_key, after, false);
+			stage = "undo";
+			db.put(undo_key, before, true);
+			stage = "commit";
+			db.commit_db_txn();
+		} catch (const std::exception &) {
+			const int code = sqlite3_extended_errcode(db.db_dbi.handle);
+			std::cerr << "ONYX_DB_IOERR target=" << (journal ? "journal" : "database")
+			          << " operation=" << (write ? "write" : "sync") << " stage=" << stage
+			          << " sqlite_code=" << code << " triggers=" << sqlite_fault_state.trigger_count
+			          << std::endl;
+			const int expected = write ? SQLITE_IOERR_WRITE : SQLITE_IOERR_FSYNC;
+			if (code == expected && sqlite_fault_state.trigger_count == 1)
+				std::_Exit(mode == "ioerr-journal-write" ? 96 : mode == "ioerr-journal-sync" ? 97
+				                                                 : mode == "ioerr-database-write" ? 98
+				                                                                                  : 99);
+			return 100;
+		}
+		std::cerr << "ONYX_DB_IOERR target=" << (journal ? "journal" : "database")
+		          << " operation=" << (write ? "write" : "sync")
+		          << " stage=" << stage << " sqlite_code=0 triggers=" << sqlite_fault_state.trigger_count
+		          << " detail=no-failure" << std::endl;
+		return 101;
+	}
+#endif
 	if (mode == "crash-after-state-write" || mode == "crash-before-commit" ||
 	    mode == "crash-after-commit") {
 		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
