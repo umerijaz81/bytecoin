@@ -248,7 +248,17 @@ handler increments private `onyx_verifier_abandoned_rpcs` and removes response o
 worker input remains alive until verification finishes. The passing run observed abandoned RPCs 0 to
 1, verifier acquisitions 1 to 2, active verification returning to zero, no pool entry, and no known
 transaction. The later barrier run acquired verifier 3 and completed, proving permit reuse. All ten
-wrapper checks passed; graceful daemon shutdown during proof remains separate work.
+wrapper checks passed.
+
+The `933eb94` extension starts a separate synchronized daemon with an explicit private authorization
+credential. It proves unauthenticated `confirm=true` and authenticated `confirm=false` shutdown
+requests leave the process alive, begins a real valid transfer, waits for one active verifier, and
+then calls authenticated `stop_daemon` with `confirm=true`. The acknowledgement is written before a
+delayed event-loop cancellation; normal destruction joins the bounded verifier worker. The passing
+run exited 0 after 30.703 seconds and reopened the identical database at exact height 4, pool count
+zero, and no known interrupted transaction. The combined campaign passed all 11 checks. This proves
+safe join and state preservation on the local host, not cooperative Halo2 cancellation or a portable
+shutdown-latency bound.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete

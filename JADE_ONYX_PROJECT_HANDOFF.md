@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-12
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `d8abdef` (`Qualify abandoned Onyx verifier requests`)
+Last implementation revision reviewed: `933eb94` (`Qualify graceful Onyx verifier shutdown`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `d8abdef`.
+- **Implemented and committed** means the code is in the branch history at or before `933eb94`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -802,6 +802,14 @@ Validation performed before commit:
   abandoned-RPC counter advances 0 to 1, acquisitions advance 1 to 2, active verification returns to
   zero, and neither pool nor transaction lookup admits the abandoned request. The following normal
   load acquires verifier 3 and passes, proving permit reuse. All ten wrapper checks pass.
+- Commit `933eb94` adds an authenticated, explicitly confirmed `stop_daemon` RPC and qualifies it
+  during one active valid-proof verification. Shutdown control is disabled without a configured
+  private credential. An unauthenticated confirmed request and an authenticated `confirm=false`
+  request leave the process alive; the authenticated confirmed request is acknowledged, normal Node
+  destruction joins the bounded verifier worker, and the daemon exits 0. The measured join took
+  30.703 seconds. Reopening the same database produced exact height 4, pool count 0, and no known
+  uncommitted transaction. All 11 wrapper checks passed. The worker is joined, not cooperatively
+  cancelled, so an active proof can delay shutdown by its remaining verification time.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -1003,11 +1011,12 @@ Remaining:
 
 - Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
   HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
-- Add live invalid-proof floods and non-transfer conflict load, graceful node shutdown during proof,
-  mixed RPC/P2P ingress, and explicit fairness checks.
+- Add live authenticated invalid-proof floods and non-transfer conflict load, mixed RPC/P2P ingress,
+  and explicit fairness checks.
   Extend cheap rejection only through authenticated metadata extractors. The pending transfer
   conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`; abandoned
-  HTTP response ownership and permit cleanup are covered in `d8abdef`.
+  HTTP response ownership and permit cleanup are covered in `d8abdef`; graceful active-proof
+  shutdown and exact database reopen are covered in `933eb94`.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

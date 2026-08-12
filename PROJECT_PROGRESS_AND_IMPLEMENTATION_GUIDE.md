@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `d8abdef` on this branch.
+- **Committed**: present at or before Git revision `933eb94` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -932,6 +932,18 @@ run observed abandoned RPCs 0 to 1, acquisitions 1 to 2, active verification ret
 empty pool, and no transaction lookup result. The later normal load acquired verifier 3 and completed,
 proving capacity was reusable. All ten wrapper checks, complete ZK/Jade regressions, both build modes,
 and release-control absence passed.
+
+Commit `933eb94` adds and qualifies graceful process shutdown while a valid Halo2 verification is
+active. The new `stop_daemon` JSON-RPC method is disabled unless an explicit private authorization
+credential is configured, requires that credential on every request, and requires `confirm=true`.
+It acknowledges the authenticated operator before a short event-loop cancellation timer fires, then
+uses normal stack unwinding so `Node` destroys and joins its bounded verifier worker before pending
+request state is released. The real-process harness proves that an unauthenticated confirmed request
+and an authenticated unconfirmed request do not stop the daemon; starts a real valid transfer and
+waits for `onyx_verifier_active == 1`; requests shutdown; observes exit code 0 after 30.703 seconds;
+and reopens the same database at exact height 4 with pool count 0 and the uncommitted transaction
+unknown. The expanded campaign passed all 11 checks. This is graceful joining, not cooperative proof
+cancellation: shutdown latency remains bounded by the active backend verification time.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 
