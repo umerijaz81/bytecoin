@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 
 try:
     from .test_onyx_qualification_process import (
@@ -42,6 +43,7 @@ except ImportError:  # Direct execution places this script's directory on sys.pa
 SCHEMA = "bytecoin-onyx-verifier-load-process-v1"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOAD_TOOL = ROOT / "tools" / "onyx_verifier_load.py"
+MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
 
 
 def canonical_utc_now():
@@ -330,6 +332,61 @@ def main():
                 nodes + [source_wallet, receiver_wallet],
                 timeout=args.rpc_timeout,
             )
+
+            conflicting_transaction = next(
+                transaction
+                for transaction in transactions
+                if transaction["transaction_hash"] != accepted_transaction_hash
+            )
+            verifier_before_conflict = node.statistics().get(
+                "onyx_verifier_acquired", 0
+            )
+            prechecks_before_conflict = node.statistics().get(
+                "onyx_verifier_precheck_conflicts", 0
+            )
+            conflict_started = time.monotonic()
+            conflict_response = rpc_call(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": conflicting_transaction["binary_transaction"]},
+            )
+            conflict_elapsed = time.monotonic() - conflict_started
+            verifier_after_conflict = node.statistics().get(
+                "onyx_verifier_acquired", 0
+            )
+            prechecks_after_conflict = node.statistics().get(
+                "onyx_verifier_precheck_conflicts", 0
+            )
+            transfer_conflict_precheck = {
+                "transaction_hash": conflicting_transaction["transaction_hash"],
+                "elapsed_seconds": round(conflict_elapsed, 6),
+                "verifier_acquired_before": verifier_before_conflict,
+                "verifier_acquired_after": verifier_after_conflict,
+                "precheck_conflicts_before": prechecks_before_conflict,
+                "precheck_conflicts_after": prechecks_after_conflict,
+                "response": conflict_response,
+            }
+            if conflict_elapsed > MAX_PENDING_TRANSFER_CONFLICT_SECONDS:
+                raise RuntimeError(
+                    "pending transfer conflict exceeded the proof-free precheck ceiling: "
+                    f"elapsed={conflict_elapsed:.3f}s"
+                )
+            if verifier_after_conflict != verifier_before_conflict:
+                raise RuntimeError(
+                    "pending transfer conflict acquired the expensive verifier: "
+                    f"before={verifier_before_conflict} after={verifier_after_conflict}"
+                )
+            if prechecks_after_conflict != prechecks_before_conflict + 1:
+                raise RuntimeError(
+                    "pending transfer conflict did not increment the proof-free precheck counter: "
+                    f"before={prechecks_before_conflict} after={prechecks_after_conflict}"
+                )
+            if (
+                transaction_known(node, conflicting_transaction["transaction_hash"])
+                or node.statistics().get("transaction_pool_count") != 1
+            ):
+                raise RuntimeError("node admitted the conflicting sibling transfer")
+
             relay_after_load_status = relay_node.status()
             after_load_status = node.status()
             if (
@@ -387,6 +444,14 @@ def main():
                 )
                 and relay_after_load_status["top_block_height"]
                 == baseline_status["top_block_height"],
+                "pending_transfer_conflict_skipped_verifier": (
+                    verifier_after_conflict == verifier_before_conflict
+                    and prechecks_after_conflict == prechecks_before_conflict + 1
+                    and conflict_elapsed <= MAX_PENDING_TRANSFER_CONFLICT_SECONDS
+                    and not transaction_known(
+                        node, conflicting_transaction["transaction_hash"]
+                    )
+                ),
                 "post_load_block_progress": final_status["top_block_height"]
                 == final_height,
                 "post_load_wallet_progress": source_wallet.call("get_onyx_status")[
@@ -418,6 +483,7 @@ def main():
                     for transaction in transactions
                 ],
                 "admission_classifications": classifications,
+                "pending_transfer_conflict_precheck": transfer_conflict_precheck,
                 "baseline_status": baseline_status,
                 "after_load_status": after_load_status,
                 "final_status": final_status,

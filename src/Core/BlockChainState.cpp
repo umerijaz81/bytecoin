@@ -799,17 +799,132 @@ std::vector<TransactionDesc> BlockChainState::sync_pool(
 }
 
 std::unique_ptr<BlockChainState::OnyxMempoolVerification> BlockChainState::begin_onyx_mempool_verification(
-    const Hash &tid, const Transaction &tx, const std::string &source_address, bool *already_in_pool) {
-	if (already_in_pool != nullptr)
-		*already_in_pool = false;
+    const Hash &tid, const Transaction &tx, const std::string &source_address,
+    OnyxMempoolAdmission *admission, Amount *authenticated_fee) {
+	if (admission == nullptr || authenticated_fee == nullptr)
+		throw ConsensusError("Onyx admission result pointers are required");
+	*admission = OnyxMempoolAdmission::VERIFY;
+	*authenticated_fee = 0;
 	if (tx.version != m_currency.onyx_transaction_version || source_address.empty())
 		throw ConsensusError("External Onyx verification requires a non-empty source");
-	if (m_memory_state_tx.count(tid) != 0) {
-		if (already_in_pool != nullptr)
-			*already_in_pool = true;
+	auto existing = m_memory_state_tx.find(tid);
+	if (existing != m_memory_state_tx.end()) {
+		*admission = OnyxMempoolAdmission::ALREADY_IN_POOL;
+		*authenticated_fee = existing->second.fee;
 		return nullptr;
 	}
 #ifdef onyx_USE_ZK
+	auto conflict = [&](Amount fee) -> std::unique_ptr<OnyxMempoolVerification> {
+		m_onyx_verifier_admission.record_precheck_conflict();
+		*admission = OnyxMempoolAdmission::CONFLICT;
+		*authenticated_fee = fee;
+		return nullptr;
+	};
+	if (tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL &&
+	    !can_accept_zero_fee_standard_call(m_memory_state_zero_fee_standard_calls))
+		return conflict(0);
+	if (tx.onyx_type == parameters::ONYX_TYPE_TRANSFER) {
+		zk::Halo2ProofSystem::VerifiedTransferDelta transfer;
+		if (!zk::Halo2ProofSystem::extract_authenticated_transfer_delta(tx.onyx_envelope, &transfer))
+			throw ConsensusError("Invalid Onyx transfer authorization");
+		*authenticated_fee = transfer.fee;
+		for (const auto &nullifier : transfer.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return conflict(transfer.fee);
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		const auto state_precheck = zk::Halo2ProofSystem::precheck_authenticated_transfer_state(
+		    snapshot, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH);
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::INVALID)
+			throw ConsensusError("Invalid Onyx transfer state precheck");
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
+			throw ConsensusError("Onyx transfer nullifier already spent");
+	}
+	if (tx.onyx_type == parameters::ONYX_TYPE_PROGRAM_DEPLOYMENT) {
+		zk::Halo2ProofSystem::VerifiedProgramDeployment deployment;
+		if (!zk::Halo2ProofSystem::extract_authenticated_program_deployment(tx.onyx_envelope,
+		        parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, &deployment))
+			throw ConsensusError("Invalid Onyx program deployment authorization");
+		*authenticated_fee = deployment.funding.fee;
+		for (const auto &nullifier : deployment.funding.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return conflict(deployment.funding.fee);
+		if (m_memory_state_onyx_program_tx.count(deployment.program_id) != 0)
+			return conflict(deployment.funding.fee);
+	}
+	if (tx.onyx_type == parameters::ONYX_TYPE_TOKEN_ISSUANCE) {
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		std::array<uint8_t, 16> network{};
+		std::copy(m_config.network_id.data, m_config.network_id.data + network.size(), network.begin());
+		zk::Halo2ProofSystem::VerifiedTokenIssuance issuance;
+		const auto state_precheck = zk::Halo2ProofSystem::precheck_authenticated_token_issuance(snapshot,
+		    tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH, parameters::ONYX_TOKEN_CIRCUIT_K, network,
+		    get_tip_height() + 1, &issuance);
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::INVALID)
+			throw ConsensusError("Invalid Onyx token issuance authorization");
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
+			throw ConsensusError("Onyx token issuance rejected against current state");
+		if (m_memory_state_onyx_issuance_tx.count(issuance.program_id) != 0)
+			return conflict(0);
+	}
+	if (tx.onyx_type == parameters::ONYX_TYPE_BRIDGE) {
+		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
+		if (!zk::Halo2ProofSystem::extract_bridge_metadata(tx.onyx_envelope, &bridge))
+			throw ConsensusError("Malformed Onyx bridge");
+		*authenticated_fee = bridge.fee;
+		KeyImage key_image{};
+		Hash sighash{};
+		crypto::Signature signature{};
+		static_assert(sizeof(key_image.data) == 32 && sizeof(sighash.data) == 32 && sizeof(signature) == 64,
+		    "bridge ownership ABI sizes changed");
+		std::memcpy(key_image.data, bridge.legacy_key_image.data(), 32);
+		std::memcpy(sighash.data, bridge.ownership_sighash.data(), 32);
+		std::memcpy(&signature, bridge.ownership_signature.data(), 64);
+		if (!key_in_main_subgroup(key_image))
+			throw ConsensusError("Legacy bridge key image not in main subgroup");
+		if (bridge.legacy_stack_index > std::numeric_limits<size_t>::max())
+			throw ConsensusError("Legacy bridge stack index overflow");
+		OutputIndexData output;
+		if (!read_amount_output(bridge.legacy_amount, static_cast<size_t>(bridge.legacy_stack_index), &output))
+			throw ConsensusError("Legacy bridge output does not exist");
+		const Height next_height = get_tip_height() + 1;
+		const uint8_t next_version = m_currency.get_next_block_major_version(get_tip_height());
+		if (!m_currency.is_transaction_unlocked(next_version, output.unlock_block_or_timestamp,
+		        next_height, get_tip().timestamp, get_tip().timestamp_median))
+			throw ConsensusError("Legacy bridge output is locked");
+		const std::vector<PublicKey> output_keys{output.public_key};
+		const RingSignature ownership_signature{signature};
+		if (!crypto::check_ring_signature(sighash, key_image, output_keys, ownership_signature))
+			throw ConsensusError("Invalid legacy bridge ownership signature");
+		Height spent_height = 0;
+		if (read_keyimage(key_image, &spent_height))
+			throw ConsensusErrorOutputSpent("Legacy bridge output already spent", key_image, spent_height);
+		if (m_memory_state_ki_tx.count(key_image) != 0)
+			return conflict(bridge.fee);
+	}
+	if (tx.onyx_type == parameters::ONYX_TYPE_STANDARD_PROGRAM_CALL) {
+		zk::Halo2ProofSystem::VerifiedTransferDelta transfer;
+		std::vector<std::array<uint8_t, 32>> state_keys;
+		if (!zk::Halo2ProofSystem::extract_authenticated_standard_program_delta(
+		        tx.onyx_envelope, &transfer, &state_keys))
+			throw ConsensusError("Invalid Onyx standard program call authorization");
+		*authenticated_fee = transfer.fee;
+		for (const auto &nullifier : transfer.nullifiers)
+			if (m_memory_state_onyx_nf_tx.count(nullifier) != 0)
+				return conflict(transfer.fee);
+		for (const auto &state_key : state_keys)
+			if (m_memory_state_onyx_standard_state_tx.count(state_key) != 0)
+				return conflict(transfer.fee);
+		BinaryArray snapshot;
+		read_onyx_snapshot(&snapshot);
+		const auto state_precheck = zk::Halo2ProofSystem::precheck_authenticated_standard_program_state(
+		    snapshot, tx.onyx_envelope, parameters::ONYX_MERKLE_DEPTH);
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::INVALID)
+			throw ConsensusError("Invalid Onyx standard program call precheck");
+		if (state_precheck == zk::Halo2ProofSystem::AdmissionPrecheck::CONFLICT)
+			throw ConsensusError("Onyx standard program call rejected against current state");
+	}
 	auto result = std::make_unique<OnyxMempoolVerification>();
 	result->permit = m_onyx_verifier_admission.try_acquire(source_address);
 	if (!result->permit)

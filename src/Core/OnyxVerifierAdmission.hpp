@@ -24,6 +24,7 @@ public:
 		uint64_t acquired = 0;
 		uint64_t rejected_global = 0;
 		uint64_t rejected_source = 0;
+		uint64_t precheck_conflicts = 0;
 	};
 
 	class Permit {
@@ -68,7 +69,13 @@ public:
 
 	Stats stats() const {
 		std::lock_guard<std::mutex> lock(m_mutex);
-		return Stats{m_active, m_peak_active, m_acquired, m_rejected_global, m_rejected_source};
+		return Stats{m_active, m_peak_active, m_acquired, m_rejected_global, m_rejected_source,
+		    m_precheck_conflicts};
+	}
+
+	void record_precheck_conflict() {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		++m_precheck_conflicts;
 	}
 
 	size_t active() const {
@@ -95,6 +102,7 @@ private:
 	uint64_t m_acquired = 0;
 	uint64_t m_rejected_global = 0;
 	uint64_t m_rejected_source = 0;
+	uint64_t m_precheck_conflicts = 0;
 	std::unordered_map<std::string, size_t> m_active_by_source;
 };
 

@@ -128,6 +128,7 @@ struct CoreStatistics {
 	uint64_t onyx_verifier_acquired             = 0;
 	uint64_t onyx_verifier_rejected_global      = 0;
 	uint64_t onyx_verifier_rejected_source      = 0;
+	uint64_t onyx_verifier_precheck_conflicts   = 0;
 	size_t transaction_downloads_active         = 0;
 	size_t onyx_verifier_retry_cooldowns        = 0;
 };

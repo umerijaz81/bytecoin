@@ -672,6 +672,7 @@ api::cnd::GetStatistics::Response Node::create_statistics_response(const api::cn
 	res.onyx_verifier_acquired = verifier.acquired;
 	res.onyx_verifier_rejected_global = verifier.rejected_global;
 	res.onyx_verifier_rejected_source = verifier.rejected_source;
+	res.onyx_verifier_precheck_conflicts = verifier.precheck_conflicts;
 	res.transaction_downloads_active = downloading_transactions.size();
 	res.onyx_verifier_retry_cooldowns = m_onyx_verifier_retry_cooldown.size();
 	return res;
@@ -991,15 +992,18 @@ bool Node::on_send_transaction(http::Client *who, http::RequestBody &&raw_reques
 		const Hash tid = get_transaction_hash(tx);
 #ifdef onyx_USE_ZK
 		if (tx.version == m_block_chain.get_currency().onyx_transaction_version) {
-			bool already_in_pool = false;
+			BlockChainState::OnyxMempoolAdmission admission;
+			Amount authenticated_fee = 0;
 			auto verification = m_block_chain.begin_onyx_mempool_verification(
-			    tid, tx, "json_rpc", &already_in_pool);
-			if (already_in_pool) {
+			    tid, tx, "json_rpc", &admission, &authenticated_fee);
+			if (admission == BlockChainState::OnyxMempoolAdmission::ALREADY_IN_POOL) {
 				Amount ignored_fee = 0;
 				m_block_chain.add_transaction(
 				    tid, tx, request.binary_transaction, true, "json_rpc", &ignored_fee);
 				return true;
 			}
+			if (admission == BlockChainState::OnyxMempoolAdmission::CONFLICT)
+				return true;
 			auto pending = std::make_shared<PendingOnyxRpc>();
 		pending->token = m_next_onyx_rpc_token++;
 		pending->who = who;

@@ -91,8 +91,10 @@ public:
 		zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
 #endif
 	};
+	enum class OnyxMempoolAdmission { VERIFY, ALREADY_IN_POOL, CONFLICT };
 	std::unique_ptr<OnyxMempoolVerification> begin_onyx_mempool_verification(
-	    const Hash &tid, const Transaction &, const std::string &source_address, bool *already_in_pool);
+	    const Hash &tid, const Transaction &, const std::string &source_address,
+	    OnyxMempoolAdmission *admission, Amount *authenticated_fee);
 	static void verify_onyx_mempool_transaction(OnyxMempoolVerification *);
 	static bool matches_onyx_mempool_verification(const OnyxMempoolVerification &, const Hash &tid,
 	    const Transaction &, const Hash &tip_hash, Height block_height, const BinaryArray &snapshot);

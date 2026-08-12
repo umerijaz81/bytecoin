@@ -30,6 +30,7 @@ METRIC_FIELDS = (
     "onyx_verifier_acquired",
     "onyx_verifier_rejected_global",
     "onyx_verifier_rejected_source",
+    "onyx_verifier_precheck_conflicts",
     "transaction_downloads_active",
     "onyx_verifier_retry_cooldowns",
 )

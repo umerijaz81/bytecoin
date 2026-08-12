@@ -410,8 +410,11 @@ void test_jade_consensus(common::CommandLine &cmd) {
 		const auto saturated_stats = admission.stats();
 		invariant(saturated_stats.active == 2 && saturated_stats.peak_active == 2 &&
 		              saturated_stats.acquired == 2 && saturated_stats.rejected_source == 1 &&
-		              saturated_stats.rejected_global == 1,
+		              saturated_stats.rejected_global == 1 && saturated_stats.precheck_conflicts == 0,
 		    "Onyx verifier observability counters changed at saturation");
+		admission.record_precheck_conflict();
+		invariant(admission.stats().precheck_conflicts == 1,
+		    "Onyx proof-free precheck conflict counter changed");
 		peer_a.reset();
 		auto peer_c = admission.try_acquire("peer-c");
 		invariant(peer_c != nullptr && admission.active() == 2,

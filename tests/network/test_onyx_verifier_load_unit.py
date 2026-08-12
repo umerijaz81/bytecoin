@@ -35,6 +35,7 @@ class OnyxVerifierLoadUnitTests(unittest.TestCase):
         metrics = LOAD.normalized_metrics({"result": {"onyx_verifier_acquired": 7}})
         self.assertEqual(metrics["onyx_verifier_acquired"], 7)
         self.assertEqual(metrics["onyx_verifier_active"], 0)
+        self.assertEqual(metrics["onyx_verifier_precheck_conflicts"], 0)
         self.assertEqual(LOAD.classify({"result": {}}), "accepted")
         self.assertEqual(
             LOAD.classify({"error": {"code": LOAD.VERIFIER_BUSY}}), "verifier_busy"

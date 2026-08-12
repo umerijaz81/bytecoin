@@ -80,6 +80,7 @@ void ser_members(CoreStatistics &v, seria::ISeria &s) {
 	seria_kv_optional("onyx_verifier_acquired", v.onyx_verifier_acquired, s);
 	seria_kv_optional("onyx_verifier_rejected_global", v.onyx_verifier_rejected_global, s);
 	seria_kv_optional("onyx_verifier_rejected_source", v.onyx_verifier_rejected_source, s);
+	seria_kv_optional("onyx_verifier_precheck_conflicts", v.onyx_verifier_precheck_conflicts, s);
 	seria_kv_optional("transaction_downloads_active", v.transaction_downloads_active, s);
 	seria_kv_optional("onyx_verifier_retry_cooldowns", v.onyx_verifier_retry_cooldowns, s);
 }

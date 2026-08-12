@@ -531,10 +531,28 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 			try {
 #ifdef onyx_USE_ZK
 				if (tx.version == m_node->m_block_chain.get_currency().onyx_transaction_version) {
-					bool already_in_pool = false;
+					BlockChainState::OnyxMempoolAdmission admission;
+					Amount authenticated_fee = 0;
 					auto verification = m_node->m_block_chain.begin_onyx_mempool_verification(
-					    tid, tx, get_address().to_string(), &already_in_pool);
-					if (!already_in_pool) {
+					    tid, tx, get_address().to_string(), &admission, &authenticated_fee);
+					if (admission == BlockChainState::OnyxMempoolAdmission::CONFLICT) {
+						if (tit->second.fee != authenticated_fee)
+							return disconnect("Lied about transcation fee");
+						cit = m_node->downloading_transactions.erase(cit);
+						tit = m_transaction_descs.erase(tit);
+						m_stem_transaction_hops.erase(tid);
+						invariant(m_downloading_transaction_count > 0, "");
+						m_downloading_transaction_count -= 1;
+						for (auto who : m_node->m_broadcast_protocols)
+							if (who != this)
+								who->transaction_download_finished(tid, true);
+						if (m_downloading_transaction_count != 0)
+							m_download_transactions_timer.once(m_node->m_config.download_transaction_timeout);
+						else
+							m_download_transactions_timer.cancel();
+						return;
+					}
+					if (admission == BlockChainState::OnyxMempoolAdmission::VERIFY) {
 						const TransactionDesc announced = tit->second;
 						if (!m_node->schedule_onyx_p2p(this, std::move(tx), std::move(btx),
 						        announced, stem_hop, std::move(verification)))
