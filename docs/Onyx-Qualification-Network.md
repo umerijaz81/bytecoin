@@ -215,7 +215,7 @@ The first bounded parallel valid-proof HTTP/P2P run passes in `585bc4d`, and `71
 worker-ordering gap found during follow-up review. Authenticated pool/state conflicts are now checked
 before acquiring a verifier permit or submitting Halo2 work, rather than only when the worker result
 returns to the event loop. Cold/warm repetition,
-named-hardware variance, invalid-proof floods, sustained sequential load, and memory-pressure
+named-hardware variance, sustained invalid-proof floods, sustained sequential load, and memory-pressure
 qualification remain open. Authenticated cheap filters cover standard calls, transfers, deployments,
 issuance, and bridges. No precheck may become a substitute for full canonical consensus verification.
 
@@ -259,6 +259,18 @@ run exited 0 after 30.703 seconds and reopened the identical database at exact h
 zero, and no known interrupted transaction. The combined campaign passed all 11 checks. This proves
 safe join and state preservation on the local host, not cooperative Halo2 cancellation or a portable
 shutdown-latency bound.
+
+The `d96060f` extension uses a dedicated `ONYX_INVALID_PROOF_TESTS=ON` build. That option requires
+ZK, enables a non-distributable Cargo feature, and isolates Cargo output per CMake build tree. The
+fixture changes one byte of a completed real Halo2 proof before signing those exact altered bytes.
+A focused Rust test proves spend/binding authorization succeeds and Halo2 verification fails. Clean
+ordinary ZK and non-ZK daemon/wallet binaries are scanned for and exclude both fixture markers.
+
+In the live topology, one authenticated 8,403-byte invalid transfer is submitted three times. Each
+returns error `-101` in 0.218, 0.297, and 0.297 seconds. Acquisitions advance exactly 2 to 5, active
+returns to zero, pool count remains zero, and lookup remains false. The subsequent valid barrier
+acquires verifier 6. The combined campaign passes all 12 checks. This is a bounded local repetition;
+sustained floods, other envelope shapes, mixed ingress, and named-host limits remain open.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete

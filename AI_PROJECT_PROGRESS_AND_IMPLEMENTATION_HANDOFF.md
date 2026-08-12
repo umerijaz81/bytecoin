@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `933eb94` (`Qualify graceful Onyx verifier shutdown`)
+- Committed revision reviewed: `d96060f` (`Qualify authenticated invalid Onyx proofs`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `933eb94` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `d96060f` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `933eb94`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `d96060f`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -907,7 +907,24 @@ folder at exact height 4 with zero pool transactions and no lookup result for th
 transaction. All 11 wrapper checks pass. This design waits for the backend call; it does not interrupt
 Halo2 cooperatively, so operator shutdown latency includes the remaining proof-verification time.
 
-Validation through `933eb94`: ZK and non-ZK Release `bytecoind`/`tests`/`walletd`/`minerd` builds
+Commit `d96060f` introduces the first authenticated-invalid-proof qualification without adding an
+unsafe production wallet facility. `ONYX_INVALID_PROOF_TESTS` requires `ONYX_ZK=ON`, enables the Rust
+`qualification-fixtures` feature, emits a non-distribution warning, and uses a build-tree-local Cargo
+target so differently featured `onyx_zk` libraries cannot replace each other. Only that build exposes
+the wallet RPC field and C ABI. The builder mutates one byte after creating a real Halo2 proof and
+before generating spend/binding signatures. The direct Rust invariant verifies all authorization and
+then requires Halo2 failure. The enhanced ordinary-artifact scanner proves both fixture strings are
+absent from clean ZK and non-ZK `bytecoind` and `walletd` builds.
+
+The live process report records a single 8,403-byte authenticated invalid transaction submitted three
+times. Every attempt returns `-101` (`Invalid asynchronous Onyx verification result`) in
+0.218/0.297/0.297 seconds; acquisitions advance 2 to 5; verifier active, pool count, and transaction
+lookup end at 0/0/false. The subsequent valid barrier advances acquisition to 6, proving permit reuse.
+All 12 wrapper checks pass. This is bounded local evidence and must not be represented as a sustained
+invalid-proof flood threshold.
+
+Validation through `d96060f`: ordinary ZK, qualification-feature ZK, and non-ZK Release
+`bytecoind`/`tests`/`walletd`/`minerd` builds
 passed; both `tests.exe --jade` runs passed; Python compilation and the load-runner unit suite passed; the complete
 C++ `--zk` suite passed; and the expanded two-node process campaign passed. The normal non-ZK daemon
 still excludes the crash/fault controls.
@@ -915,14 +932,15 @@ still excludes the crash/fault controls.
 ### 15.4 Remaining verifier qualification work
 
 1. Repeat separate cold-start and warm-cache runs on named x86-64 and ARM64 hosts.
-2. Exercise deployment/issuance/bridge/program-call authenticated conflicts, authenticated invalid
-   proofs, and stale-chain completion under deterministic and live conditions. Pending
+2. Exercise deployment/issuance/bridge/program-call authenticated conflicts and invalid proofs, plus
+   stale-chain completion under deterministic and live conditions. Pending
    private-transfer conflict, exact duplicate resubmission, HTTP client abandonment, and graceful
-   active-proof shutdown are now live-qualified.
+   active-proof shutdown and a three-attempt authenticated invalid private-transfer campaign are now
+   live-qualified.
 3. Run repeated RPC-only, P2P-only, and mixed-ingress campaigns while ordinary RPC, wallet scanning,
    mining, and block application remain active.
-4. Add malformed-proof and valid-proof floods while proving queue/download/cooldown bounds and no
-   permit leaks.
+4. Extend authenticated-invalid and valid-proof work into sustained floods while proving
+   queue/download/cooldown bounds and no permit leaks.
 5. Establish percentile latency, CPU, and RSS thresholds from repeated measurements rather than the
    single local run.
 6. Retain hosted CI artifacts for the exact committed revision and complete the independently
@@ -1018,7 +1036,8 @@ After the async boundary passes, run separate cold-start and warm-cache processe
 non-transfer conflicts; malformed-proof floods; RPC and P2P ingress; mixed ordinary RPC/mining load;
 and repeated runs for defensible CPU, latency, and RSS thresholds. The pending transfer conflict is
 live-qualified in `715d019`, exact duplicate resubmission in `59b0721`, HTTP client abandonment after
-verifier start in `d8abdef`, and graceful active-proof shutdown/database reopen in `933eb94`.
+verifier start in `d8abdef`, graceful active-proof shutdown/database reopen in `933eb94`, and bounded
+authenticated invalid-transfer rejection/permit reuse in `d96060f`.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
@@ -1222,8 +1241,8 @@ Commit `585bc4d` implements bounded asynchronous HTTP/P2P verification and the r
 passes with continuous daemon sampling, deterministic overload, P2P propagation, mining/wallet
 progress, and exact cross-node supply equality. Commit `715d019` moves authenticated conflicts before
 worker submission and live-qualifies the pending transfer case. Continue with cold/warm,
-disconnect/shutdown,
-invalid-proof, mixed-ingress, repeated-host, and hosted-CI campaigns in section 15.4.
+non-transfer invalid-proof, sustained-load, mixed-ingress, repeated-host, and hosted-CI campaigns in
+section 15.4.
 
 Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS
 thresholds without changing consensus validity or skipping verification.

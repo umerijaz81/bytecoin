@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-12**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `933eb94` (`Qualify graceful Onyx verifier shutdown`)
+Implementation revision documented: `d96060f` (`Qualify authenticated invalid Onyx proofs`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `933eb94` on this branch.
+- **Committed**: present at or before Git revision `d96060f` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -903,7 +903,7 @@ The real two-node/two-wallet valid-proof harness passed locally: one accepted re
 peak verifier activity one, successful asynchronous P2P propagation, both nodes at height 5, and
 exact final commitment/supply equality. Peak daemon RSS was 563,384,320 bytes with 266,223,616 bytes
 growth on this host. This closes the synchronous-dispatch blocker but remains local evidence;
-repeated cold/warm, invalid-proof, mixed-ingress, named-hardware, and sustained campaigns are still
+repeated cold/warm, sustained invalid-proof, mixed-ingress, named-hardware, and long campaigns are still
 required before setting release thresholds.
 
 Commit `715d019` fixes the remaining asynchronous ordering gap: the authenticated transfer,
@@ -944,6 +944,21 @@ waits for `onyx_verifier_active == 1`; requests shutdown; observes exit code 0 a
 and reopens the same database at exact height 4 with pool count 0 and the uncommitted transaction
 unknown. The expanded campaign passed all 11 checks. This is graceful joining, not cooperative proof
 cancellation: shutdown latency remains bounded by the active backend verification time.
+
+Commit `d96060f` closes the missing authenticated-invalid-proof fixture and bounded live campaign.
+The opt-in `ONYX_INVALID_PROOF_TESTS` configuration requires `ONYX_ZK=ON`, enables a dedicated Cargo
+feature, marks the binaries non-distributable, and places Cargo outputs below each CMake build tree so
+feature-enabled and ordinary static libraries cannot overwrite one another. Inside the wallet builder,
+the qualification path changes one byte of a completed real Halo2 transcript and then signs those exact
+bytes with the genuine spend and binding keys. A direct Rust test proves authorization succeeds while
+the matching Halo2 verifier rejects. Ordinary ZK and non-ZK `bytecoind`/`walletd` binaries contain
+neither the RPC marker nor fixture ABI symbol.
+
+The expanded real-process campaign submits the authenticated 8,403-byte invalid transfer three times.
+All three return consensus error `-101` in 0.218, 0.297, and 0.297 seconds; verifier acquisitions move
+exactly 2 to 5; active work returns to zero; pool count remains zero; and transaction lookup remains
+false. The following valid-proof barrier acquires verifier 6, proving capacity reuse. All 12 wrapper
+checks pass. This is a bounded local three-attempt campaign, not a sustained flood or release limit.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 
