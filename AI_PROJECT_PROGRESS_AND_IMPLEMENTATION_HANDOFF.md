@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `6ec3eb9` (`Extend Onyx SQLite I/O fault coverage`)
+- Committed revision reviewed: `cef868c` (`Qualify representative Onyx torn writes`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `585bc4d` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `cef868c` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -372,16 +372,18 @@ Primary implementation:
   evidence.
 - With `ONYX_CRASH_TESTS=ON`, `DBsqlite3.cpp` compiles `onyx-fault-vfs`, a forwarding wrapper around
   the platform default VFS. It preserves the underlying I/O-method ABI version and delegates every
-  call except one armed main-journal/main-database `xWrite` or `xSync`. Four hidden native modes report
+  call except one armed main-journal/main-database/WAL `xWrite` or `xSync`. Hidden native modes report
   target, operation, state/undo/commit stage, exact extended SQLite code, and trigger count. Ordinary
   builds compile out the wrapper, modes, marker, and case strings; the release-absence scan enforces
   that boundary.
-- `tests/network/test_onyx_db_ioerr_process.py` v2 runs journal/database/WAL write and sync failures,
-  plus journal and database half-write failures that persist exact 256-byte and 2,048-byte prefixes.
-  Each of eight fault types runs across three independent fresh images, must trigger once with code 778
+- `tests/network/test_onyx_db_ioerr_process.py` v3 runs journal/database/WAL write and sync failures,
+  plus first-byte, half-write, and final-byte-short failures on every file class. Each of fifteen fault
+  types runs across three independent fresh images, must trigger once with code 778
   (`SQLITE_IOERR_WRITE`) or 1034 (`SQLITE_IOERR_FSYNC`), then recover the exact old raw rows through
-  both native and independent SQLite readers. A committed control must advance. The 2026-08-12 final
-  Windows run passed 25 cases in 2.157 seconds; its retained v2 report was 60,872 bytes.
+  both native and independent SQLite readers. A committed control must advance. The `cef868c`
+  Windows run passed 46 cases in 3.734 seconds; its report was 116,581 bytes. Exact observed prefixes
+  were journal 1/256/511 of 512 bytes, database 1/2,048/4,095 of 4,096 bytes, and WAL 1/16/31 of 32
+  bytes.
 - `tests/network/test_onyx_daemon_crash_process.py` now drives six compile-time-gated fault points
   through real `bytecoind` processes: apply after the state/undo writes, apply before commit, apply
   after commit, reorganization after undo, reorganization before commit, and reorganization after

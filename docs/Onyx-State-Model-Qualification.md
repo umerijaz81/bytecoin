@@ -227,14 +227,16 @@ not inject journal-write/fsync errors, enforce real filesystem quotas, or emulat
 ### Test-only VFS I/O-fault extension
 
 The compile-time qualification VFS forwards the platform VFS but fails exactly one journal/database/WAL
-write or sync. Eight fault types across three fresh-image cycles require exact extended codes 778 or
+write or sync. Fifteen fault types across three fresh-image cycles require exact extended codes 778 or
 1034 at their named state/commit stage, exactly one trigger, and exact old-state recovery through both
-the production adapter and an independent SQLite reader. Partial-write cases first persist half of a
-512-byte journal call or 4,096-byte database call. The final local campaign passed all 24 faults plus a
-committed control in 2.157 seconds. Normal artifacts compile out the VFS and markers, which the
-release-absence regression scans. This closes bounded repeated independent one-shot rollback-journal,
-database, partial-write, and WAL write/sync injection; combined faults, arbitrary cut points, directory
-sync, device behavior, and power loss remain.
+the production adapter and an independent SQLite reader. Representative torn-write cases persist the
+first byte, half, or all but the final byte of the underlying request. The `cef868c` Windows campaign
+passed all 45 faults plus a committed control in 3.734 seconds: journal prefixes were 1/256/511 of 512
+bytes, database prefixes were 1/2,048/4,095 of 4,096 bytes, and WAL prefixes were 1/16/31 of 32 bytes.
+Normal artifacts compile out the VFS and markers, which the release-absence regression scans. This
+closes bounded repeated independent one-shot rollback-journal/database/WAL write and sync injection at
+representative torn-write positions; combined faults, every cut position, directory sync, device
+behavior, and power loss remain.
 
 ## Continuation tasks
 
@@ -247,13 +249,13 @@ For the next implementation milestone:
 3. Add coverage-guided and sanitizer-backed snapshot/database-image fuzz targets. Structured snapshot
    mutations now cover count encodings, ordering, duplicates, canonical fields, truncation, trailing
    bytes, and bounded splices. Deterministic small SQLite and rollback-journal mutations are covered;
-   Real in-checkpoint interruption, arbitrary torn writes, storage ordering, and coverage evidence
-   remain after the deterministic WAL/checkpoint-bundle campaign.
+   real in-checkpoint interruption, exhaustive or randomly selected torn-write positions, storage
+   ordering, and coverage evidence remain after the deterministic WAL/checkpoint-bundle campaign.
 4. Run identical immutable-revision campaigns on clean Linux, macOS, and Windows hosts and compare
    roots and operation summaries.
 5. Extend the full-daemon crash harness across multi-transaction blocks, transfers, issuance,
-   deployment rollback, repeated failures, real filesystem quota exhaustion, partial/repeated/WAL I/O
-   combined/arbitrary-cut/directory-sync faults, and OS flush/power-loss boundaries. Bounded SQLite
+   deployment rollback, repeated failures, real filesystem quota exhaustion, combined/repeated and
+   directory-sync faults, broader torn-write offsets, and OS flush/power-loss boundaries. Bounded SQLite
    page exhaustion and repeated independent one-shot rollback-journal/database/WAL write/sync faults
    are covered at the production adapter boundary.
 6. Submit the reference-model assumptions and production state transition to an independent

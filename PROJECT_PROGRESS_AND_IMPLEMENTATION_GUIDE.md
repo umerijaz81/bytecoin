@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `7e46efb` on this branch.
+- **Committed**: present at or before Git revision `cef868c` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -322,10 +322,12 @@ Current implementation and next task:
   stage, then proves byte-identical exact rollback plus a committed positive control. Real filesystem
   quotas and broader combined/directory-sync I/O injection remain separate gates.
   `tests/network/test_onyx_db_ioerr_process.py` uses a compile-time-only forwarding VFS to fail exactly
-  one main-journal/main-database/WAL write or sync, including exact half-write cases, requires codes
-  778/1034 at the exact stage, and proves old-state recovery across three fresh cycles plus a committed
-  control. Ordinary artifacts exclude its VFS and strings; combined, arbitrary-cut, directory-sync,
-  and device faults remain.
+  one main-journal/main-database/WAL write or sync. Revision `cef868c` adds representative first-byte,
+  half-write, and final-byte-short prefixes for all three file classes, records requested/persisted
+  lengths, requires codes 778/1034 at the exact stage, and proves old-state recovery across three
+  fresh cycles plus a committed control. The v3 Windows run passed 45 faults plus control in 3.734
+  seconds. Ordinary artifacts exclude its VFS and strings; combined, exhaustive-cut,
+  directory-sync, and device faults remain.
 
 ## 9. O2 — private native transfers and authorization
 

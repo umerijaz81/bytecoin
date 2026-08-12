@@ -73,5 +73,7 @@ the sanitizer/libFuzzer harness above; it does not provide edge coverage. A sepa
 process campaigns mutate small SQLite/rollback-journal images and deterministic WAL/checkpoint file
 bundles. A separate bounded runner forces `SQLITE_FULL` during state and undo writes. These do not
 fuzz a live checkpoint routine or replace sustained coverage-guided campaigns. A compile-time-only
-forwarding VFS injects repeated independent journal/database/WAL write/sync errors and two exact
-half-write cases. Combined faults, arbitrary cut positions, and directory-sync errors remain.
+forwarding VFS injects repeated independent journal/database/WAL write/sync errors plus first-byte,
+half-write, and final-byte-short prefixes on all three file classes. The v3 campaign runs 45 faults
+across fresh images plus a committed control and records both requested and persisted byte counts.
+Combined faults, exhaustive or fuzz-selected cut positions, and directory-sync errors remain.

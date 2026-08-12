@@ -1,9 +1,9 @@
 # Jade/Onyx Project Progress and Implementation Handoff
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-12
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `6ec3eb9` (`Extend Onyx SQLite I/O fault coverage`)
+Last implementation revision reviewed: `cef868c` (`Qualify representative Onyx torn writes`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `5101111`.
+- **Implemented and committed** means the code is in the branch history at or before `cef868c`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -197,10 +197,12 @@ Implemented:
 - Deterministic SQLite page-exhaustion campaign forcing primary code 13 during a 1 MiB state write and
   during an undo write after the new state was staged. Both failed transactions reopen at the exact,
   byte-identical prior state; a committed positive control proves the harness can observe progress.
-- Compile-time-only forwarding SQLite VFS and 25-case v2 process campaign: eight journal/database/WAL
-  write/sync fault types across three fresh cycles plus a committed control. Two half-write cases
-  persist exact prefixes before code 778. Every fault fires once with exact code 778/1034 and recovers
-  the exact old state. Normal artifacts exclude the VFS, modes, markers, and case strings.
+- Compile-time-only forwarding SQLite VFS and 46-case v3 process campaign: fifteen
+  journal/database/WAL write, sync, and representative torn-write fault types across three fresh
+  cycles plus a committed control. First-byte, half-write, and final-byte-short cases persist exact
+  prefixes before code 778. Every fault fires once with exact code 778/1034 and recovers the exact old
+  state. The `cef868c` Windows run completed in 3.734 seconds. Normal artifacts exclude the VFS,
+  modes, markers, and case strings.
 - Six compile-time-gated real-daemon exits around bridge apply and an NFT-state longer-chain reorg.
   Reopen checks bind exact tip/root/supply/program-state and raw state/undo rows. This campaign found
   and fixed SQLite empty-BLOB reads being misclassified as missing keys, which had prevented undo of
@@ -221,12 +223,12 @@ Still required:
   broader/longer extensions of the retained deterministic campaign.
 - Longer and broader `bytecoind` kill/restart campaigns covering multi-block/multi-transaction
   transitions, transfer/issuance/deployment variants, repeated failures, real filesystem quotas,
-  combined/arbitrary-cut/directory-sync I/O faults, and real in-checkpoint termination plus OS
+  combined/exhaustive-cut/directory-sync I/O faults, and real in-checkpoint termination plus OS
   flush/power-loss boundaries. Bounded adapter-level SQLite page exhaustion and repeated independent
   rollback-journal/database/WAL write/sync faults are covered; the current full-daemon campaign
   covers bridge apply and a stateful NFT reorganization at six transaction points.
 - Combined-maxima and production-SQLite named-hardware qualification, coverage-guided/sanitizer
-  snapshot/database fuzzing, and real checkpoint interruption, arbitrary partial-write, disk-fault,
+  snapshot/database fuzzing, and real checkpoint interruption, broader partial-write, disk-fault,
   and power-loss recovery. Structured snapshot mutation, separate exact collection maxima, bounded
   small rollback-journal/database mutations, and deterministic WAL bundle mixes are now measured.
 

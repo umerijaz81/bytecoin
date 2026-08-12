@@ -423,22 +423,26 @@ fsync I/O errors, device removal, storage latency, or power-loss durability.
 
 When and only when configured with `ONYX_CRASH_TESTS=ON`, `DBsqlite3.cpp` compiles a forwarding SQLite
 VFS named `onyx-fault-vfs`. It wraps the platform's default VFS and delegates every operation except
-one armed `xWrite` or `xSync` call on either the main rollback journal or main database. The wrapper
-mirrors each underlying file's exact I/O-method ABI version. The four modes therefore return real
+one armed `xWrite` or `xSync` call on the main rollback journal, main database, or WAL. The wrapper
+mirrors each underlying file's exact I/O-method ABI version. The modes therefore return real
 extended SQLite codes `SQLITE_IOERR_WRITE` (`778`) or `SQLITE_IOERR_FSYNC` (`1034`) from the intended
 storage object without modifying production VFS behavior.
 
-`tests/network/test_onyx_db_ioerr_process.py` runs eight fault types across three independent fresh
+`tests/network/test_onyx_db_ioerr_process.py` runs fifteen fault types across three independent fresh
 fixtures per type:
 
 1. journal write failure during the state replacement;
 2. journal sync failure during commit;
 3. database write failure during commit;
-4. database sync failure during commit.
-5. a journal partial write that persists 256 of 512 requested bytes before returning an error;
-6. a database partial write that persists 2,048 of 4,096 requested bytes before returning an error;
+4. database sync failure during commit;
+5. journal representative torn writes that persist the first byte, half, or all but the final byte of
+   a 512-byte request before returning an error;
+6. database representative torn writes that persist the first byte, half, or all but the final byte
+   of a 4,096-byte request before returning an error;
 7. WAL write failure during commit;
-8. WAL sync failure during commit.
+8. WAL sync failure during commit;
+9. WAL representative torn writes that persist the first byte, half, or all but the final byte of a
+   32-byte request before returning an error.
 
 Every native child must identify the target, operation, state/undo/commit stage, exact extended code,
 and exactly one injected call. A new production-adapter process must then return the exact old state
@@ -454,18 +458,20 @@ python tests/network/test_onyx_db_ioerr_process.py \
   --report build-onyx-ioerr/onyx-db-ioerr-process.json
 ```
 
-The 2026-08-12 final Windows v2 run passed 24 faults plus one committed control in 2.157 seconds. Every
-fault fired once with the expected target, stage, and code; all recovered exactly. Partial journal and
-database calls retained their exact 256-byte and 2,048-byte written prefixes in every cycle. The
-60,872-byte report uses schema `bytecoin-onyx-db-ioerr-campaign-v2` and scope
-`compile-time-test-vfs-repeated-independent-single-fault-local-or-ci-not-device-release-evidence`. It binds
-revision/executable identity, process/report/output bounds, before/fault/recovery file manifests, and
-both native and independent state oracles.
+The 2026-08-12 Windows v3 run at implementation revision `cef868c` passed 45 faults plus one committed
+control in 3.734 seconds. Every fault fired once with the expected target, stage, and code; all
+recovered exactly. Across every cycle, journal cut points wrote 1, 256, or 511 of 512 requested bytes;
+database cut points wrote 1, 2,048, or 4,095 of 4,096 bytes; and WAL cut points wrote 1, 16, or 31 of
+32 bytes. The 116,581-byte report uses schema `bytecoin-onyx-db-ioerr-campaign-v3` and scope
+`compile-time-test-vfs-representative-torn-writes-local-or-ci-not-device-release-evidence`. It binds
+revision/executable identity, process/report/output bounds, before/fault/recovery file manifests, the
+requested and persisted prefix lengths, and both native and independent state oracles.
 
 Ordinary builds compile out the VFS, modes, marker, and fault strings. The release-absence regression
 scans a normal `bytecoind` and requires the hidden daemon option to remain unknown. This campaign
-injects one deterministic call at a time. Independent repetition and partial rollback-journal/database
-writes plus WAL write/sync are covered. It does not model combined faults, arbitrary cut offsets,
+injects one deterministic call at a time. Independent repetition, journal/database/WAL write and sync
+failures, and representative first/half/final-byte-short writes are covered. It does not model
+combined faults, every possible cut offset,
 directory sync (the Windows VFS did not expose a `syncDir=true` delete boundary), lock/shared-memory
 faults, device removal, kernel/controller behavior, or physical power loss.
 
