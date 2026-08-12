@@ -16,6 +16,7 @@ using namespace platform;
 namespace {
 
 enum class SQLiteFaultOperation { WRITE, PARTIAL_WRITE, SYNC };
+enum class SQLitePartialWrite { FIRST_BYTE, HALF, FINAL_BYTE_SHORT };
 
 struct SQLiteFaultState {
 	bool armed                  = false;
@@ -23,6 +24,8 @@ struct SQLiteFaultState {
 	SQLiteFaultOperation action = SQLiteFaultOperation::WRITE;
 	unsigned trigger_count      = 0;
 	int partial_bytes           = 0;
+	int requested_bytes         = 0;
+	SQLitePartialWrite partial  = SQLitePartialWrite::HALF;
 };
 
 struct SQLiteFaultFile {
@@ -63,9 +66,13 @@ int fault_read(sqlite3_file *file, void *data, int amount, sqlite3_int64 offset)
 int fault_write(sqlite3_file *file, const void *data, int amount, sqlite3_int64 offset) {
 	auto *wrapped = fault_file(file);
 	if (inject_fault(wrapped, SQLiteFaultOperation::PARTIAL_WRITE)) {
-		const int partial = amount > 1 ? amount / 2 : 1;
+		const int partial = sqlite_fault_state.partial == SQLitePartialWrite::FIRST_BYTE ? 1
+		                    : sqlite_fault_state.partial == SQLitePartialWrite::FINAL_BYTE_SHORT
+		                        ? (amount > 1 ? amount - 1 : 1)
+		                        : (amount > 1 ? amount / 2 : 1);
 		const int result  = wrapped->real_methods->xWrite(wrapped->real, data, partial, offset);
 		sqlite_fault_state.partial_bytes = result == SQLITE_OK ? partial : 0;
+		sqlite_fault_state.requested_bytes = amount;
 		return result == SQLITE_OK ? SQLITE_IOERR_WRITE : result;
 	}
 	if (inject_fault(wrapped, SQLiteFaultOperation::WRITE))
@@ -681,7 +688,11 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 	if (mode == "ioerr-journal-write" || mode == "ioerr-journal-sync" ||
 	    mode == "ioerr-database-write" || mode == "ioerr-database-sync" ||
 	    mode == "ioerr-journal-partial-write" || mode == "ioerr-database-partial-write" ||
-	    mode == "ioerr-wal-write" || mode == "ioerr-wal-sync") {
+	    mode == "ioerr-wal-write" || mode == "ioerr-wal-sync" ||
+	    mode == "ioerr-journal-partial-first" || mode == "ioerr-journal-partial-final" ||
+	    mode == "ioerr-database-partial-first" || mode == "ioerr-database-partial-final" ||
+	    mode == "ioerr-wal-partial-first" || mode == "ioerr-wal-partial-half" ||
+	    mode == "ioerr-wal-partial-final") {
 		register_sqlite_fault_vfs();
 		const bool journal = mode.find("journal") != std::string::npos;
 		const bool wal     = mode.find("wal") != std::string::npos;
@@ -693,6 +704,10 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 		                                                : journal ? SQLITE_OPEN_MAIN_JOURNAL : SQLITE_OPEN_MAIN_DB;
 		sqlite_fault_state.action = partial ? SQLiteFaultOperation::PARTIAL_WRITE
 		                                  : write ? SQLiteFaultOperation::WRITE : SQLiteFaultOperation::SYNC;
+		if (mode.find("partial-first") != std::string::npos)
+			sqlite_fault_state.partial = SQLitePartialWrite::FIRST_BYTE;
+		else if (mode.find("partial-final") != std::string::npos)
+			sqlite_fault_state.partial = SQLitePartialWrite::FINAL_BYTE_SHORT;
 		DBsqliteKV db(platform::O_OPEN_EXISTING, path);
 		if (wal) {
 			db.db_dbi.commit_txn();
@@ -724,23 +739,33 @@ int DBsqliteKV::run_crash_test_child(const std::string &mode, const std::string 
 			          << " stage=" << stage
 			          << " sqlite_code=" << code << " triggers=" << sqlite_fault_state.trigger_count
 			          << " partial_bytes=" << sqlite_fault_state.partial_bytes
+			          << " requested_bytes=" << sqlite_fault_state.requested_bytes
 			          << std::endl;
-			const int expected = write ? SQLITE_IOERR_WRITE : SQLITE_IOERR_FSYNC;
+			const int expected = (partial || write) ? SQLITE_IOERR_WRITE : SQLITE_IOERR_FSYNC;
 			if (code == expected && sqlite_fault_state.trigger_count == 1 &&
-			    (!partial || sqlite_fault_state.partial_bytes > 0))
+			    (!partial || (sqlite_fault_state.partial_bytes > 0 &&
+			                     sqlite_fault_state.partial_bytes < sqlite_fault_state.requested_bytes)))
 				std::_Exit(mode == "ioerr-journal-write" ? 96 : mode == "ioerr-journal-sync" ? 97
 				                                                 : mode == "ioerr-database-write" ? 98
 				                                                 : mode == "ioerr-database-sync" ? 99
 				                                                 : mode == "ioerr-journal-partial-write" ? 102
 				                                                 : mode == "ioerr-database-partial-write" ? 103
 				                                                 : mode == "ioerr-wal-write" ? 104
-				                                                                                  : 105);
+				                                                 : mode == "ioerr-wal-sync" ? 105
+				                                                 : mode == "ioerr-journal-partial-first" ? 106
+				                                                 : mode == "ioerr-journal-partial-final" ? 107
+				                                                 : mode == "ioerr-database-partial-first" ? 108
+				                                                 : mode == "ioerr-database-partial-final" ? 109
+				                                                 : mode == "ioerr-wal-partial-first" ? 110
+				                                                 : mode == "ioerr-wal-partial-half" ? 111
+				                                                                                         : 112);
 			return 100;
 		}
 		std::cerr << "ONYX_DB_IOERR target=" << target
 		          << " operation=" << (partial ? "partial-write" : write ? "write" : "sync")
 		          << " stage=" << stage << " sqlite_code=0 triggers=" << sqlite_fault_state.trigger_count
 		          << " partial_bytes=" << sqlite_fault_state.partial_bytes
+		          << " requested_bytes=" << sqlite_fault_state.requested_bytes
 		          << " detail=no-failure" << std::endl;
 		return 101;
 	}

@@ -18,6 +18,13 @@ FORBIDDEN_MARKERS = (
     b"ioerr-database-sync",
     b"ioerr-journal-partial-write",
     b"ioerr-wal-sync",
+    b"ioerr-journal-partial-first",
+    b"ioerr-journal-partial-final",
+    b"ioerr-database-partial-first",
+    b"ioerr-database-partial-final",
+    b"ioerr-wal-partial-first",
+    b"ioerr-wal-partial-half",
+    b"ioerr-wal-partial-final",
 )
 
 

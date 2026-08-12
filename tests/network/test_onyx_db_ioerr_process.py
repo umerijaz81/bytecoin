@@ -23,7 +23,8 @@ SQLITE_IOERR_WRITE = 778
 SQLITE_IOERR_FSYNC = 1034
 IOERR_MARKER = re.compile(
     r"ONYX_DB_IOERR target=(journal|database|wal) operation=(write|partial-write|sync) "
-    r"stage=(state|undo|commit) sqlite_code=(\d+) triggers=(\d+) partial_bytes=(\d+)"
+    r"stage=(state|undo|commit) sqlite_code=(\d+) triggers=(\d+) "
+    r"partial_bytes=(\d+) requested_bytes=(\d+)"
 )
 
 
@@ -98,6 +99,7 @@ def run_child(
                 "sqlite_primary_code": int(marker.group(4)) & 0xFF,
                 "trigger_count": int(marker.group(5)),
                 "partial_bytes": int(marker.group(6)),
+                "requested_bytes": int(marker.group(7)),
             }
         )
     if mode.startswith("probe-") and "ONYX_DB_PROBE result=exact" not in completed.stdout:
@@ -125,6 +127,18 @@ def fault_case_passed(case: dict[str, object]) -> bool:
     recovery = case.get("recovery", {})
     independent_before = case.get("independent_before", {})
     independent_after = case.get("independent_after", {})
+    partial_valid = fault.get("partial_bytes") == 0 and fault.get("requested_bytes") == 0
+    if case.get("expected_operation") == "partial-write":
+        written = fault.get("partial_bytes", 0)
+        requested = fault.get("requested_bytes", 0)
+        partial_valid = 0 < written < requested
+        name = str(case.get("name", ""))
+        if name.endswith("partial-first"):
+            partial_valid = partial_valid and written == 1
+        elif name.endswith("partial-final"):
+            partial_valid = partial_valid and written == requested - 1
+        else:
+            partial_valid = partial_valid and written * 2 == requested
     return bool(
         fault.get("sqlite_primary_code") == 10
         and fault.get("sqlite_extended_code") == case.get("expected_extended_code")
@@ -132,11 +146,7 @@ def fault_case_passed(case: dict[str, object]) -> bool:
         and fault.get("target") == case.get("expected_target")
         and fault.get("operation") == case.get("expected_operation")
         and fault.get("stage") == case.get("expected_stage")
-        and (
-            fault.get("partial_bytes", 0) > 0
-            if case.get("expected_operation") == "partial-write"
-            else fault.get("partial_bytes") == 0
-        )
+        and partial_valid
         and recovery.get("return_code") == 0
         and independent_before.get("exact_before") is True
         and independent_after.get("integrity") == "ok"
@@ -225,8 +235,8 @@ def main() -> int:
         parser.error("timeouts, report limits, and cycles must be positive")
     max_report_bytes = int(args.max_report_mib * 1024 * 1024)
     report: dict[str, object] = {
-        "schema": "bytecoin-onyx-db-ioerr-campaign-v2",
-        "scope": "compile-time-test-vfs-repeated-independent-single-fault-local-or-ci-not-device-release-evidence",
+        "schema": "bytecoin-onyx-db-ioerr-campaign-v3",
+        "scope": "compile-time-test-vfs-representative-torn-writes-local-or-ci-not-device-release-evidence",
         "revision": args.revision,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "tests_executable_sha256": sha256(executable),
@@ -247,6 +257,13 @@ def main() -> int:
         ("ioerr-database-partial-write", 103, "database", "partial-write", "commit", SQLITE_IOERR_WRITE),
         ("ioerr-wal-write", 104, "wal", "write", "commit", SQLITE_IOERR_WRITE),
         ("ioerr-wal-sync", 105, "wal", "sync", "commit", SQLITE_IOERR_FSYNC),
+        ("ioerr-journal-partial-first", 106, "journal", "partial-write", "state", SQLITE_IOERR_WRITE),
+        ("ioerr-journal-partial-final", 107, "journal", "partial-write", "state", SQLITE_IOERR_WRITE),
+        ("ioerr-database-partial-first", 108, "database", "partial-write", "commit", SQLITE_IOERR_WRITE),
+        ("ioerr-database-partial-final", 109, "database", "partial-write", "commit", SQLITE_IOERR_WRITE),
+        ("ioerr-wal-partial-first", 110, "wal", "partial-write", "commit", SQLITE_IOERR_WRITE),
+        ("ioerr-wal-partial-half", 111, "wal", "partial-write", "commit", SQLITE_IOERR_WRITE),
+        ("ioerr-wal-partial-final", 112, "wal", "partial-write", "commit", SQLITE_IOERR_WRITE),
     )
     with tempfile.TemporaryDirectory(prefix="bytecoin-onyx-db-ioerr-") as directory:
         root = pathlib.Path(directory)
