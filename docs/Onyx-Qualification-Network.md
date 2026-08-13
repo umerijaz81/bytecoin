@@ -255,10 +255,9 @@ credential. It proves unauthenticated `confirm=true` and authenticated `confirm=
 requests leave the process alive, begins a real valid transfer, waits for one active verifier, and
 then calls authenticated `stop_daemon` with `confirm=true`. The acknowledgement is written before a
 delayed event-loop cancellation; normal destruction joins the bounded verifier worker. The passing
-run exited 0 after 30.703 seconds and reopened the identical database at exact height 4, pool count
-zero, and no known interrupted transaction. The combined campaign passed all 11 checks. This proves
-safe join and state preservation on the local host, not cooperative Halo2 cancellation or a portable
-shutdown-latency bound.
+run exited 0 after 30.703 seconds. Later isolated qualification in `c39ba96` proved its height-4 reopen
+had synchronized from a peer, so `933eb94` proves safe worker join but not state persistence. Do not
+cite the earlier peer-assisted reopen as durable-state evidence.
 
 The `d96060f` extension uses a dedicated `ONYX_INVALID_PROOF_TESTS=ON` build. That option requires
 ZK, enables a non-distributable Cargo feature, and isolates Cargo output per CMake build tree. The
@@ -271,6 +270,17 @@ returns error `-101` in 0.218, 0.297, and 0.297 seconds. Acquisitions advance ex
 returns to zero, pool count remains zero, and lookup remains false. The subsequent valid barrier
 acquires verifier 6. The combined campaign passes all 12 checks. This is a bounded local repetition;
 sustained floods, other envelope shapes, mixed ingress, and named-host limits remain open.
+
+The `c39ba96` extension commits chain state before authenticated shutdown acknowledgement. An offline
+reopen with an unreachable peer proves exact height 4, pool zero, no interrupted transaction, and exit
+zero after a 31.484-second join. Commit failure leaves the daemon running and returns an error.
+
+The harness also captures one real 464-byte height-5 block through a local forwarding proxy, opens an
+isolated copy of the committed height-4 database, starts a valid proof, waits for active verifier, and
+submits the block. The stale result returns `-104` with `Onyx state changed during verification; retry
+later`; acquisitions are 0 to 1, active returns to zero, and no pool entry exists. Retrying the same
+transaction at height 5 advances acquisitions to 2 and admits exactly one entry. The combined campaign
+passes all 13 checks without adding a production pause/sleep hook.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete

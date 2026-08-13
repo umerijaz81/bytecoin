@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-12**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `d96060f` (`Qualify authenticated invalid Onyx proofs`)
+Implementation revision documented: `c39ba96` (`Persist shutdown and qualify stale Onyx proofs`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `d96060f` on this branch.
+- **Committed**: present at or before Git revision `c39ba96` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -933,7 +933,7 @@ empty pool, and no transaction lookup result. The later normal load acquired ver
 proving capacity was reusable. All ten wrapper checks, complete ZK/Jade regressions, both build modes,
 and release-control absence passed.
 
-Commit `933eb94` adds and qualifies graceful process shutdown while a valid Halo2 verification is
+Commit `933eb94` adds graceful process shutdown while a valid Halo2 verification is
 active. The new `stop_daemon` JSON-RPC method is disabled unless an explicit private authorization
 credential is configured, requires that credential on every request, and requires `confirm=true`.
 It acknowledges the authenticated operator before a short event-loop cancellation timer fires, then
@@ -941,9 +941,10 @@ uses normal stack unwinding so `Node` destroys and joins its bounded verifier wo
 request state is released. The real-process harness proves that an unauthenticated confirmed request
 and an authenticated unconfirmed request do not stop the daemon; starts a real valid transfer and
 waits for `onyx_verifier_active == 1`; requests shutdown; observes exit code 0 after 30.703 seconds;
-and reopens the same database at exact height 4 with pool count 0 and the uncommitted transaction
-unknown. The expanded campaign passed all 11 checks. This is graceful joining, not cooperative proof
-cancellation: shutdown latency remains bounded by the active backend verification time.
+and originally reported a reopen at height 4 with pool count 0 and the uncommitted transaction
+unknown. Later isolated testing in `c39ba96` proved that reopen had silently synchronized from a peer,
+so it was not persistence evidence. The worker-join result remains valid; the original offline-reopen
+claim is superseded.
 
 Commit `d96060f` closes the missing authenticated-invalid-proof fixture and bounded live campaign.
 The opt-in `ONYX_INVALID_PROOF_TESTS` configuration requires `ONYX_ZK=ON`, enables a dedicated Cargo
@@ -959,6 +960,19 @@ All three return consensus error `-101` in 0.218, 0.297, and 0.297 seconds; veri
 exactly 2 to 5; active work returns to zero; pool count remains zero; and transaction lookup remains
 false. The following valid-proof barrier acquires verifier 6, proving capacity reuse. All 12 wrapper
 checks pass. This is a bounded local three-attempt campaign, not a sustained flood or release limit.
+
+Commit `c39ba96` fixes and qualifies shutdown persistence plus stale asynchronous completion. The
+authenticated shutdown handler now commits all event-loop-owned chain state before acknowledging the
+stop. A commit error is returned and the daemon remains running. The process harness reopens with an
+unreachable peer and proves the database itself is at exact height 4, pool count zero, and the active
+uncommitted transaction absent; exit is zero after a 31.484-second verifier join.
+
+For stale completion, the harness copies that committed height-4 database, captures a real independently
+mined 464-byte height-5 block through a local forwarding proxy, starts a valid proof on the isolated
+copy, waits for verifier active, and submits the captured block. The completed proof is rejected with
+retryable code `-104` and message `Onyx state changed during verification; retry later`; acquisitions
+advance 0 to 1, active returns to zero, and nothing enters the pool. Retrying the same transaction
+against height 5 advances acquisitions to 2 and admits exactly one pool entry. All 13 checks pass.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 

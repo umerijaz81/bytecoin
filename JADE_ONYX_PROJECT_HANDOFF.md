@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-12
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `d96060f` (`Qualify authenticated invalid Onyx proofs`)
+Last implementation revision reviewed: `c39ba96` (`Persist shutdown and qualify stale Onyx proofs`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `d96060f`.
+- **Implemented and committed** means the code is in the branch history at or before `c39ba96`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -807,9 +807,9 @@ Validation performed before commit:
   private credential. An unauthenticated confirmed request and an authenticated `confirm=false`
   request leave the process alive; the authenticated confirmed request is acknowledged, normal Node
   destruction joins the bounded verifier worker, and the daemon exits 0. The measured join took
-  30.703 seconds. Reopening the same database produced exact height 4, pool count 0, and no known
-  uncommitted transaction. All 11 wrapper checks passed. The worker is joined, not cooperatively
-  cancelled, so an active proof can delay shutdown by its remaining verification time.
+  30.703 seconds. Its reported height-4 reopen was later shown by isolated testing to have synchronized
+  from a live peer, so that part was not persistence evidence. The worker-join result remains valid and
+  the persistence claim is superseded by `c39ba96`.
 - Commit `d96060f` adds a non-distributable `ONYX_INVALID_PROOF_TESTS` build and an isolated Cargo
   feature/target directory. The wallet fixture corrupts one completed real Halo2 transcript byte and
   then authenticates the altered bytes with genuine spend and binding keys. Its direct Rust test
@@ -818,6 +818,13 @@ Validation performed before commit:
   active returns to zero, pool/lookup remain empty, and the following valid load acquires verifier 6.
   All 12 wrapper checks pass. Ordinary ZK and non-ZK daemon/wallet binaries pass marker/symbol absence
   scanning. This does not establish sustained-flood or named-host limits.
+- Commit `c39ba96` commits chain state before authenticated shutdown acknowledgement; persistence
+  failure keeps the daemon alive and returns an RPC error. Reopening with an unreachable peer now
+  proves exact on-disk height 4, empty pool, and no interrupted transaction after exit 0 and a
+  31.484-second active-worker join. A deterministic local forwarding proxy also captures a real
+  464-byte height-5 block. Submitting it while a valid proof is active makes completion return
+  retryable `-104`; acquisitions move 0 to 1 with no admission. Retrying at the new tip moves to 2
+  and admits exactly one transaction. All 13 wrapper checks pass without a production timing hook.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -1023,9 +1030,10 @@ Remaining:
   non-transfer proof floods; add non-transfer conflict load, mixed RPC/P2P ingress, and fairness checks.
   Extend cheap rejection only through authenticated metadata extractors. The pending transfer
   conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`; abandoned
-  HTTP response ownership and permit cleanup are covered in `d8abdef`; graceful active-proof
-  shutdown and exact database reopen are covered in `933eb94`; three authenticated invalid transfer
-  rejections plus permit reuse are covered in `d96060f`.
+  HTTP response ownership and permit cleanup are covered in `d8abdef`; graceful active-proof worker
+  join is covered in `933eb94`; three authenticated invalid transfer rejections plus permit reuse are
+  covered in `d96060f`; and offline shutdown persistence plus stale completion/retry are covered in
+  `c39ba96`.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

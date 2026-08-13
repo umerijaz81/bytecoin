@@ -3,7 +3,7 @@
 - Document date: **2026-08-12**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `d96060f` (`Qualify authenticated invalid Onyx proofs`)
+- Committed revision reviewed: `c39ba96` (`Persist shutdown and qualify stale Onyx proofs`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `d96060f` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `c39ba96` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `d96060f`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `c39ba96`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -903,9 +903,10 @@ destroys `Node`; member destruction joins `BoundedWorker` before its captured in
 maps disappear. The process test rejects an unauthenticated confirmed request and an authenticated
 unconfirmed request, observes one active acquired verifier, receives the authenticated stop
 acknowledgement, and records exit code 0 after 30.703 seconds. A new daemon opens the identical data
-folder at exact height 4 with zero pool transactions and no lookup result for the interrupted
-transaction. All 11 wrapper checks pass. This design waits for the backend call; it does not interrupt
-Halo2 cooperatively, so operator shutdown latency includes the remaining proof-verification time.
+folder and originally appeared at height 4. `c39ba96` later proved that observation was peer-assisted,
+not durable-state evidence. The exit-zero/worker-join result remains valid, but the original persistence
+claim must not be cited. This design waits for the backend call; it does not interrupt Halo2
+cooperatively, so operator shutdown latency includes the remaining proof-verification time.
 
 Commit `d96060f` introduces the first authenticated-invalid-proof qualification without adding an
 unsafe production wallet facility. `ONYX_INVALID_PROOF_TESTS` requires `ONYX_ZK=ON`, enables the Rust
@@ -923,7 +924,20 @@ lookup end at 0/0/false. The subsequent valid barrier advances acquisition to 6,
 All 12 wrapper checks pass. This is bounded local evidence and must not be represented as a sustained
 invalid-proof flood threshold.
 
-Validation through `d96060f`: ordinary ZK, qualification-feature ZK, and non-ZK Release
+Commit `c39ba96` closes both the persistence correction and stale-chain completion gap. Before the
+shutdown RPC acknowledges, it calls the chain database commit on the event-loop thread. Failure is
+reported and cancellation is not scheduled. The reopened node is deliberately pointed at an
+unreachable peer; it opens at exact height 4 with pool 0 and the interrupted transaction unknown,
+proving disk persistence rather than resynchronization. Exit is 0 after a 31.484-second join.
+
+The same campaign copies the committed height-4 database, captures a real 464-byte height-5 block via
+a local JSON-RPC forwarding proxy, and injects it after a valid proof reports active. Completion sees
+the changed tip/snapshot and returns retryable `-104` (`Onyx state changed during verification; retry
+later`), acquisitions 0 to 1, active 0, and no pool admission. Resubmission against height 5 acquires
+permit 2 and admits one transaction. All 13 wrapper checks pass; no verifier sleep or production test
+hook was added.
+
+Validation through `c39ba96`: ordinary ZK, qualification-feature ZK, and non-ZK Release
 `bytecoind`/`tests`/`walletd`/`minerd` builds
 passed; both `tests.exe --jade` runs passed; Python compilation and the load-runner unit suite passed; the complete
 C++ `--zk` suite passed; and the expanded two-node process campaign passed. The normal non-ZK daemon
@@ -935,8 +949,8 @@ still excludes the crash/fault controls.
 2. Exercise deployment/issuance/bridge/program-call authenticated conflicts and invalid proofs, plus
    stale-chain completion under deterministic and live conditions. Pending
    private-transfer conflict, exact duplicate resubmission, HTTP client abandonment, and graceful
-   active-proof shutdown and a three-attempt authenticated invalid private-transfer campaign are now
-   live-qualified.
+   active-proof shutdown, a three-attempt authenticated invalid private-transfer campaign, and
+   deterministic stale-tip discard/retry are now live-qualified.
 3. Run repeated RPC-only, P2P-only, and mixed-ingress campaigns while ordinary RPC, wallet scanning,
    mining, and block application remain active.
 4. Extend authenticated-invalid and valid-proof work into sustained floods while proving
@@ -1036,8 +1050,9 @@ After the async boundary passes, run separate cold-start and warm-cache processe
 non-transfer conflicts; malformed-proof floods; RPC and P2P ingress; mixed ordinary RPC/mining load;
 and repeated runs for defensible CPU, latency, and RSS thresholds. The pending transfer conflict is
 live-qualified in `715d019`, exact duplicate resubmission in `59b0721`, HTTP client abandonment after
-verifier start in `d8abdef`, graceful active-proof shutdown/database reopen in `933eb94`, and bounded
-authenticated invalid-transfer rejection/permit reuse in `d96060f`.
+verifier start in `d8abdef`, active-proof worker join in `933eb94`, bounded authenticated invalid-transfer
+rejection/permit reuse in `d96060f`, and offline shutdown persistence plus stale discard/retry in
+`c39ba96`.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
