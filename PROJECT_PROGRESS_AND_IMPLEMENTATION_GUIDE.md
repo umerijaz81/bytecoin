@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx Project Progress and Implementation Guide
 
-Last reconciled: **2026-08-12**
+Last reconciled: **2026-08-14**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `c39ba96` (`Persist shutdown and qualify stale Onyx proofs`)
+Implementation revision documented: `47c3485` (`Qualify mixed Onyx verifier ingress`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `c39ba96` on this branch.
+- **Committed**: present at or before Git revision `47c3485` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -903,8 +903,8 @@ The real two-node/two-wallet valid-proof harness passed locally: one accepted re
 peak verifier activity one, successful asynchronous P2P propagation, both nodes at height 5, and
 exact final commitment/supply equality. Peak daemon RSS was 563,384,320 bytes with 266,223,616 bytes
 growth on this host. This closes the synchronous-dispatch blocker but remains local evidence;
-repeated cold/warm, sustained invalid-proof, mixed-ingress, named-hardware, and long campaigns are still
-required before setting release thresholds.
+repeated cold/warm, sustained invalid-proof, repeated/fair mixed-ingress, named-hardware, and long
+campaigns are still required before setting release thresholds.
 
 Commit `715d019` fixes the remaining asynchronous ordering gap: the authenticated transfer,
 deployment, issuance, bridge, and standard-call pool/state prechecks now execute before verifier
@@ -973,6 +973,18 @@ copy, waits for verifier active, and submits the captured block. The completed p
 retryable code `-104` and message `Onyx state changed during verification; retry later`; acquisitions
 advance 0 to 1, active returns to zero, and nothing enters the pool. Retrying the same transaction
 against height 5 advances acquisitions to 2 and admits exactly one pool entry. All 13 checks pass.
+
+Commit `47c3485` adds deterministic mixed P2P/RPC contention without a synthetic wire client or timing
+hook. An isolated target reopens the committed height-4 database and a fresh relay synchronizes to it.
+The relay admits one valid sibling over RPC and propagates it through the real P2P path. While the
+target reports that P2P verification active, the other sibling is submitted to the target over RPC.
+It returns fail-fast `-104` in 0.015 seconds; target acquisitions remain 0 to 1, global overload
+rejections move 0 to 1, and the sibling remains unknown. After the P2P transaction enters the one-entry
+pool, retrying the sibling returns in 0.032 seconds, leaves acquisitions at 1, increments authenticated
+precheck conflicts 0 to 1, and admits nothing. The full process campaign passes all 15 checks in
+431.1 seconds at the exact committed revision, after an earlier 428.7-second working-tree pass. This
+proves one deterministic cross-ingress invariant; repeated fairness, sustained
+load, and named-host thresholds remain open.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 
@@ -1367,8 +1379,8 @@ Tasks:
 
 - Separate cold and warm measurement processes.
 - Exercise every accepted circuit shape at its fixed `k`.
-- Run concurrent valid submissions, duplicate submissions, invalid-proof floods, and mixed RPC/P2P
-  load.
+- Run repeated concurrent valid submissions, duplicate submissions, invalid-proof floods, and mixed
+  RPC/P2P load with fairness checks.
 - Measure queue latency, verification count, cache hit/miss, CPU, RSS, disk, and node liveness.
 - Add strict admission/backpressure only from measured evidence; never skip consensus verification.
 - Test cache initialization races and bounded entry counts.

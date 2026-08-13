@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx: Complete Project Progress and AI Implementation Handoff
 
-- Document date: **2026-08-12**
+- Document date: **2026-08-14**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `c39ba96` (`Persist shutdown and qualify stale Onyx proofs`)
+- Committed revision reviewed: `47c3485` (`Qualify mixed Onyx verifier ingress`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `c39ba96` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `47c3485` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `c39ba96`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `47c3485`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -937,7 +937,17 @@ later`), acquisitions 0 to 1, active 0, and no pool admission. Resubmission agai
 permit 2 and admits one transaction. All 13 wrapper checks pass; no verifier sleep or production test
 hook was added.
 
-Validation through `c39ba96`: ordinary ZK, qualification-feature ZK, and non-ZK Release
+Commit `47c3485` adds deterministic mixed-ingress qualification on an isolated copy of that durable
+height-4 state. A fresh relay accepts one valid sibling over RPC and announces it through real P2P.
+While the target reports that P2P proof active, the other sibling reaches target RPC and returns
+retryable `-104` in 0.015 seconds. Acquisitions stay 0 to 1, the global-overload counter moves 0 to 1,
+and the sibling is not admitted. Once the P2P transaction occupies the one-entry pool, retrying the
+sibling returns in 0.032 seconds, leaves acquisitions at 1, advances authenticated conflicts 0 to 1,
+and remains unknown. All 15 wrapper checks pass in 431.1 seconds at exact revision `47c3485`, after a
+428.7-second working-tree pass. This is one deterministic transfer campaign, not repeated fairness or
+a release operating limit.
+
+Validation through `47c3485`: ordinary ZK, qualification-feature ZK, and non-ZK Release
 `bytecoind`/`tests`/`walletd`/`minerd` builds
 passed; both `tests.exe --jade` runs passed; Python compilation and the load-runner unit suite passed; the complete
 C++ `--zk` suite passed; and the expanded two-node process campaign passed. The normal non-ZK daemon
@@ -951,8 +961,8 @@ still excludes the crash/fault controls.
    private-transfer conflict, exact duplicate resubmission, HTTP client abandonment, and graceful
    active-proof shutdown, a three-attempt authenticated invalid private-transfer campaign, and
    deterministic stale-tip discard/retry are now live-qualified.
-3. Run repeated RPC-only, P2P-only, and mixed-ingress campaigns while ordinary RPC, wallet scanning,
-   mining, and block application remain active.
+3. Repeat RPC-only, P2P-only, and mixed-ingress campaigns, extend mixed ingress beyond transfers, and
+   measure fairness while ordinary RPC, wallet scanning, mining, and block application remain active.
 4. Extend authenticated-invalid and valid-proof work into sustained floods while proving
    queue/download/cooldown bounds and no permit leaks.
 5. Establish percentile latency, CPU, and RSS thresholds from repeated measurements rather than the
@@ -1051,8 +1061,8 @@ non-transfer conflicts; malformed-proof floods; RPC and P2P ingress; mixed ordin
 and repeated runs for defensible CPU, latency, and RSS thresholds. The pending transfer conflict is
 live-qualified in `715d019`, exact duplicate resubmission in `59b0721`, HTTP client abandonment after
 verifier start in `d8abdef`, active-proof worker join in `933eb94`, bounded authenticated invalid-transfer
-rejection/permit reuse in `d96060f`, and offline shutdown persistence plus stale discard/retry in
-`c39ba96`.
+rejection/permit reuse in `d96060f`, offline shutdown persistence plus stale discard/retry in
+`c39ba96`, and deterministic transfer P2P/RPC contention plus proof-free retry in `47c3485`.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
@@ -1255,9 +1265,9 @@ accepted transition retains one mandatory full stateful proof.
 Commit `585bc4d` implements bounded asynchronous HTTP/P2P verification and the real two-node harness
 passes with continuous daemon sampling, deterministic overload, P2P propagation, mining/wallet
 progress, and exact cross-node supply equality. Commit `715d019` moves authenticated conflicts before
-worker submission and live-qualifies the pending transfer case. Continue with cold/warm,
-non-transfer invalid-proof, sustained-load, mixed-ingress, repeated-host, and hosted-CI campaigns in
-section 15.4.
+worker submission and live-qualifies the pending transfer case; `47c3485` adds deterministic transfer
+P2P/RPC contention and proof-free retry. Continue with cold/warm, non-transfer invalid-proof,
+sustained-load, repeated/fair mixed-ingress, repeated-host, and hosted-CI campaigns in section 15.4.
 
 Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS
 thresholds without changing consensus validity or skipping verification.

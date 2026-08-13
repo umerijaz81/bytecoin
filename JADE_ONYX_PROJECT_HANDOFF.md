@@ -1,9 +1,9 @@
 # Jade/Onyx Project Progress and Implementation Handoff
 
-Last reviewed: 2026-08-12
+Last reviewed: 2026-08-14
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `c39ba96` (`Persist shutdown and qualify stale Onyx proofs`)
+Last implementation revision reviewed: `47c3485` (`Qualify mixed Onyx verifier ingress`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `c39ba96`.
+- **Implemented and committed** means the code is in the branch history at or before `47c3485`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -779,7 +779,8 @@ Validation performed before commit:
   Halo2 while all eligible mempool and block paths retain full verification. The clean three-node
   precheck rerun finished at height 81 and recorded `0.015` seconds for the competing NFT admission
   and `0.0` seconds (below timer resolution) for the competing swap branch. Broader repeated,
-  mixed-ingress, invalid-proof, and named-hardware load qualification remains immediate DoS work.
+  non-transfer mixed-ingress, invalid-proof, and named-hardware load qualification remains immediate
+  DoS work.
 - External Onyx mempool proof work now has a fail-fast RAII bound of one active verifier globally and
   per source plus, in `585bc4d`, a one-job asynchronous worker shared by HTTP and P2P. The worker
   verifies against a captured immutable tip/height/snapshot; the event loop rejects stale results,
@@ -825,6 +826,14 @@ Validation performed before commit:
   464-byte height-5 block. Submitting it while a valid proof is active makes completion return
   retryable `-104`; acquisitions move 0 to 1 with no admission. Retrying at the new tip moves to 2
   and admits exactly one transaction. All 13 wrapper checks pass without a production timing hook.
+- Commit `47c3485` adds an isolated height-4 target and fresh synchronized relay. The relay accepts a
+  valid sibling over RPC and propagates it through real P2P. While the target reports that P2P proof
+  active, the second sibling arrives through target RPC and returns `-104` in 0.015 seconds. Target
+  acquisitions remain 0 to 1 and global overload rejections move 0 to 1. After P2P admission, retrying
+  the sibling returns in 0.032 seconds, leaves acquisitions at 1, increments authenticated conflicts
+  0 to 1, preserves one pool entry, and admits only the P2P transaction. All 15 checks pass in 431.1
+  seconds at exact revision `47c3485`, following a 428.7-second working-tree pass. Repeated/fair mixed
+  load and named-host limits remain open.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -849,8 +858,8 @@ Validation performed before commit:
   entry when full. Alternate peers and reannouncements consult the same cooldown, overload remains a
   non-ban event, and later announcements may retry. Duplicate hashes within one descriptor message
   now cause a controlled protocol disconnect rather than an insertion invariant. Deterministic policy tests and both feature-mode
-  builds pass; the first live parallel proof/RSS/progress run passes, while repeated fairness,
-  mixed-ingress, and named-hardware qualification remains open.
+  builds pass; deterministic transfer P2P/RPC contention passes, while repeated fairness,
+  non-transfer mixed-ingress, and named-hardware qualification remains open.
 - Private daemon statistics expose current/peak Onyx verifier concurrency, permit acquisitions,
   global/per-source overload rejections, proof-free precheck conflicts, abandoned proof RPCs, active
   transaction downloads, and current cooldown entries.
@@ -1027,13 +1036,15 @@ Remaining:
 - Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
   HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
 - Extend the bounded authenticated private-transfer invalid-proof campaign into sustained and
-  non-transfer proof floods; add non-transfer conflict load, mixed RPC/P2P ingress, and fairness checks.
+  non-transfer proof floods; add non-transfer conflict load and repeat mixed RPC/P2P ingress with
+  fairness checks.
   Extend cheap rejection only through authenticated metadata extractors. The pending transfer
   conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`; abandoned
   HTTP response ownership and permit cleanup are covered in `d8abdef`; graceful active-proof worker
   join is covered in `933eb94`; three authenticated invalid transfer rejections plus permit reuse are
-  covered in `d96060f`; and offline shutdown persistence plus stale completion/retry are covered in
-  `c39ba96`.
+  covered in `d96060f`; offline shutdown persistence plus stale completion/retry are covered in
+  `c39ba96`; and deterministic transfer P2P/RPC contention plus proof-free retry are covered in
+  `47c3485`.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

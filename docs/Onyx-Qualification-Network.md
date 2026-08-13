@@ -269,7 +269,8 @@ In the live topology, one authenticated 8,403-byte invalid transfer is submitted
 returns error `-101` in 0.218, 0.297, and 0.297 seconds. Acquisitions advance exactly 2 to 5, active
 returns to zero, pool count remains zero, and lookup remains false. The subsequent valid barrier
 acquires verifier 6. The combined campaign passes all 12 checks. This is a bounded local repetition;
-sustained floods, other envelope shapes, mixed ingress, and named-host limits remain open.
+sustained floods, other envelope shapes, repeated/fair mixed ingress, and named-host limits remain
+open.
 
 The `c39ba96` extension commits chain state before authenticated shutdown acknowledgement. An offline
 reopen with an unreachable peer proves exact height 4, pool zero, no interrupted transaction, and exit
@@ -281,6 +282,16 @@ submits the block. The stale result returns `-104` with `Onyx state changed duri
 later`; acquisitions are 0 to 1, active returns to zero, and no pool entry exists. Retrying the same
 transaction at height 5 advances acquisitions to 2 and admits exactly one entry. The combined campaign
 passes all 13 checks without adding a production pause/sleep hook.
+
+The `47c3485` extension copies the same durable height-4 state into an isolated target and synchronizes
+a fresh relay. The relay accepts one valid sibling by RPC and propagates it through the real P2P path.
+While the target reports that P2P verifier active, an RPC submission of the other sibling returns
+`-104` in 0.015 seconds. Target acquisitions remain 0 to 1, global overload rejections move 0 to 1,
+and the RPC sibling stays unknown. After P2P admission, retrying the sibling completes in 0.032 seconds,
+leaves acquisitions at 1, increments authenticated precheck conflicts 0 to 1, and preserves exactly
+the P2P transaction in a one-entry pool. The expanded campaign passes all 15 checks in 431.1 seconds
+at exact revision `47c3485`, after a 428.7-second working-tree pass. This is deterministic bounded
+transfer evidence; repeated fairness, non-transfer mixed ingress, and named-host limits remain open.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
