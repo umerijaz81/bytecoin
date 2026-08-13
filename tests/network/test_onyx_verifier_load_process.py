@@ -2,15 +2,20 @@
 """Real valid-proof load and post-load liveness qualification for an Onyx daemon."""
 
 import argparse
+import concurrent.futures
 import hashlib
+import http.server
 import json
 import pathlib
+import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
+import urllib.request
 
 try:
     from .test_onyx_qualification_process import (
@@ -49,6 +54,74 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOAD_TOOL = ROOT / "tools" / "onyx_verifier_load.py"
 MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
 INVALID_PROOF_ATTEMPTS = 3
+
+
+class SubmitBlockCaptureProxy:
+    """Forward miner JSON-RPC to a node while retaining submitted block blobs."""
+
+    def __init__(self, listen_port, target_port):
+        proxy = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length)
+                try:
+                    decoded = json.loads(body.decode("utf-8"))
+                    if decoded.get("method") == "submit_block":
+                        blob = decoded.get("params", {}).get("blocktemplate_blob")
+                        if not isinstance(blob, str) or not blob:
+                            raise RuntimeError("miner submitted an empty block blob")
+                        with proxy.lock:
+                            proxy.block_blobs.append(blob)
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise RuntimeError("miner sent malformed JSON-RPC") from error
+
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{target_port}{self.path}",
+                    data=body,
+                    headers={
+                        "Content-Type": self.headers.get(
+                            "Content-Type", "application/json-rpc"
+                        )
+                    },
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=1800) as response:
+                        status = response.status
+                        response_body = response.read()
+                        content_type = response.headers.get(
+                            "Content-Type", "application/json"
+                        )
+                except urllib.error.HTTPError as error:
+                    status = error.code
+                    response_body = error.read()
+                    content_type = error.headers.get(
+                        "Content-Type", "application/json"
+                    )
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(response_body)))
+                self.end_headers()
+                self.wfile.write(response_body)
+
+            def log_message(self, _format, *_args):
+                return
+
+        self.lock = threading.Lock()
+        self.block_blobs = []
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", listen_port), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, _type, _value, _traceback):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=10)
 
 
 def canonical_utc_now():
@@ -415,7 +488,9 @@ def main():
                 "onyx",
                 reopened_p2p_port,
                 reopened_rpc_port,
-                exclusive_port=p2p_port,
+                # Deliberately unreachable: reopening must prove the stopped database itself contains
+                # the exact tip rather than silently resynchronizing it from the original node.
+                exclusive_port=unused_port(),
                 data=shutdown_data,
                 extra_args=[
                     f"--bytecoind-authorization-private={shutdown_auth}"
@@ -469,6 +544,163 @@ def main():
                 raise RuntimeError("reopened node did not exit cleanly")
             reopened_node.stop()
             nodes.remove(reopened_node)
+
+            stale_data = root / "onyx-stale-verifier-data"
+            shutil.copytree(shutdown_data, stale_data)
+
+            capture_port = unused_port()
+            with SubmitBlockCaptureProxy(capture_port, rpc_port) as capture:
+                mine_blocks(
+                    minerd,
+                    root,
+                    "stale-premined-block",
+                    capture_port,
+                    MINING_ADDRESS_A,
+                    1,
+                    timeout=args.rpc_timeout,
+                )
+            if len(capture.block_blobs) != 1:
+                raise RuntimeError(
+                    "stale-chain setup did not capture exactly one mined block: "
+                    f"{len(capture.block_blobs)}"
+                )
+            stale_block_blob = capture.block_blobs[0]
+            premined_height = funded_height + 1
+            wait_until(
+                "captured block propagation",
+                lambda: node.status()["top_block_height"] >= premined_height
+                and relay_node.status()["top_block_height"] >= premined_height
+                and source_wallet.status()["top_block_height"] >= premined_height
+                and receiver_wallet.status()["top_block_height"] >= premined_height,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=120,
+            )
+
+            stale_p2p_port, stale_rpc_port = unused_port(), unused_port()
+            stale_node = Node(
+                bytecoind,
+                root,
+                "onyx-stale-verifier-node",
+                "onyx",
+                stale_p2p_port,
+                stale_rpc_port,
+                exclusive_port=unused_port(),
+                data=stale_data,
+            )
+            nodes.append(stale_node)
+            stale_base_status = wait_until(
+                "stale verifier RPC",
+                stale_node.status,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=60,
+            )
+            if stale_base_status["top_block_height"] != funded_height:
+                raise RuntimeError(
+                    "stale verifier copy did not open at the exact base height: "
+                    f"expected={funded_height} status={stale_base_status!r}\n"
+                    f"{stale_node.read_log()}"
+                )
+            stale_before = stale_node.statistics()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                stale_submission = executor.submit(
+                    rpc_response,
+                    stale_rpc_port,
+                    "send_transaction",
+                    {
+                        "binary_transaction": transactions[0]["binary_transaction"]
+                    },
+                )
+                wait_until(
+                    "stale verifier active proof",
+                    lambda: stale_node.statistics().get("onyx_verifier_acquired", 0)
+                    == stale_before.get("onyx_verifier_acquired", 0) + 1
+                    and stale_node.statistics().get("onyx_verifier_active", 0) == 1,
+                    nodes + [source_wallet, receiver_wallet],
+                    timeout=30,
+                )
+                submitted_block = rpc_call(
+                    stale_rpc_port,
+                    "submit_block",
+                    {"blocktemplate_blob": stale_block_blob},
+                )
+                if submitted_block.get("orphan_status"):
+                    raise RuntimeError("premined stale-chain block was accepted as an orphan")
+                wait_until(
+                    "stale verifier tip advance",
+                    lambda: stale_node.status()["top_block_height"] == funded_height + 1,
+                    nodes + [source_wallet, receiver_wallet],
+                    timeout=30,
+                )
+                stale_response = stale_submission.result(timeout=args.rpc_timeout)
+            stale_after = stale_node.statistics()
+            stale_error = stale_response.get("error", {})
+            if (
+                stale_error.get("code") != -104
+                or "state changed" not in stale_error.get("message", "").lower()
+                or stale_after.get("onyx_verifier_acquired", 0)
+                != stale_before.get("onyx_verifier_acquired", 0) + 1
+                or stale_after.get("onyx_verifier_active", 0) != 0
+                or stale_after.get("transaction_pool_count", 0) != 0
+                or transaction_known(stale_node, transactions[0]["transaction_hash"])
+            ):
+                raise RuntimeError(
+                    "stale verifier result was not discarded as retryable: "
+                    f"response={stale_response!r} stats={stale_after!r}"
+                )
+            retry_response = rpc_call(
+                stale_rpc_port,
+                "send_transaction",
+                {"binary_transaction": transactions[0]["binary_transaction"]},
+            )
+            wait_until(
+                "stale verifier retry admission",
+                lambda: transaction_known(
+                    stale_node, transactions[0]["transaction_hash"]
+                )
+                and stale_node.statistics().get("onyx_verifier_active", 0) == 0,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=args.rpc_timeout,
+            )
+            stale_retry_after = stale_node.statistics()
+            stale_chain_completion = {
+                "transaction_hash": transactions[0]["transaction_hash"],
+                "captured_block_bytes": len(bytes.fromhex(stale_block_blob)),
+                "base_height": funded_height,
+                "advanced_height": stale_node.status()["top_block_height"],
+                "stale_response": stale_response,
+                "retry_response": retry_response,
+                "verifier_acquired_before": stale_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after_stale": stale_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after_retry": stale_retry_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_active_after_retry": stale_retry_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after_retry": stale_retry_after.get(
+                    "transaction_pool_count", 0
+                ),
+                "transaction_known_after_retry": transaction_known(
+                    stale_node, transactions[0]["transaction_hash"]
+                ),
+            }
+            if (
+                stale_chain_completion["verifier_acquired_after_retry"]
+                != stale_chain_completion["verifier_acquired_before"] + 2
+                or stale_chain_completion["verifier_active_after_retry"] != 0
+                or stale_chain_completion["pool_count_after_retry"] != 1
+                or not stale_chain_completion["transaction_known_after_retry"]
+            ):
+                raise RuntimeError(
+                    "stale verifier retry did not reuse capacity and admit: "
+                    f"{stale_chain_completion!r}"
+                )
+            stale_node.stop()
+            nodes.remove(stale_node)
 
             abandoned_before = node.statistics()
             abandoned_body = json.dumps(
@@ -825,7 +1057,7 @@ def main():
                 1,
                 timeout=args.rpc_timeout,
             )
-            final_height = funded_height + 1
+            final_height = baseline_status["top_block_height"] + 1
             wait_until(
                 "post-load chain and wallet progress",
                 lambda: node.status()["top_block_height"] >= final_height
@@ -858,6 +1090,19 @@ def main():
                     and graceful_shutdown["reopened_height"] == funded_height
                     and graceful_shutdown["reopened_pool_count"] == 0
                     and not graceful_shutdown["reopened_transaction_known"]
+                ),
+                "stale_chain_completion_discarded_and_retried": (
+                    stale_chain_completion["advanced_height"] == funded_height + 1
+                    and stale_chain_completion["stale_response"]
+                    .get("error", {})
+                    .get("code")
+                    == -104
+                    and stale_chain_completion["verifier_acquired_after_stale"]
+                    == stale_chain_completion["verifier_acquired_before"] + 1
+                    and stale_chain_completion["verifier_acquired_after_retry"]
+                    == stale_chain_completion["verifier_acquired_before"] + 2
+                    and stale_chain_completion["pool_count_after_retry"] == 1
+                    and stale_chain_completion["transaction_known_after_retry"]
                 ),
                 "abandoned_rpc_released_without_admission": (
                     abandoned_rpc_cleanup["verifier_acquired_after"]
@@ -937,6 +1182,7 @@ def main():
                 "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
                 "authenticated_invalid_proof": authenticated_invalid_proof,
                 "graceful_shutdown": graceful_shutdown,
+                "stale_chain_completion": stale_chain_completion,
                 "transactions": [
                     {
                         "transaction_hash": transaction["transaction_hash"],

@@ -1073,6 +1073,11 @@ bool Node::on_stop_daemon(http::Client *, http::RequestBody &&http_request, json
 		throw http::ErrorAuthorization("authorization-private");
 	if (!req.confirm)
 		throw std::runtime_error("stop_daemon requires confirm=true");
+	// Persist all event-loop-owned chain state before acknowledging shutdown. The verifier worker only
+	// reads its captured immutable snapshot, so this commit cannot race a background state mutation.
+	// If persistence fails, propagate the error and keep the daemon running rather than reporting a
+	// clean stop whose database would require peer resynchronization.
+	m_block_chain.db_commit();
 	res.stopping = true;
 	// Allow the success response to reach the authenticated operator before stopping the event loop.
 	// Normal stack unwinding then destroys Node, whose bounded verifier worker joins before its
