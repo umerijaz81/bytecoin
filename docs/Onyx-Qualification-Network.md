@@ -293,6 +293,18 @@ the P2P transaction in a one-entry pool. The expanded campaign passes all 15 che
 at exact revision `47c3485`, after a 428.7-second working-tree pass. This is deterministic bounded
 transfer evidence; repeated fairness, non-transfer mixed ingress, and named-host limits remain open.
 
+The `a0395f2` extension exercises the reciprocal direction on another connected empty height-4 pair.
+A valid relay RPC proof gets a measured 5.078-second head start before an abandoned valid RPC request
+acquires the target verifier. The relay then completes and broadcasts through real P2P while the target
+remains busy. Target acquisitions move 0 to 1, global overload rejections 0 to 1, cooldowns 0 to 1,
+active downloads return to zero, two peers remain connected, and neither transaction is admitted.
+After the abandoned RPC releases and the cooldown expires, explicitly retrying the exact overloaded
+binary succeeds in 0.235 seconds, moves acquisitions 1 to 2, leaves cooldowns/downloads at zero, and
+admits exactly one pool entry. The expanded campaign passes all 17 checks in 507.6 seconds at exact
+revision `a0395f2`, after a 506.5-second working-tree pass. Same-height reconnect did not reannounce
+the already-known relay pool item in discarded harness attempts, so automatic P2P reannouncement and
+long-run fairness remain open rather than inferred.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused

@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-14**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `47c3485` (`Qualify mixed Onyx verifier ingress`)
+Implementation revision documented: `a0395f2` (`Qualify reciprocal Onyx verifier overload`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `47c3485` on this branch.
+- **Committed**: present at or before Git revision `a0395f2` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -985,6 +985,19 @@ precheck conflicts 0 to 1, and admits nothing. The full process campaign passes 
 431.1 seconds at the exact committed revision, after an earlier 428.7-second working-tree pass. This
 proves one deterministic cross-ingress invariant; repeated fairness, sustained
 load, and named-host thresholds remain open.
+
+Commit `a0395f2` qualifies the reciprocal direction. Two isolated height-4 nodes begin connected and
+empty. A valid relay RPC proof receives a measured 5.078-second head start; an abandoned valid RPC
+proof then acquires the target verifier. The relay completes and broadcasts through real P2P while
+that target proof remains active. The target records acquisitions 0 to 1, global overload rejections
+0 to 1, exactly one retry cooldown, zero lingering downloads, two connected peers, no admission, and
+no ban/disconnect. After the abandoned RPC releases and the 30-second cooldown expires (27.656 seconds
+remaining after proof cleanup), explicitly retrying the exact P2P-overloaded binary succeeds in 0.235
+seconds, moves acquisitions 1 to 2, leaves cooldowns/downloads at zero, and produces exactly one pool
+entry. All 17 checks pass in 507.6 seconds at exact revision `a0395f2`, after a 506.5-second working-tree
+pass. A same-height reconnect did not itself reannounce an already-known pool item during two discarded
+harness designs, so this milestone does not claim automatic P2P reannouncement fairness; repeated
+and sustained fairness remains open.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 

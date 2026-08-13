@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-14
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `47c3485` (`Qualify mixed Onyx verifier ingress`)
+Last implementation revision reviewed: `a0395f2` (`Qualify reciprocal Onyx verifier overload`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `47c3485`.
+- **Implemented and committed** means the code is in the branch history at or before `a0395f2`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -834,6 +834,16 @@ Validation performed before commit:
   0 to 1, preserves one pool entry, and admits only the P2P transaction. All 15 checks pass in 431.1
   seconds at exact revision `47c3485`, following a 428.7-second working-tree pass. Repeated/fair mixed
   load and named-host limits remain open.
+- Commit `a0395f2` qualifies the reciprocal direction with two connected empty height-4 nodes. A
+  relay RPC proof gets a measured 5.078-second head start, then an abandoned target RPC proof owns the
+  target verifier when the relay's real P2P broadcast arrives. Target acquisitions move 0 to 1,
+  global overload rejections 0 to 1, cooldowns 0 to 1, downloads return to zero, both peers remain
+  connected, and neither transaction enters the target pool. After RPC cleanup and cooldown expiry,
+  explicit retry of the exact overloaded binary succeeds in 0.235 seconds, acquisitions move 1 to 2,
+  cooldowns/downloads stay zero, and exactly one transaction enters the pool. All 17 checks pass in
+  507.6 seconds at exact revision `a0395f2`, after a 506.5-second working-tree pass. Same-height
+  reconnect was observed not to reannounce the existing pool item, so automatic P2P retry fairness is
+  not claimed and remains future work.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -1044,7 +1054,8 @@ Remaining:
   join is covered in `933eb94`; three authenticated invalid transfer rejections plus permit reuse are
   covered in `d96060f`; offline shutdown persistence plus stale completion/retry are covered in
   `c39ba96`; and deterministic transfer P2P/RPC contention plus proof-free retry are covered in
-  `47c3485`.
+  `47c3485`. Reciprocal RPC-active/P2P overload, non-ban cooldown cleanup, and explicit capacity reuse
+  are covered in `a0395f2`; automatic P2P reannouncement fairness is not.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 
