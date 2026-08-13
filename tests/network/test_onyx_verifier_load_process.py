@@ -702,6 +702,184 @@ def main():
             stale_node.stop()
             nodes.remove(stale_node)
 
+            # Exercise the single global verifier boundary across real ingress types, not merely
+            # two JSON-RPC clients. Start from the clean, offline-persisted height-4 snapshot so this
+            # qualification cannot contaminate the primary campaign's pool. The relay admits the
+            # first sibling over RPC and announces it to the target over P2P. While the target is
+            # verifying that P2P transaction, the other sibling must fail fast over RPC. Once the P2P
+            # transaction is admitted, retrying the sibling must hit the authenticated conflict
+            # precheck without acquiring the verifier.
+            mixed_target_data = root / "onyx-mixed-target-data"
+            shutil.copytree(shutdown_data, mixed_target_data)
+            mixed_target_p2p, mixed_target_rpc = unused_port(), unused_port()
+            mixed_relay_p2p, mixed_relay_rpc = unused_port(), unused_port()
+            mixed_target = Node(
+                bytecoind,
+                root,
+                "onyx-mixed-target",
+                "onyx",
+                mixed_target_p2p,
+                mixed_target_rpc,
+                exclusive_port=mixed_relay_p2p,
+                data=mixed_target_data,
+            )
+            nodes.append(mixed_target)
+            wait_until("mixed-ingress target RPC", mixed_target.status, nodes, timeout=60)
+            mixed_relay = Node(
+                bytecoind,
+                root,
+                "onyx-mixed-relay",
+                "onyx",
+                mixed_relay_p2p,
+                mixed_relay_rpc,
+                exclusive_port=mixed_target_p2p,
+            )
+            nodes.append(mixed_relay)
+            wait_until(
+                "mixed-ingress isolated pair synchronization",
+                lambda: connected(mixed_target.statistics())
+                and connected(mixed_relay.statistics())
+                and mixed_target.status()["top_block_height"] == funded_height
+                and mixed_relay.status()["top_block_height"] == funded_height,
+                nodes,
+                timeout=120,
+            )
+            mixed_before = mixed_target.statistics()
+            if (
+                mixed_before.get("transaction_pool_count", 0) != 0
+                or transaction_known(mixed_target, transactions[0]["transaction_hash"])
+                or transaction_known(mixed_target, transactions[1]["transaction_hash"])
+            ):
+                raise RuntimeError("mixed-ingress target did not start with an empty pool")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                mixed_relay_submission = executor.submit(
+                    rpc_call,
+                    mixed_relay_rpc,
+                    "send_transaction",
+                    {"binary_transaction": transactions[0]["binary_transaction"]},
+                )
+                wait_until(
+                    "mixed-ingress P2P verifier activity",
+                    lambda: mixed_target.statistics().get("onyx_verifier_acquired", 0)
+                    == mixed_before.get("onyx_verifier_acquired", 0) + 1
+                    and mixed_target.statistics().get("onyx_verifier_active", 0) == 1,
+                    nodes,
+                    timeout=args.rpc_timeout,
+                )
+                mixed_busy_started = time.monotonic()
+                mixed_busy_response = rpc_response(
+                    mixed_target_rpc,
+                    "send_transaction",
+                    {"binary_transaction": transactions[1]["binary_transaction"]},
+                )
+                mixed_busy_elapsed = time.monotonic() - mixed_busy_started
+                mixed_during = mixed_target.statistics()
+                mixed_relay_response = mixed_relay_submission.result(
+                    timeout=args.rpc_timeout
+                )
+
+            mixed_busy_error = mixed_busy_response.get("error", {})
+            if (
+                mixed_busy_error.get("code") != -104
+                or "busy" not in mixed_busy_error.get("message", "").lower()
+                or mixed_during.get("onyx_verifier_acquired", 0)
+                != mixed_before.get("onyx_verifier_acquired", 0) + 1
+                or mixed_during.get("onyx_verifier_rejected_global", 0)
+                != mixed_before.get("onyx_verifier_rejected_global", 0) + 1
+                or transaction_known(mixed_target, transactions[1]["transaction_hash"])
+            ):
+                raise RuntimeError(
+                    "mixed P2P/RPC contention did not fail fast at the global verifier bound: "
+                    f"response={mixed_busy_response!r} before={mixed_before!r} "
+                    f"during={mixed_during!r}"
+                )
+
+            wait_until(
+                "mixed-ingress P2P admission",
+                lambda: transaction_known(mixed_target, transactions[0]["transaction_hash"])
+                and transaction_known(mixed_relay, transactions[0]["transaction_hash"])
+                and mixed_target.statistics().get("onyx_verifier_active", 0) == 0,
+                nodes,
+                timeout=args.rpc_timeout,
+            )
+            mixed_after_p2p = mixed_target.statistics()
+            mixed_retry_started = time.monotonic()
+            mixed_retry_response = rpc_call(
+                mixed_target_rpc,
+                "send_transaction",
+                {"binary_transaction": transactions[1]["binary_transaction"]},
+            )
+            mixed_retry_elapsed = time.monotonic() - mixed_retry_started
+            mixed_after_retry = mixed_target.statistics()
+            mixed_ingress = {
+                "base_height": funded_height,
+                "p2p_transaction_hash": transactions[0]["transaction_hash"],
+                "rpc_sibling_hash": transactions[1]["transaction_hash"],
+                "relay_rpc_response": mixed_relay_response,
+                "busy_rpc_response": mixed_busy_response,
+                "busy_rpc_elapsed_seconds": round(mixed_busy_elapsed, 6),
+                "retry_rpc_response": mixed_retry_response,
+                "retry_rpc_elapsed_seconds": round(mixed_retry_elapsed, 6),
+                "verifier_acquired_before": mixed_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_during": mixed_during.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after_p2p": mixed_after_p2p.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after_retry": mixed_after_retry.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "rejected_global_before": mixed_before.get(
+                    "onyx_verifier_rejected_global", 0
+                ),
+                "rejected_global_during": mixed_during.get(
+                    "onyx_verifier_rejected_global", 0
+                ),
+                "precheck_conflicts_after_p2p": mixed_after_p2p.get(
+                    "onyx_verifier_precheck_conflicts", 0
+                ),
+                "precheck_conflicts_after_retry": mixed_after_retry.get(
+                    "onyx_verifier_precheck_conflicts", 0
+                ),
+                "verifier_active_after_retry": mixed_after_retry.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after_retry": mixed_after_retry.get(
+                    "transaction_pool_count", 0
+                ),
+                "p2p_transaction_known_after_retry": transaction_known(
+                    mixed_target, transactions[0]["transaction_hash"]
+                ),
+                "rpc_sibling_known_after_retry": transaction_known(
+                    mixed_target, transactions[1]["transaction_hash"]
+                ),
+            }
+            if (
+                mixed_ingress["verifier_acquired_after_p2p"]
+                != mixed_ingress["verifier_acquired_before"] + 1
+                or mixed_ingress["verifier_acquired_after_retry"]
+                != mixed_ingress["verifier_acquired_after_p2p"]
+                or mixed_ingress["precheck_conflicts_after_retry"]
+                != mixed_ingress["precheck_conflicts_after_p2p"] + 1
+                or mixed_ingress["verifier_active_after_retry"] != 0
+                or mixed_ingress["pool_count_after_retry"] != 1
+                or not mixed_ingress["p2p_transaction_known_after_retry"]
+                or mixed_ingress["rpc_sibling_known_after_retry"]
+                or mixed_retry_elapsed > MAX_PENDING_TRANSFER_CONFLICT_SECONDS
+            ):
+                raise RuntimeError(
+                    "mixed-ingress retry did not use the proof-free conflict path: "
+                    f"{mixed_ingress!r}"
+                )
+            mixed_target.stop()
+            nodes.remove(mixed_target)
+            mixed_relay.stop()
+            nodes.remove(mixed_relay)
+
             abandoned_before = node.statistics()
             abandoned_body = json.dumps(
                 {
@@ -1104,6 +1282,27 @@ def main():
                     and stale_chain_completion["pool_count_after_retry"] == 1
                     and stale_chain_completion["transaction_known_after_retry"]
                 ),
+                "mixed_p2p_rpc_global_bound": (
+                    mixed_ingress["busy_rpc_response"]
+                    .get("error", {})
+                    .get("code")
+                    == -104
+                    and mixed_ingress["verifier_acquired_during"]
+                    == mixed_ingress["verifier_acquired_before"] + 1
+                    and mixed_ingress["rejected_global_during"]
+                    == mixed_ingress["rejected_global_before"] + 1
+                    and mixed_ingress["verifier_acquired_after_p2p"]
+                    == mixed_ingress["verifier_acquired_before"] + 1
+                ),
+                "mixed_ingress_retry_conflict_skipped_verifier": (
+                    mixed_ingress["verifier_acquired_after_retry"]
+                    == mixed_ingress["verifier_acquired_after_p2p"]
+                    and mixed_ingress["precheck_conflicts_after_retry"]
+                    == mixed_ingress["precheck_conflicts_after_p2p"] + 1
+                    and mixed_ingress["pool_count_after_retry"] == 1
+                    and mixed_ingress["p2p_transaction_known_after_retry"]
+                    and not mixed_ingress["rpc_sibling_known_after_retry"]
+                ),
                 "abandoned_rpc_released_without_admission": (
                     abandoned_rpc_cleanup["verifier_acquired_after"]
                     == abandoned_rpc_cleanup["verifier_acquired_before"] + 1
@@ -1183,6 +1382,7 @@ def main():
                 "authenticated_invalid_proof": authenticated_invalid_proof,
                 "graceful_shutdown": graceful_shutdown,
                 "stale_chain_completion": stale_chain_completion,
+                "mixed_ingress": mixed_ingress,
                 "transactions": [
                     {
                         "transaction_hash": transaction["transaction_hash"],
