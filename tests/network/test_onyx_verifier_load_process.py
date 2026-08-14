@@ -1048,42 +1048,65 @@ def main():
                     nodes,
                     timeout=30,
                 )
-                relay_started = time.monotonic()
-                reciprocal_relay_response = rpc_call(
-                    reciprocal_relay_rpc,
-                    "send_transaction",
-                    {"binary_transaction": transactions[0]["binary_transaction"]},
-                )
-                reciprocal_relay_elapsed = time.monotonic() - relay_started
-                wait_until(
-                    "reciprocal P2P overload cooldown",
-                    lambda: connected(reciprocal_target.statistics())
-                    and connected(reciprocal_relay.statistics())
-                    and transaction_known(
-                        reciprocal_relay, transactions[0]["transaction_hash"]
+                # Both peers must begin their local valid-proof verification together. Running these
+                # RPCs sequentially lets the first target retry cooldown expire while the backup is
+                # still verifying on slower hosts; the primary can then be admitted before the
+                # alternate descriptor is announced, which does not exercise source retention at
+                # all. The relay gets a deterministic scheduling head start, while the backup starts
+                # as soon as the relay owns its local verifier.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    relay_started = time.monotonic()
+                    relay_future = executor.submit(
+                        rpc_call,
+                        reciprocal_relay_rpc,
+                        "send_transaction",
+                        {"binary_transaction": transactions[0]["binary_transaction"]},
                     )
-                    and reciprocal_target.statistics().get(
-                        "onyx_verifier_retry_cooldowns", 0
+                    wait_until(
+                        "reciprocal relay local verifier activity",
+                        lambda: reciprocal_relay.statistics().get(
+                            "onyx_verifier_acquired", 0
+                        )
+                        == reciprocal_relay_warmed.get("onyx_verifier_acquired", 0) + 1
+                        and reciprocal_relay.statistics().get(
+                            "onyx_verifier_active", 0
+                        )
+                        == 1,
+                        nodes,
+                        timeout=30,
                     )
-                    == 1
-                    and reciprocal_target.statistics().get(
-                        "transaction_downloads_active", 0
+                    backup_future = executor.submit(
+                        rpc_call,
+                        reciprocal_backup_rpc,
+                        "send_transaction",
+                        {"binary_transaction": transactions[0]["binary_transaction"]},
                     )
-                    == 0
-                    and reciprocal_target.statistics().get(
-                        "onyx_verifier_pending_retries", 0
+                    reciprocal_relay_response = relay_future.result()
+                    reciprocal_relay_elapsed = time.monotonic() - relay_started
+                    wait_until(
+                        "reciprocal P2P overload cooldown",
+                        lambda: connected(reciprocal_target.statistics())
+                        and connected(reciprocal_relay.statistics())
+                        and transaction_known(
+                            reciprocal_relay, transactions[0]["transaction_hash"]
+                        )
+                        and reciprocal_target.statistics().get(
+                            "onyx_verifier_retry_cooldowns", 0
+                        )
+                        == 1
+                        and reciprocal_target.statistics().get(
+                            "transaction_downloads_active", 0
+                        )
+                        == 0
+                        and reciprocal_target.statistics().get(
+                            "onyx_verifier_pending_retries", 0
+                        )
+                        == 1,
+                        nodes,
+                        timeout=45,
                     )
-                    == 1,
-                    nodes,
-                    timeout=45,
-                )
-                reciprocal_after_overload = reciprocal_target.statistics()
-
-                reciprocal_backup_response = rpc_call(
-                    reciprocal_backup_rpc,
-                    "send_transaction",
-                    {"binary_transaction": transactions[0]["binary_transaction"]},
-                )
+                    reciprocal_after_overload = reciprocal_target.statistics()
+                    reciprocal_backup_response = backup_future.result()
                 wait_until(
                     "reciprocal alternate retry source retention",
                     lambda: transaction_known(
