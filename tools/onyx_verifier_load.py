@@ -34,6 +34,7 @@ METRIC_FIELDS = (
     "onyx_verifier_abandoned_rpcs",
     "transaction_downloads_active",
     "onyx_verifier_retry_cooldowns",
+    "onyx_verifier_pending_retries",
 )
 
 

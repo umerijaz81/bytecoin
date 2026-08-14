@@ -600,7 +600,11 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 			} catch (const OnyxVerifierBusy &) {
 				// Local non-consensus overload is retryable and never a peer-ban reason.
 				retryable_verifier_overload = true;
+#ifdef onyx_USE_ZK
+				m_node->defer_onyx_p2p_retry(this, tit->second, stem_hop);
+#else
 				m_node->m_onyx_verifier_retry_cooldown.defer(tid);
+#endif
 			} catch (const std::exception &ex) {
 				return disconnect("NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex));
 			}

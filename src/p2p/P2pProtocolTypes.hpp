@@ -132,6 +132,7 @@ struct CoreStatistics {
 	uint64_t onyx_verifier_abandoned_rpcs       = 0;
 	size_t transaction_downloads_active         = 0;
 	size_t onyx_verifier_retry_cooldowns        = 0;
+	size_t onyx_verifier_pending_retries        = 0;
 };
 
 // inline bool operator<(const NetworkAddressLegacy &a, const NetworkAddressLegacy &b) {

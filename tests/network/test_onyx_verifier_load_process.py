@@ -911,12 +911,12 @@ def main():
             mixed_relay.stop()
             nodes.remove(mixed_relay)
 
-            # Reciprocal direction: begin a valid relay RPC proof first, then give it a fixed
-            # head-start before beginning an abandoned target RPC proof. Both nodes start from the
-            # same clean height-4 state. The relay proof therefore completes and broadcasts over the
-            # real P2P path while the target verifier is still owned by RPC. That body must enter one
-            # bounded cooldown without banning the peer. After expiry, an explicit retry of the same
-            # transaction must prove target capacity is reusable and the transaction remains valid.
+            # Reciprocal direction: warm only the relay verifier with an authenticated-invalid proof,
+            # then begin a cold abandoned target RPC proof before submitting the valid relay RPC.
+            # Both nodes start from the same clean height-4 state. The warm relay therefore completes
+            # and broadcasts over real P2P while the cold target verifier is still owned by RPC. That
+            # body must enter one bounded cooldown without banning the peer, then retry and admit
+            # automatically after expiry.
             reciprocal_target_data = root / "onyx-reciprocal-target-data"
             shutil.copytree(shutdown_data, reciprocal_target_data)
             reciprocal_target_p2p, reciprocal_target_rpc = unused_port(), unused_port()
@@ -952,76 +952,77 @@ def main():
             )
             reciprocal_before = reciprocal_target.statistics()
             reciprocal_relay_before = reciprocal_relay.statistics()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                reciprocal_relay_submission = executor.submit(
-                    rpc_call,
+            reciprocal_relay_warm_response = rpc_response(
+                reciprocal_relay_rpc,
+                "send_transaction",
+                {
+                    "binary_transaction": invalid_proof_transaction[
+                        "binary_transaction"
+                    ]
+                },
+            )
+            reciprocal_relay_warmed = reciprocal_relay.statistics()
+            if (
+                "error" not in reciprocal_relay_warm_response
+                or reciprocal_relay_warmed.get("onyx_verifier_acquired", 0)
+                != reciprocal_relay_before.get("onyx_verifier_acquired", 0) + 1
+                or reciprocal_relay_warmed.get("onyx_verifier_active", 0) != 0
+                or reciprocal_relay_warmed.get("transaction_pool_count", 0) != 0
+            ):
+                raise RuntimeError(
+                    "reciprocal relay warm-up did not reject through the verifier: "
+                    f"response={reciprocal_relay_warm_response!r} "
+                    f"before={reciprocal_relay_before!r} warmed={reciprocal_relay_warmed!r}"
+                )
+            reciprocal_socket = open_transaction_socket(
+                reciprocal_target_rpc,
+                transactions[1]["binary_transaction"],
+                "reciprocal-abandoned-rpc",
+            )
+            try:
+                wait_until(
+                    "reciprocal cold target RPC verifier activity",
+                    lambda: reciprocal_target.statistics().get(
+                        "onyx_verifier_acquired", 0
+                    )
+                    == reciprocal_before.get("onyx_verifier_acquired", 0) + 1
+                    and reciprocal_target.statistics().get("onyx_verifier_active", 0)
+                    == 1,
+                    nodes,
+                    timeout=30,
+                )
+                relay_started = time.monotonic()
+                reciprocal_relay_response = rpc_call(
                     reciprocal_relay_rpc,
                     "send_transaction",
                     {"binary_transaction": transactions[0]["binary_transaction"]},
                 )
+                reciprocal_relay_elapsed = time.monotonic() - relay_started
                 wait_until(
-                    "reciprocal relay RPC verifier activity",
-                    lambda: reciprocal_relay.statistics().get(
-                        "onyx_verifier_acquired", 0
+                    "reciprocal P2P overload cooldown",
+                    lambda: connected(reciprocal_target.statistics())
+                    and connected(reciprocal_relay.statistics())
+                    and transaction_known(
+                        reciprocal_relay, transactions[0]["transaction_hash"]
                     )
-                    == reciprocal_relay_before.get("onyx_verifier_acquired", 0) + 1
-                    and reciprocal_relay.statistics().get("onyx_verifier_active", 0) == 1,
+                    and reciprocal_target.statistics().get(
+                        "onyx_verifier_retry_cooldowns", 0
+                    )
+                    == 1
+                    and reciprocal_target.statistics().get(
+                        "transaction_downloads_active", 0
+                    )
+                    == 0
+                    and reciprocal_target.statistics().get(
+                        "onyx_verifier_pending_retries", 0
+                    )
+                    == 1,
                     nodes,
-                    timeout=30,
+                    timeout=45,
                 )
-                headstart_started = time.monotonic()
-                while time.monotonic() - headstart_started < 5.0:
-                    for process in nodes:
-                        process.check()
-                    if reciprocal_relay.statistics().get("onyx_verifier_active", 0) != 1:
-                        raise RuntimeError(
-                            "reciprocal relay proof completed before its target head-start"
-                        )
-                    time.sleep(0.1)
-                reciprocal_headstart_elapsed = time.monotonic() - headstart_started
-                reciprocal_socket = open_transaction_socket(
-                    reciprocal_target_rpc,
-                    transactions[1]["binary_transaction"],
-                    "reciprocal-abandoned-rpc",
-                )
-                try:
-                    wait_until(
-                        "reciprocal target RPC verifier activity",
-                        lambda: reciprocal_target.statistics().get(
-                            "onyx_verifier_acquired", 0
-                        )
-                        == reciprocal_before.get("onyx_verifier_acquired", 0) + 1
-                        and reciprocal_target.statistics().get(
-                            "onyx_verifier_active", 0
-                        )
-                        == 1,
-                        nodes,
-                        timeout=30,
-                    )
-                    wait_until(
-                        "reciprocal P2P overload cooldown",
-                        lambda: connected(reciprocal_target.statistics())
-                        and connected(reciprocal_relay.statistics())
-                        and transaction_known(
-                            reciprocal_relay, transactions[0]["transaction_hash"]
-                        )
-                        and reciprocal_target.statistics().get(
-                            "onyx_verifier_retry_cooldowns", 0
-                        )
-                        == 1
-                        and reciprocal_target.statistics().get(
-                            "transaction_downloads_active", 0
-                        )
-                        == 0,
-                        nodes,
-                        timeout=45,
-                    )
-                    reciprocal_after_overload = reciprocal_target.statistics()
-                    reciprocal_relay_response = reciprocal_relay_submission.result(
-                        timeout=args.rpc_timeout
-                    )
-                finally:
-                    close_socket(reciprocal_socket)
+                reciprocal_after_overload = reciprocal_target.statistics()
+            finally:
+                close_socket(reciprocal_socket)
             if (
                 reciprocal_after_overload.get("onyx_verifier_acquired", 0)
                 != reciprocal_before.get("onyx_verifier_acquired", 0) + 1
@@ -1059,34 +1060,31 @@ def main():
             ):
                 raise RuntimeError("reciprocal target admitted work before cooldown retry")
 
-            cooldown_wait_started = time.monotonic()
+            automatic_retry_started = time.monotonic()
             wait_until(
-                "reciprocal verifier cooldown expiry",
-                lambda: reciprocal_target.statistics().get(
-                    "onyx_verifier_retry_cooldowns", 0
-                )
-                == 0,
-                nodes,
-                timeout=45,
-            )
-            cooldown_wait_elapsed = time.monotonic() - cooldown_wait_started
-
-            retry_started = time.monotonic()
-            reciprocal_retry_response = rpc_call(
-                reciprocal_target_rpc,
-                "send_transaction",
-                {"binary_transaction": transactions[0]["binary_transaction"]},
-            )
-            reciprocal_retry_elapsed = time.monotonic() - retry_started
-            wait_until(
-                "reciprocal post-cooldown retry admission",
+                "automatic reciprocal P2P retry admission",
                 lambda: transaction_known(
                     reciprocal_target, transactions[0]["transaction_hash"]
                 )
-                and reciprocal_target.statistics().get("onyx_verifier_active", 0) == 0,
+                and reciprocal_target.statistics().get("onyx_verifier_active", 0) == 0
+                and reciprocal_target.statistics().get("onyx_verifier_acquired", 0)
+                == reciprocal_before.get("onyx_verifier_acquired", 0) + 2
+                and reciprocal_target.statistics().get(
+                    "onyx_verifier_retry_cooldowns", 0
+                )
+                == 0
+                and reciprocal_target.statistics().get(
+                    "onyx_verifier_pending_retries", 0
+                )
+                == 0
+                and reciprocal_target.statistics().get(
+                    "transaction_downloads_active", 0
+                )
+                == 0,
                 nodes,
-                timeout=args.rpc_timeout,
+                timeout=max(args.rpc_timeout, 90),
             )
+            automatic_retry_elapsed = time.monotonic() - automatic_retry_started
             reciprocal_after_retry = reciprocal_target.statistics()
             reciprocal_mixed_ingress = {
                 "base_height": funded_height,
@@ -1094,10 +1092,14 @@ def main():
                     "transaction_hash"
                 ],
                 "p2p_transaction_hash": transactions[0]["transaction_hash"],
+                "relay_warm_response": reciprocal_relay_warm_response,
                 "relay_rpc_response": reciprocal_relay_response,
-                "relay_headstart_seconds": round(reciprocal_headstart_elapsed, 6),
-                "post_cooldown_retry_response": reciprocal_retry_response,
-                "post_cooldown_retry_seconds": round(reciprocal_retry_elapsed, 6),
+                "relay_rpc_seconds_after_cold_target_started": round(
+                    reciprocal_relay_elapsed, 6
+                ),
+                "automatic_retry_seconds_after_rpc_cleanup": round(
+                    automatic_retry_elapsed, 6
+                ),
                 "verifier_acquired_before": reciprocal_before.get(
                     "onyx_verifier_acquired", 0
                 ),
@@ -1125,14 +1127,17 @@ def main():
                 "downloads_after_retry": reciprocal_after_retry.get(
                     "transaction_downloads_active", 0
                 ),
+                "pending_retries_after_overload": reciprocal_after_overload.get(
+                    "onyx_verifier_pending_retries", 0
+                ),
+                "pending_retries_after_retry": reciprocal_after_retry.get(
+                    "onyx_verifier_pending_retries", 0
+                ),
                 "abandoned_rpcs_before": reciprocal_before.get(
                     "onyx_verifier_abandoned_rpcs", 0
                 ),
                 "abandoned_rpcs_after_cleanup": reciprocal_after_cleanup.get(
                     "onyx_verifier_abandoned_rpcs", 0
-                ),
-                "cooldown_wait_seconds_after_rpc_cleanup": round(
-                    cooldown_wait_elapsed, 6
                 ),
                 "pool_count_after_retry": reciprocal_after_retry.get(
                     "transaction_pool_count", 0
@@ -1161,6 +1166,8 @@ def main():
                 or reciprocal_mixed_ingress["cooldowns_after_retry"] != 0
                 or reciprocal_mixed_ingress["downloads_after_overload"] != 0
                 or reciprocal_mixed_ingress["downloads_after_retry"] != 0
+                or reciprocal_mixed_ingress["pending_retries_after_overload"] != 1
+                or reciprocal_mixed_ingress["pending_retries_after_retry"] != 0
                 or reciprocal_mixed_ingress["abandoned_rpcs_after_cleanup"]
                 != reciprocal_mixed_ingress["abandoned_rpcs_before"] + 1
                 or reciprocal_mixed_ingress["pool_count_after_retry"] != 1
@@ -1172,7 +1179,7 @@ def main():
                 or reciprocal_mixed_ingress["abandoned_rpc_known_after_retry"]
             ):
                 raise RuntimeError(
-                    "reciprocal P2P cooldown did not expire and release retry capacity: "
+                    "reciprocal P2P cooldown did not automatically retry and admit: "
                     f"{reciprocal_mixed_ingress!r}"
                 )
             reciprocal_target.stop()
@@ -1589,14 +1596,17 @@ def main():
                     == reciprocal_mixed_ingress["rejected_global_before"] + 1
                     and reciprocal_mixed_ingress["cooldowns_after_overload"] == 1
                     and reciprocal_mixed_ingress["downloads_after_overload"] == 0
+                    and reciprocal_mixed_ingress["pending_retries_after_overload"]
+                    == 1
                     and reciprocal_mixed_ingress["peers_connected_after_overload"]
                     > 0
                 ),
-                "reciprocal_overloaded_transaction_retry_after_cooldown": (
+                "reciprocal_p2p_automatic_retry_after_cooldown": (
                     reciprocal_mixed_ingress["verifier_acquired_after_retry"]
                     == reciprocal_mixed_ingress["verifier_acquired_before"] + 2
                     and reciprocal_mixed_ingress["cooldowns_after_retry"] == 0
                     and reciprocal_mixed_ingress["downloads_after_retry"] == 0
+                    and reciprocal_mixed_ingress["pending_retries_after_retry"] == 0
                     and reciprocal_mixed_ingress["pool_count_after_retry"] == 1
                     and reciprocal_mixed_ingress["peers_connected_after_retry"] > 0
                     and reciprocal_mixed_ingress[

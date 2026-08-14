@@ -151,6 +151,20 @@ protected:
 	static constexpr size_t MAX_ONYX_VERIFIER_RETRY_COOLDOWNS = 1024;
 	BoundedRetryCooldown<Hash> m_onyx_verifier_retry_cooldown{
 	    MAX_ONYX_VERIFIER_RETRY_COOLDOWNS, std::chrono::seconds(30)};
+#ifdef onyx_USE_ZK
+	struct DeferredOnyxP2PRetry {
+		P2PProtocolBytecoin *source = nullptr;
+		TransactionDesc announced;
+		uint8_t stem_hop = 0;
+		std::chrono::steady_clock::time_point expires;
+	};
+	std::map<Hash, DeferredOnyxP2PRetry> m_deferred_onyx_p2p_retries;
+	platform::Timer m_onyx_p2p_retry_timer;
+	bool m_onyx_p2p_retry_timer_scheduled = false;
+	void defer_onyx_p2p_retry(
+	    P2PProtocolBytecoin *source, const TransactionDesc &announced, uint8_t stem_hop);
+	void on_onyx_p2p_retry_timer();
+#endif
 
 	class P2PProtocolBytecoin : public P2PProtocolBasic {
 		Node *const m_node;
@@ -210,6 +224,21 @@ protected:
 		void disconnect_onyx_invalid(const std::string &reason) { disconnect(reason); }
 		void finish_onyx_download(const Hash &tid, bool success) {
 			transaction_download_finished(tid, success);
+		}
+		bool retry_onyx_transaction(const TransactionDesc &desc, uint8_t stem_hop) {
+			if (!on_transaction_descs(std::vector<TransactionDesc>{desc}, stem_hop))
+				return true;  // The peer disconnected; do not retain its pointer.
+			if (m_transaction_descs.count(desc.hash) != 0 ||
+			    m_node->downloading_transactions.count(desc.hash) != 0 ||
+			    m_node->m_block_chain.get_memory_state_transactions().count(desc.hash) != 0 ||
+			    m_node->m_block_chain.has_transaction(desc.hash))
+				return true;
+			// The descriptor passed these admission filters before its first body download, but chain
+			// and fee policy can change during the cooldown. Such a descriptor is no longer retryable;
+			// only a valid candidate rejected by the per-peer/global download cap remains queued.
+			return desc.size == 0 ||
+			       desc.fee / desc.size < m_node->m_block_chain.minimum_pool_fee_per_byte(true) ||
+			       !m_node->m_block_chain.in_chain(desc.newest_referenced_block);
 		}
 		void advance_chain();
 		void advance_blocks();

@@ -2,6 +2,7 @@
 // Licensed under the GNU Lesser General Public License. See LICENSE for details.
 
 #include "Node.hpp"
+#include <algorithm>
 #include <boost/algorithm/string/replace.hpp>
 #include <iostream>
 #include "Config.hpp"
@@ -43,6 +44,7 @@ Node::Node(logging::ILogger &log, const Config &config, BlockChainState &block_c
 	, log_response_timestamp(std::chrono::steady_clock::now())
 	, m_pow_checker(block_chain.get_currency(), platform::EventLoop::current())
 #ifdef onyx_USE_ZK
+	, m_onyx_p2p_retry_timer(std::bind(&Node::on_onyx_p2p_retry_timer, this))
 	, m_onyx_verifier_worker(platform::EventLoop::current())
 #endif
 {
@@ -330,6 +332,65 @@ void Node::on_api_http_disconnect(http::Client *who) {
 	}
 #endif
 }
+
+#ifdef onyx_USE_ZK
+void Node::defer_onyx_p2p_retry(
+    P2PProtocolBytecoin *source, const TransactionDesc &announced, uint8_t stem_hop) {
+	const auto now = std::chrono::steady_clock::now();
+	const auto expires = now + std::chrono::seconds(30);
+	m_onyx_verifier_retry_cooldown.defer(announced.hash, now);
+	if (source == nullptr)
+		return;
+
+	auto found = m_deferred_onyx_p2p_retries.find(announced.hash);
+	if (found == m_deferred_onyx_p2p_retries.end() &&
+	    m_deferred_onyx_p2p_retries.size() >= MAX_ONYX_VERIFIER_RETRY_COOLDOWNS) {
+		// Keep the retry-body registry under the same process-wide bound as the cooldown table. Both
+		// use the same expiry values, so evicting the earliest entry preserves deterministic pressure
+		// behavior even when attacker-selected hashes fill the bound.
+		auto earliest = std::min_element(m_deferred_onyx_p2p_retries.begin(),
+		    m_deferred_onyx_p2p_retries.end(), [](const auto &left, const auto &right) {
+			    return left.second.expires < right.second.expires;
+		    });
+		m_deferred_onyx_p2p_retries.erase(earliest);
+	}
+	m_deferred_onyx_p2p_retries[announced.hash] =
+	    DeferredOnyxP2PRetry{source, announced, stem_hop, expires};
+	// Poll on the event loop. A one-second cadence avoids a timer per attacker-selected hash and
+	// allows download-cap contention to drain without introducing another unbounded queue.
+	if (!m_onyx_p2p_retry_timer_scheduled) {
+		m_onyx_p2p_retry_timer_scheduled = true;
+		m_onyx_p2p_retry_timer.once(1.0f);
+	}
+}
+
+void Node::on_onyx_p2p_retry_timer() {
+	m_onyx_p2p_retry_timer_scheduled = false;
+	for (auto it = m_deferred_onyx_p2p_retries.begin(); it != m_deferred_onyx_p2p_retries.end();) {
+		if (it->second.source == nullptr ||
+		    m_block_chain.get_memory_state_transactions().count(it->first) != 0 ||
+		    m_block_chain.has_transaction(it->first)) {
+			it = m_deferred_onyx_p2p_retries.erase(it);
+			continue;
+		}
+		if (m_onyx_verifier_retry_cooldown.is_deferred(it->first)) {
+			++it;
+			continue;
+		}
+		auto *source = it->second.source;
+		const TransactionDesc announced = it->second.announced;
+		const uint8_t stem_hop = it->second.stem_hop;
+		if (source->retry_onyx_transaction(announced, stem_hop))
+			it = m_deferred_onyx_p2p_retries.erase(it);
+		else
+			++it;  // Per-peer/global body-download capacity is still full; retry on the next tick.
+	}
+	if (!m_deferred_onyx_p2p_retries.empty()) {
+		m_onyx_p2p_retry_timer_scheduled = true;
+		m_onyx_p2p_retry_timer.once(1.0f);
+	}
+}
+#endif
 
 const std::unordered_map<std::string, Node::BINARYRPCHandlerFunction> Node::m_binaryrpc_handlers = {
     {api::cnd::SyncBlocks::bin_method(), json_rpc::make_binary_member_method(&Node::on_sync_blocks_bin)},
@@ -679,6 +740,9 @@ api::cnd::GetStatistics::Response Node::create_statistics_response(const api::cn
 	res.onyx_verifier_abandoned_rpcs = m_onyx_verifier_abandoned_rpcs;
 	res.transaction_downloads_active = downloading_transactions.size();
 	res.onyx_verifier_retry_cooldowns = m_onyx_verifier_retry_cooldown.size();
+#ifdef onyx_USE_ZK
+	res.onyx_verifier_pending_retries = m_deferred_onyx_p2p_retries.size();
+#endif
 	return res;
 }
 
@@ -1174,6 +1238,16 @@ void Node::cancel_onyx_p2p_source(P2PProtocolBytecoin *source) {
 	for (auto &entry : m_pending_onyx_p2p)
 		if (entry.second->source == source)
 			entry.second->source = nullptr;
+	for (auto it = m_deferred_onyx_p2p_retries.begin(); it != m_deferred_onyx_p2p_retries.end();) {
+		if (it->second.source == source)
+			it = m_deferred_onyx_p2p_retries.erase(it);
+		else
+			++it;
+	}
+	if (m_deferred_onyx_p2p_retries.empty()) {
+		m_onyx_p2p_retry_timer.cancel();
+		m_onyx_p2p_retry_timer_scheduled = false;
+	}
 }
 
 void Node::complete_onyx_p2p(uint64_t token) {
@@ -1201,7 +1275,7 @@ void Node::complete_onyx_p2p(uint64_t token) {
 		// A state conflict is not a peer-ban reason and should not be downloaded again.
 	} catch (const OnyxVerifierBusy &) {
 		retryable_verifier_overload = true;
-		m_onyx_verifier_retry_cooldown.defer(pending->announced.hash);
+		defer_onyx_p2p_retry(pending->source, pending->announced, pending->stem_hop);
 	} catch (const std::exception &ex) {
 		ban_reason = "NOTIFY_NEW_TRANSACTIONS add_transaction BAN what=" + common::what(ex);
 	}
