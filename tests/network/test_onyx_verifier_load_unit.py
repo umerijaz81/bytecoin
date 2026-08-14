@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import pathlib
+import sys
 import tempfile
 import unittest
 
@@ -13,6 +14,13 @@ SPEC = importlib.util.spec_from_file_location(
 )
 LOAD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(LOAD)
+sys.path.insert(0, str(ROOT / "tests" / "network"))
+PROCESS_SPEC = importlib.util.spec_from_file_location(
+    "onyx_verifier_load_process",
+    ROOT / "tests" / "network" / "test_onyx_verifier_load_process.py",
+)
+PROCESS = importlib.util.module_from_spec(PROCESS_SPEC)
+PROCESS_SPEC.loader.exec_module(PROCESS)
 
 
 class OnyxVerifierLoadUnitTests(unittest.TestCase):
@@ -50,6 +58,25 @@ class OnyxVerifierLoadUnitTests(unittest.TestCase):
         sample = LOAD.process_sample(os.getpid())
         self.assertGreater(sample["rss_bytes"], 0)
         self.assertGreaterEqual(sample["cpu_seconds"], 0)
+
+    def test_reciprocal_retry_counters_allow_one_alternate_body_race(self):
+        def bounded(requests, rejections):
+            return PROCESS.reciprocal_retry_counters_bounded(
+                {
+                    "retry_requests_before": 4,
+                    "retry_requests_after_retry": 4 + requests,
+                    "rejected_global_before": 7,
+                    "rejected_global_after_retry": 7 + rejections,
+                }
+            )
+
+        self.assertTrue(bounded(1, 1))
+        self.assertTrue(bounded(1, 2))
+        self.assertTrue(bounded(2, 2))
+        self.assertTrue(bounded(2, 3))
+        self.assertFalse(bounded(0, 1))
+        self.assertFalse(bounded(1, 3))
+        self.assertFalse(bounded(3, 3))
 
 
 if __name__ == "__main__":

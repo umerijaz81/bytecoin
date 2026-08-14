@@ -58,6 +58,20 @@ INVALID_DEPLOYMENT_PROOF_ATTEMPTS = 2
 INVALID_BRIDGE_PROOF_ATTEMPTS = 2
 
 
+def reciprocal_retry_counters_bounded(metrics):
+    """Validate timer requests against global overloads without conflating their domains."""
+    retry_requests = (
+        metrics["retry_requests_after_retry"] - metrics["retry_requests_before"]
+    )
+    rejections = (
+        metrics["rejected_global_after_retry"]
+        - metrics["rejected_global_before"]
+    )
+    # The primary body always accounts for one rejection. A backup body can already be scheduled
+    # before cooldown installation and reject independently of the timer-issued request counter.
+    return 1 <= retry_requests <= 2 and 1 <= rejections <= retry_requests + 1
+
+
 class SubmitBlockCaptureProxy:
     """Forward miner JSON-RPC to a node while retaining submitted block blobs."""
 
@@ -1416,14 +1430,7 @@ def main():
                 ]
                 != 1
                 or reciprocal_mixed_ingress["retry_sources_after_retry"] != 0
-                or reciprocal_mixed_ingress["retry_requests_after_retry"]
-                < reciprocal_mixed_ingress["retry_requests_before"] + 1
-                or reciprocal_mixed_ingress["retry_requests_after_retry"]
-                > reciprocal_mixed_ingress["retry_requests_before"] + 2
-                or reciprocal_mixed_ingress["rejected_global_after_retry"]
-                - reciprocal_mixed_ingress["rejected_global_before"]
-                != reciprocal_mixed_ingress["retry_requests_after_retry"]
-                - reciprocal_mixed_ingress["retry_requests_before"]
+                or not reciprocal_retry_counters_bounded(reciprocal_mixed_ingress)
                 or reciprocal_mixed_ingress["abandoned_rpcs_after_cleanup"]
                 != reciprocal_mixed_ingress["abandoned_rpcs_before"] + 1
                 or reciprocal_mixed_ingress["pool_count_after_retry"] != 1
@@ -1944,14 +1951,7 @@ def main():
                     ]
                     == 1
                     and reciprocal_mixed_ingress["retry_sources_after_retry"] == 0
-                    and reciprocal_mixed_ingress["retry_requests_after_retry"]
-                    >= reciprocal_mixed_ingress["retry_requests_before"] + 1
-                    and reciprocal_mixed_ingress["retry_requests_after_retry"]
-                    <= reciprocal_mixed_ingress["retry_requests_before"] + 2
-                    and reciprocal_mixed_ingress["rejected_global_after_retry"]
-                    - reciprocal_mixed_ingress["rejected_global_before"]
-                    == reciprocal_mixed_ingress["retry_requests_after_retry"]
-                    - reciprocal_mixed_ingress["retry_requests_before"]
+                    and reciprocal_retry_counters_bounded(reciprocal_mixed_ingress)
                 ),
                 "abandoned_rpc_released_without_admission": (
                     abandoned_rpc_cleanup["verifier_acquired_after"]
