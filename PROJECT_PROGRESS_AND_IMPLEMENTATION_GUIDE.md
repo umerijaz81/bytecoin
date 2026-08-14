@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-14**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `18f00d0` (`Retry overloaded Onyx P2P proofs automatically`)
+Implementation revision documented: `43e6d73` (`Retain alternate Onyx P2P retry sources`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `18f00d0` on this branch.
+- **Committed**: present at or before Git revision `43e6d73` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -1016,7 +1016,28 @@ retries 0 to 1, downloads return to zero, and two peers remain connected. With n
 submission, the target automatically retries 29.797 seconds after RPC cleanup: acquisitions move 1 to
 2, cooldowns/pending retries/downloads all become zero, and exactly one pool entry is admitted. All 17
 checks pass in 521.6 seconds at exact revision `18f00d0`; two prior final-working-tree campaigns also
-passed. Repeated multi-peer fairness and sustained named-host limits remain open.
+passed.
+
+Commit `43e6d73` closes the single-source disconnect hole without weakening verification. Each pending
+hash can retain at most four descriptor-matching live peer/hop sources, while the process-wide hash
+bound remains 1,024. Alternate announcements during cooldown add a source without extending the
+cooldown. Disconnect cleanup removes only that peer and deletes the hash only when no source remains.
+The one-second event-loop poll now issues at most one body request per tick, selects the oldest eligible
+entry, rotates a capacity-blocked source, and moves that entry's next attempt forward one second. This
+prevents a simultaneous post-cooldown body-request burst and prevents one capacity-blocked map key from
+monopolizing every tick. Optional private statistics expose retained source references and cumulative
+automatic body requests.
+
+The three-node process phase warms a primary and backup relay, occupies the cold target verifier, and
+has the primary broadcast a valid body. The backup reannounces the same descriptor during cooldown;
+the target records retry sources 1 to 2. The primary is then stopped, sources fall 2 to 1 without
+losing the pending hash, and the target admits through the surviving backup with no harness resubmission
+or reconnect. At exact revision `43e6d73`, the primary relay returns in 0.563 seconds, automatic
+admission completes 29.922 seconds after abandoned-RPC cleanup, sources drain 1 to 2 to 1 to 0,
+requests 0 to 2 exactly match global overload rejections 0 to 2, acquisitions move 0 to 2, and final
+cooldowns/pending retries/downloads are zero with one pool entry. All 18 checks pass in 554.4 seconds;
+the preceding working-tree run also passed all 18 in 554.1 seconds. Repeated multi-hash/more-than-two-
+source fairness, sustained load, and named-host limits remain open.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 

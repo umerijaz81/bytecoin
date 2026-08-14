@@ -321,6 +321,21 @@ requests, verifies, and admits the transaction 29.797 seconds after RPC cleanup.
 to 2 and cooldowns/pending retries/downloads all end at zero. The full 17-check campaign passes in
 521.6 seconds at exact revision `18f00d0`.
 
+The `43e6d73` extension retains bounded alternate sources instead of tying a pending hash to one peer.
+At most four descriptor-matching peer/hop sources are stored per hash under the existing 1,024-hash
+bound. A cooldown announcement can add a source but cannot extend expiry. Disconnect removes only
+that peer. The timer selects the oldest eligible hash and issues at most one body request per second;
+capacity failure rotates the source and moves that hash's next attempt forward one second.
+
+The process phase uses a cold target plus warm primary and backup relays. The primary's valid broadcast
+hits the occupied target verifier; the backup then reannounces the same descriptor. Retained sources
+move 1 to 2. After the primary is stopped they move 2 to 1 while the pending hash remains. With no
+harness resubmission or reconnect, the target admits through the backup and sources drain to zero. At
+exact revision `43e6d73`, the primary returns in 0.563 seconds, final admission completes 29.922 seconds
+after abandoned-RPC cleanup, two automatic requests match two overload rejections, acquisitions move
+0 to 2, and cooldowns/pending retries/downloads end at zero with one pool entry. All 18 checks pass in
+554.4 seconds; the preceding working-tree pass completes in 554.1 seconds.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused
@@ -342,16 +357,17 @@ feature-mode builds, both Jade suites, and the complete C++ ZK suite pass.
 The P2P body-download backlog now has explicit non-consensus bounds: 32 active transaction downloads
 per peer and 128 process-wide. A transaction ID that encounters local Onyx verifier overload is
 suppressed for 30 seconds across alternate-peer retry callbacks and reannouncements. Cooldown and
-automatic-retry memory are capped at 1,024 IDs with expiry cleanup and bounded eviction. Eligible
-entries automatically request their bodies again from a live source after expiry. Duplicate hashes in a descriptor
+automatic-retry memory are capped at 1,024 IDs with expiry cleanup and bounded eviction; each hash
+retains at most four matching live sources. Eligible entries automatically request their bodies again
+after expiry at no more than one request per polling tick. Duplicate hashes in a descriptor
 message are rejected before state insertion. The policy boundary tests and both
 feature-mode builds pass. These controls must still be exercised under real parallel proofs while
 recording peak RSS, CPU, latency, ordinary wallet progress, and block application progress.
 
 The authenticated private `get_statistics` endpoint supplies `onyx_verifier_active`,
 `onyx_verifier_peak_active`, acquisition and overload-rejection counters,
-`onyx_verifier_precheck_conflicts`, `onyx_verifier_abandoned_rpcs`, active transaction downloads, and
-retry-cooldown count. Load
+`onyx_verifier_precheck_conflicts`, `onyx_verifier_abandoned_rpcs`, active transaction downloads,
+retry-cooldown/pending counts, retained retry-source references, and cumulative retry requests. Load
 evidence must sample these alongside process RSS/CPU and treat an omitted optional zero-valued field
 as zero.
 

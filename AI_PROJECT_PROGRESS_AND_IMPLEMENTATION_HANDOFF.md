@@ -3,7 +3,7 @@
 - Document date: **2026-08-14**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `18f00d0` (`Retry overloaded Onyx P2P proofs automatically`)
+- Committed revision reviewed: `43e6d73` (`Retain alternate Onyx P2P retry sources`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `18f00d0` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `43e6d73` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `18f00d0`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `43e6d73`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -977,11 +977,28 @@ cleanup: acquisitions move 1 to 2, cooldowns/pending retries/downloads all becom
 entry is admitted. All 17 checks pass in 521.6 seconds at exact revision `18f00d0`; two prior final-tree
 runs also passed.
 
-Validation through `18f00d0`: qualification-feature ZK Release `bytecoind`/`tests` and Jade pass;
-ordinary ZK and non-ZK Release daemons build; their full build/Jade matrices passed immediately before
-the final terminal retry-filter adjustment; Python compilation and load-runner units pass; and the
-17-check exact-revision process campaign passes. Earlier complete C++ `--zk` evidence remains valid
-because this milestone changes node scheduling/P2P qualification rather than circuits or consensus.
+Commit `43e6d73` adds bounded multi-peer failover. A pending hash retains at most four live sources
+whose size, fee, and newest-reference descriptor matches the original, while the global pending-hash
+bound stays 1,024. Alternate announcements do not reset cooldown. Disconnect removes only the failed
+source. The event-loop poll chooses the oldest eligible entry and issues at most one body request per
+second; capacity failure rotates the source and delays that entry one second so map order cannot cause
+a request burst or monopolize every tick. Private stats/load reports add retained-source and cumulative
+retry-request counters.
+
+The deterministic three-node phase warms primary and backup relays, occupies the cold target, records
+the primary's P2P overload, and has the backup reannounce the same valid transaction during cooldown.
+Sources move 1 to 2; stopping the primary leaves the pending hash and one backup source. Without a
+harness retry or reconnect, the target admits through that backup. At exact revision `43e6d73`, the
+relay returns in 0.563 seconds, admission completes 29.922 seconds after RPC cleanup, sources drain
+1 to 2 to 1 to 0, two requests match two overload rejections, acquisitions move 0 to 2, and final
+cooldown/pending/download counts are zero with one pool entry. All 18 checks pass in 554.4 seconds;
+the preceding working-tree pass also passes all 18 in 554.1 seconds.
+
+Validation through `43e6d73`: qualification-feature ZK, ordinary ZK, and non-ZK Release
+`bytecoind`/`tests` builds and their Jade suites pass; Python compilation and all three load-runner
+units pass; and the 18-check exact-revision process campaign passes. Earlier complete C++ `--zk`
+evidence remains valid because this milestone changes node scheduling/P2P qualification rather than
+circuits or consensus.
 The normal non-ZK daemon still excludes the crash/fault controls.
 
 ### 15.4 Remaining verifier qualification work
@@ -993,7 +1010,8 @@ The normal non-ZK daemon still excludes the crash/fault controls.
    active-proof shutdown, a three-attempt authenticated invalid private-transfer campaign, and
    deterministic stale-tip discard/retry are now live-qualified.
 3. Repeat RPC-only, P2P-only, and mixed-ingress campaigns, extend mixed ingress beyond transfers, and
-   measure multi-peer fairness while ordinary RPC, wallet scanning, mining, and block application remain active.
+   repeat multi-hash and more-than-two-source fairness while ordinary RPC, wallet scanning, mining,
+   and block application remain active. Single-hash primary/backup failover is now live-qualified.
 4. Extend authenticated-invalid and valid-proof work into sustained floods while proving
    queue/download/cooldown bounds and no permit leaks.
 5. Establish percentile latency, CPU, and RSS thresholds from repeated measurements rather than the
@@ -1094,8 +1112,9 @@ live-qualified in `715d019`, exact duplicate resubmission in `59b0721`, HTTP cli
 verifier start in `d8abdef`, active-proof worker join in `933eb94`, bounded authenticated invalid-transfer
 rejection/permit reuse in `d96060f`, offline shutdown persistence plus stale discard/retry in
 `c39ba96`, deterministic transfer P2P/RPC contention plus proof-free retry in `47c3485`, reciprocal
-RPC-active/P2P overload in `a0395f2`, and bounded automatic live-peer retry/admission in `18f00d0`.
-Repeated multi-peer fairness remains open.
+RPC-active/P2P overload in `a0395f2`, bounded automatic live-peer retry/admission in `18f00d0`, and
+bounded primary/backup source failover in `43e6d73`. Repeated multi-hash/more-than-two-source and
+sustained fairness remain open.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
@@ -1300,7 +1319,8 @@ passes with continuous daemon sampling, deterministic overload, P2P propagation,
 progress, and exact cross-node supply equality. Commit `715d019` moves authenticated conflicts before
 worker submission and live-qualifies the pending transfer case; `47c3485` adds deterministic transfer
 P2P/RPC contention and proof-free retry; `a0395f2` adds reciprocal P2P overload/non-ban cooldown; and
-`18f00d0` adds bounded automatic live-peer retry. Continue with cold/warm, repeated multi-peer fairness,
+`18f00d0` adds bounded automatic live-peer retry; and `43e6d73` adds bounded alternate-source failover.
+Continue with cold/warm, repeated multi-hash/more-than-two-source fairness,
 non-transfer invalid-proof, sustained-load, repeated-host, and hosted-CI campaigns in section 15.4.
 
 Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS
