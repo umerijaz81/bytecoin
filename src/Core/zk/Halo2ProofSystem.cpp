@@ -801,6 +801,44 @@ bool Halo2ProofSystem::wallet_create_program_deployment(const BinaryArray &walle
 	return true;
 }
 
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool Halo2ProofSystem::wallet_create_authenticated_invalid_proof_program_deployment(
+    const BinaryArray &wallet_snapshot, const std::array<uint8_t, 32> &seed,
+    uint64_t max_supply, const BinaryArray &metadata, uint64_t inclusion_height,
+    uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,
+    uint64_t fee, uint32_t funding_circuit_k, uint32_t program_circuit_k,
+    BinaryArray *deployment, std::array<uint8_t, 32> *program_id) {
+	if (deployment == nullptr || program_id == nullptr) {
+		if (deployment != nullptr)
+			deployment->clear();
+		if (program_id != nullptr)
+			program_id->fill(0);
+		return false;
+	}
+	if (wallet_snapshot.empty() || metadata.empty()) {
+		deployment->clear();
+		program_id->fill(0);
+		return false;
+	}
+	OnyxBuffer encoded;
+	std::array<uint8_t, 32> next_program{};
+	const int rc = onyx_wallet_create_authenticated_invalid_proof_program_deployment(
+	    wallet_snapshot.data(), wallet_snapshot.size(), seed.data(), max_supply, metadata.data(),
+	    metadata.size(), inclusion_height, activation_height, deactivation_height, expiry_height,
+	    fee, funding_circuit_k, program_circuit_k, &encoded.data, &encoded.size,
+	    next_program.data());
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_PROGRAM_DEPLOYMENT_BYTES)) {
+		deployment->clear();
+		program_id->fill(0);
+		return false;
+	}
+	BinaryArray deployment_result = encoded.copy();
+	*deployment = std::move(deployment_result);
+	*program_id = next_program;
+	return true;
+}
+#endif
+
 bool Halo2ProofSystem::wallet_create_standard_program_deployment(const BinaryArray &wallet_snapshot,
     const std::array<uint8_t, 32> &seed, uint8_t kind, uint64_t inclusion_height,
     uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,

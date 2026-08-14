@@ -188,6 +188,14 @@ public:
 	    uint64_t expiry_height, uint64_t fee, uint32_t funding_circuit_k, uint32_t program_circuit_k,
 	    BinaryArray *deployment,
 	    std::array<uint8_t, 32> *program_id);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	static bool wallet_create_authenticated_invalid_proof_program_deployment(
+	    const BinaryArray &wallet_snapshot, const std::array<uint8_t, 32> &seed,
+	    uint64_t max_supply, const BinaryArray &metadata, uint64_t inclusion_height,
+	    uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,
+	    uint64_t fee, uint32_t funding_circuit_k, uint32_t program_circuit_k,
+	    BinaryArray *deployment, std::array<uint8_t, 32> *program_id);
+#endif
 	static bool wallet_create_standard_program_deployment(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, uint8_t kind, uint64_t inclusion_height,
 	    uint64_t activation_height, uint64_t deactivation_height, uint64_t expiry_height,

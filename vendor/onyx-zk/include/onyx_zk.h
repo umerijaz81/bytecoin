@@ -317,6 +317,18 @@ int onyx_wallet_create_program_deployment(
     uint64_t expiry_height, uint64_t fee, uint32_t funding_circuit_k,
     uint32_t program_circuit_k,
     uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+/* Non-distributable fixture: build a canonical deployment whose funding transcript is corrupted
+ * before the real spend and binding signatures are produced. */
+int onyx_wallet_create_authenticated_invalid_proof_program_deployment(
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
+    const uint8_t seed[32], uint64_t max_supply,
+    const uint8_t *metadata, size_t metadata_len,
+    uint64_t inclusion_height, uint64_t activation_height, uint64_t deactivation_height,
+    uint64_t expiry_height, uint64_t fee, uint32_t funding_circuit_k,
+    uint32_t program_circuit_k,
+    uint8_t **deployment_out, size_t *deployment_len_out, uint8_t program_id_out[32]);
+#endif
 /* Build a fee-funded deployment for a pinned standard program. kind is 1=Nft,
  * 2=Vesting, 3=Multisig, or 4=Swap. Standard programs require circuit k=16. */
 int onyx_wallet_create_standard_program_deployment(

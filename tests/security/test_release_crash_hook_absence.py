@@ -27,6 +27,7 @@ FORBIDDEN_MARKERS = (
     b"ioerr-wal-partial-final",
     b"qualification_invalid_proof",
     b"onyx_wallet_create_authenticated_invalid_proof_transfer",
+    b"onyx_wallet_create_authenticated_invalid_proof_program_deployment",
 )
 
 

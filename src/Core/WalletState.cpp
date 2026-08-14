@@ -336,6 +336,24 @@ bool WalletState::create_onyx_token_transfer(const std::array<uint8_t, 91> &reci
 bool WalletState::create_onyx_program_deployment(Amount max_supply, const BinaryArray &metadata,
     Height inclusion_height, Height activation_height, Height deactivation_height,
     Amount fee, Height expiry_height, BinaryArray *envelope, std::array<uint8_t, 32> *program_id) const {
+	return create_onyx_program_deployment_impl(max_supply, metadata, inclusion_height,
+	    activation_height, deactivation_height, fee, expiry_height, envelope, program_id, false);
+}
+
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool WalletState::create_onyx_authenticated_invalid_proof_program_deployment(Amount max_supply,
+    const BinaryArray &metadata, Height inclusion_height, Height activation_height,
+    Height deactivation_height, Amount fee, Height expiry_height, BinaryArray *envelope,
+    std::array<uint8_t, 32> *program_id) const {
+	return create_onyx_program_deployment_impl(max_supply, metadata, inclusion_height,
+	    activation_height, deactivation_height, fee, expiry_height, envelope, program_id, true);
+}
+#endif
+
+bool WalletState::create_onyx_program_deployment_impl(Amount max_supply,
+    const BinaryArray &metadata, Height inclusion_height, Height activation_height,
+    Height deactivation_height, Amount fee, Height expiry_height, BinaryArray *envelope,
+    std::array<uint8_t, 32> *program_id, bool authenticated_invalid_proof) const {
 #ifdef onyx_USE_ZK
 	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || envelope == nullptr ||
 	    program_id == nullptr)
@@ -373,10 +391,18 @@ bool WalletState::create_onyx_program_deployment(Amount max_supply, const Binary
 			return false;
 		proving_snapshot = std::move(reserved);
 	}
-	return zk::Halo2ProofSystem::wallet_create_program_deployment(proving_snapshot, seed,
-	    max_supply, metadata, inclusion_height, activation_height, deactivation_height,
-	    expiry_height, fee, parameters::ONYX_PROGRAM_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K,
-	    envelope, program_id);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (authenticated_invalid_proof)
+		return zk::Halo2ProofSystem::wallet_create_authenticated_invalid_proof_program_deployment(
+		    proving_snapshot, seed, max_supply, metadata, inclusion_height, activation_height,
+		    deactivation_height, expiry_height, fee, parameters::ONYX_PROGRAM_CIRCUIT_K,
+		    parameters::ONYX_TOKEN_CIRCUIT_K, envelope, program_id);
+#else
+	(void)authenticated_invalid_proof;
+#endif
+	return zk::Halo2ProofSystem::wallet_create_program_deployment(proving_snapshot, seed, max_supply,
+	    metadata, inclusion_height, activation_height, deactivation_height, expiry_height, fee,
+	    parameters::ONYX_PROGRAM_CIRCUIT_K, parameters::ONYX_TOKEN_CIRCUIT_K, envelope, program_id);
 #else
 	return false;
 #endif

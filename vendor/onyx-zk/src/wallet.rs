@@ -609,6 +609,58 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         program_k: u32,
         funding_k: u32,
     ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
+        self.build_program_deployment_internal(
+            keys,
+            token_manifest,
+            activation_height,
+            deactivation_height,
+            expiry_height,
+            fee,
+            program_k,
+            funding_k,
+            false,
+        )
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_authenticated_invalid_proof_program_deployment(
+        &self,
+        keys: &KeyBundle,
+        token_manifest: Vec<u8>,
+        activation_height: u64,
+        deactivation_height: Option<u64>,
+        expiry_height: u64,
+        fee: u64,
+        program_k: u32,
+        funding_k: u32,
+    ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
+        self.build_program_deployment_internal(
+            keys,
+            token_manifest,
+            activation_height,
+            deactivation_height,
+            expiry_height,
+            fee,
+            program_k,
+            funding_k,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_program_deployment_internal(
+        &self,
+        keys: &KeyBundle,
+        token_manifest: Vec<u8>,
+        activation_height: u64,
+        deactivation_height: Option<u64>,
+        expiry_height: u64,
+        fee: u64,
+        program_k: u32,
+        funding_k: u32,
+        invalidate_funding_proof: bool,
+    ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
         // Reject an unavailable funding spend before constructing the comparatively expensive token
         // artifact. In particular, a wallet-side pending reservation must fail in bounded time rather
         // than rebuilding proving/verifying keys only to discover the same insufficient balance in
@@ -622,7 +674,14 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
             deactivation_height,
         )
         .map_err(|_| WalletBuildError::InvalidValue)?;
-        self.build_program_deployment_entry(keys, entry, expiry_height, fee, funding_k)
+        self.build_program_deployment_entry(
+            keys,
+            entry,
+            expiry_height,
+            fee,
+            funding_k,
+            invalidate_funding_proof,
+        )
     }
 
     pub fn build_standard_program_deployment(
@@ -637,7 +696,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
     ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
         let entry = standard_program_entry(kind, activation_height, deactivation_height)
             .map_err(|_| WalletBuildError::InvalidValue)?;
-        self.build_program_deployment_entry(keys, entry, expiry_height, fee, circuit_k)
+        self.build_program_deployment_entry(keys, entry, expiry_height, fee, circuit_k, false)
     }
 
     fn build_program_deployment_entry(
@@ -647,6 +706,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         expiry_height: u64,
         fee: u64,
         circuit_k: u32,
+        invalidate_funding_proof: bool,
     ) -> Result<AuthorizedProgramDeployment, WalletBuildError> {
         let program_id = entry.id().map_err(|_| WalletBuildError::Crypto)?;
         let activation_height = entry.activation_height;
@@ -676,7 +736,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
                 circuit_k,
                 vec![call],
                 None,
-                false,
+                invalidate_funding_proof,
             )?
             .transaction;
         Ok(AuthorizedProgramDeployment {
@@ -1814,7 +1874,7 @@ mod tests {
     #[test]
     fn program_deployment_builder_binds_manifest_call_and_fee() {
         const DEPTH: usize = 2;
-        const FUNDING_K: u32 = 10;
+        const FUNDING_K: u32 = 16;
         const PROGRAM_K: u32 = 14;
         let network = [19; NETWORK_ID_BYTES];
         let sender = MasterSeed::new([41; 32]).derive(network).unwrap();
@@ -1891,6 +1951,44 @@ mod tests {
         assert_eq!(
             AuthorizedProgramDeployment::decode(&deployment.encode().unwrap()).unwrap(),
             deployment
+        );
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[test]
+    fn invalid_deployment_fixture_preserves_authorization_but_fails_halo2() {
+        const DEPTH: usize = 2;
+        const FUNDING_K: u32 = 16;
+        const PROGRAM_K: u32 = 14;
+        let network = [32; NETWORK_ID_BYTES];
+        let sender = MasterSeed::new([73; 32]).derive(network).unwrap();
+        let wallet = funded_wallet::<DEPTH>(
+            &sender,
+            network,
+            &[crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE + 1],
+        );
+        let deployment = wallet
+            .build_authenticated_invalid_proof_program_deployment(
+                &sender,
+                b"onyx.standard.private-fungible-token/v1".to_vec(),
+                10,
+                Some(100),
+                20,
+                crate::program_deployment::MIN_PROGRAM_DEPLOYMENT_FEE,
+                PROGRAM_K,
+                FUNDING_K,
+            )
+            .unwrap();
+
+        crate::authorization::verify_authorized_transaction(&deployment.funding).unwrap();
+        assert!(
+            crate::program_deployment::verify_standard_deployment::<DEPTH, 1, 1>(
+                FUNDING_K,
+                PROGRAM_K,
+                &deployment,
+                9,
+            )
+            .is_err()
         );
     }
 

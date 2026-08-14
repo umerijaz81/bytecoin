@@ -535,9 +535,18 @@ bool WalletNode::on_create_onyx_program_deployment(http::Client *, http::Request
 	const Height expiry = window.expiry_height;
 	BinaryArray envelope;
 	std::array<uint8_t, 32> program_id{};
-	if (!get_wallet_state().create_onyx_program_deployment(request.max_supply,
-	        common::as_binary_array(request.metadata), inclusion, activation, request.deactivation_height,
-	        request.fee, expiry, &envelope, &program_id))
+	bool created = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (request.qualification_invalid_proof)
+		created = get_wallet_state().create_onyx_authenticated_invalid_proof_program_deployment(
+		    request.max_supply, common::as_binary_array(request.metadata), inclusion, activation,
+		    request.deactivation_height, request.fee, expiry, &envelope, &program_id);
+	else
+#endif
+		created = get_wallet_state().create_onyx_program_deployment(request.max_supply,
+		    common::as_binary_array(request.metadata), inclusion, activation,
+		    request.deactivation_height, request.fee, expiry, &envelope, &program_id);
+	if (!created)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx program deployment");
 	Transaction transaction;
 	transaction.version = m_currency.onyx_transaction_version;

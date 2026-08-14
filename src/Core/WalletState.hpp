@@ -114,6 +114,12 @@ public:
 	bool create_onyx_program_deployment(Amount max_supply, const BinaryArray &metadata,
 	    Height inclusion_height, Height activation_height, Height deactivation_height,
 	    Amount fee, Height expiry_height, BinaryArray *envelope, std::array<uint8_t, 32> *program_id) const;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	bool create_onyx_authenticated_invalid_proof_program_deployment(Amount max_supply,
+	    const BinaryArray &metadata, Height inclusion_height, Height activation_height,
+	    Height deactivation_height, Amount fee, Height expiry_height, BinaryArray *envelope,
+	    std::array<uint8_t, 32> *program_id) const;
+#endif
 	bool create_onyx_standard_program_deployment(uint8_t kind, Height inclusion_height,
 	    Height activation_height, Height deactivation_height, Amount fee, Height expiry_height,
 	    BinaryArray *envelope, std::array<uint8_t, 32> *program_id) const;
@@ -166,6 +172,10 @@ protected:
 	};
 
 private:
+	bool create_onyx_program_deployment_impl(Amount max_supply, const BinaryArray &metadata,
+	    Height inclusion_height, Height activation_height, Height deactivation_height,
+	    Amount fee, Height expiry_height, BinaryArray *envelope,
+	    std::array<uint8_t, 32> *program_id, bool authenticated_invalid_proof) const;
 	size_t m_tx_pool_version = 1;
 	std::chrono::steady_clock::time_point m_log_redo_block;
 

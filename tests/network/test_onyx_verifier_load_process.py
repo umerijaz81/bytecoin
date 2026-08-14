@@ -54,6 +54,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOAD_TOOL = ROOT / "tools" / "onyx_verifier_load.py"
 MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
 INVALID_PROOF_ATTEMPTS = 3
+INVALID_DEPLOYMENT_PROOF_ATTEMPTS = 2
 
 
 class SubmitBlockCaptureProxy:
@@ -374,6 +375,23 @@ def main():
                 transaction["transaction_hash"] for transaction in transactions
             }:
                 raise RuntimeError("invalid-proof fixture duplicated a valid transaction")
+            invalid_proof_deployment = source_wallet.call(
+                "create_onyx_program_deployment",
+                {
+                    "max_supply": 1000000,
+                    "metadata": "authenticated invalid deployment qualification",
+                    "activation_height": 0,
+                    "deactivation_height": 0,
+                    "fee": 100000,
+                    "expiry_height": 0,
+                    "qualification_invalid_proof": True,
+                },
+            )
+            if invalid_proof_deployment["transaction_hash"] in {
+                invalid_proof_transaction["transaction_hash"],
+                *(transaction["transaction_hash"] for transaction in transactions),
+            }:
+                raise RuntimeError("invalid deployment fixture duplicated another transaction")
 
             transaction_paths = []
             for index, transaction in enumerate(transactions):
@@ -1432,6 +1450,69 @@ def main():
                     f"{authenticated_invalid_proof!r}"
                 )
 
+            invalid_deployment_before = node.statistics()
+            invalid_deployment_started = time.monotonic()
+            invalid_deployment_responses = []
+            invalid_deployment_attempt_seconds = []
+            for _ in range(INVALID_DEPLOYMENT_PROOF_ATTEMPTS):
+                attempt_started = time.monotonic()
+                invalid_deployment_responses.append(
+                    rpc_response(
+                        rpc_port,
+                        "send_transaction",
+                        {
+                            "binary_transaction": invalid_proof_deployment[
+                                "binary_transaction"
+                            ]
+                        },
+                    )
+                )
+                invalid_deployment_attempt_seconds.append(
+                    round(time.monotonic() - attempt_started, 6)
+                )
+            invalid_deployment_after = node.statistics()
+            authenticated_invalid_deployment = {
+                "transaction_hash": invalid_proof_deployment["transaction_hash"],
+                "program_id": invalid_proof_deployment["program_id"],
+                "bytes": len(
+                    bytes.fromhex(invalid_proof_deployment["binary_transaction"])
+                ),
+                "attempts": INVALID_DEPLOYMENT_PROOF_ATTEMPTS,
+                "attempt_seconds": invalid_deployment_attempt_seconds,
+                "elapsed_seconds": round(
+                    time.monotonic() - invalid_deployment_started, 6
+                ),
+                "responses": invalid_deployment_responses,
+                "verifier_acquired_before": invalid_deployment_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": invalid_deployment_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_active_after": invalid_deployment_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after": invalid_deployment_after.get(
+                    "transaction_pool_count", 0
+                ),
+                "transaction_known_after": transaction_known(
+                    node, invalid_proof_deployment["transaction_hash"]
+                ),
+            }
+            if (
+                any("error" not in response for response in invalid_deployment_responses)
+                or authenticated_invalid_deployment["verifier_acquired_after"]
+                != authenticated_invalid_deployment["verifier_acquired_before"]
+                + INVALID_DEPLOYMENT_PROOF_ATTEMPTS
+                or authenticated_invalid_deployment["verifier_active_after"] != 0
+                or authenticated_invalid_deployment["pool_count_after"] != 0
+                or authenticated_invalid_deployment["transaction_known_after"]
+            ):
+                raise RuntimeError(
+                    "authenticated invalid deployment did not reach and cleanly leave "
+                    f"the verifier: {authenticated_invalid_deployment!r}"
+                )
+
             baseline_status = node.status()
             baseline_audit = rpc_call(rpc_port, "get_onyx_supply_audit")
             command = [
@@ -1782,6 +1863,20 @@ def main():
                     ]
                     >= authenticated_invalid_proof["verifier_acquired_after"] + 1
                 ),
+                "authenticated_invalid_deployment_reached_verifier_without_admission": (
+                    all(
+                        "error" in response
+                        for response in authenticated_invalid_deployment["responses"]
+                    )
+                    and authenticated_invalid_deployment["verifier_acquired_after"]
+                    == authenticated_invalid_deployment["verifier_acquired_before"]
+                    + authenticated_invalid_deployment["attempts"]
+                    and authenticated_invalid_deployment["verifier_active_after"] == 0
+                    and authenticated_invalid_deployment["pool_count_after"] == 0
+                    and not authenticated_invalid_deployment[
+                        "transaction_known_after"
+                    ]
+                ),
                 "one_accepted_one_busy": classifications
                 == ["accepted", "verifier_busy"],
                 "tip_unchanged_during_unmined_load": (
@@ -1834,6 +1929,7 @@ def main():
                 },
                 "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
                 "authenticated_invalid_proof": authenticated_invalid_proof,
+                "authenticated_invalid_deployment": authenticated_invalid_deployment,
                 "graceful_shutdown": graceful_shutdown,
                 "stale_chain_completion": stale_chain_completion,
                 "mixed_ingress": mixed_ingress,

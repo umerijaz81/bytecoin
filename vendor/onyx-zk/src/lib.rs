@@ -3278,8 +3278,8 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
     })
 }
 
-#[no_mangle]
-pub extern "C" fn onyx_wallet_create_program_deployment(
+#[allow(clippy::too_many_arguments)]
+fn wallet_create_program_deployment_impl(
     wallet_snapshot: *const u8,
     wallet_snapshot_len: usize,
     seed: *const u8,
@@ -3296,6 +3296,7 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
     deployment_out: *mut *mut u8,
     deployment_len_out: *mut usize,
     program_id_out: *mut u8,
+    authenticated_invalid_proof: bool,
 ) -> i32 {
     ffi_i32(|| {
         if deployment_out.is_null() || deployment_len_out.is_null() || program_id_out.is_null() {
@@ -3354,27 +3355,57 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
             Err(_) => return -1,
         };
         let deactivation = (deactivation_height != 0).then_some(deactivation_height);
-        let deployment = match wallet.build_program_deployment(
-            &keys,
-            manifest,
-            activation_height,
-            deactivation,
-            expiry_height,
-            fee,
-            program_k,
-            funding_k,
-        ) {
+        #[cfg(feature = "qualification-fixtures")]
+        let built = if authenticated_invalid_proof {
+            wallet.build_authenticated_invalid_proof_program_deployment(
+                &keys,
+                manifest,
+                activation_height,
+                deactivation,
+                expiry_height,
+                fee,
+                program_k,
+                funding_k,
+            )
+        } else {
+            wallet.build_program_deployment(
+                &keys,
+                manifest,
+                activation_height,
+                deactivation,
+                expiry_height,
+                fee,
+                program_k,
+                funding_k,
+            )
+        };
+        #[cfg(not(feature = "qualification-fixtures"))]
+        let built = {
+            let _ = authenticated_invalid_proof;
+            wallet.build_program_deployment(
+                &keys,
+                manifest,
+                activation_height,
+                deactivation,
+                expiry_height,
+                fee,
+                program_k,
+                funding_k,
+            )
+        };
+        let deployment = match built {
             Ok(deployment) => deployment,
             Err(_) => return -5,
         };
-        if verify_program_deployment_dispatch(
-            &deployment,
-            32,
-            funding_k,
-            program_k,
-            Some(inclusion_height),
-        )
-        .is_err()
+        if !authenticated_invalid_proof
+            && verify_program_deployment_dispatch(
+                &deployment,
+                32,
+                funding_k,
+                program_k,
+                Some(inclusion_height),
+            )
+            .is_err()
         {
             return -2;
         }
@@ -3393,6 +3424,87 @@ pub extern "C" fn onyx_wallet_create_program_deployment(
         }
         1
     })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_program_deployment(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    max_supply: u64,
+    metadata: *const u8,
+    metadata_len: usize,
+    inclusion_height: u64,
+    activation_height: u64,
+    deactivation_height: u64,
+    expiry_height: u64,
+    fee: u64,
+    funding_k: u32,
+    program_k: u32,
+    deployment_out: *mut *mut u8,
+    deployment_len_out: *mut usize,
+    program_id_out: *mut u8,
+) -> i32 {
+    wallet_create_program_deployment_impl(
+        wallet_snapshot,
+        wallet_snapshot_len,
+        seed,
+        max_supply,
+        metadata,
+        metadata_len,
+        inclusion_height,
+        activation_height,
+        deactivation_height,
+        expiry_height,
+        fee,
+        funding_k,
+        program_k,
+        deployment_out,
+        deployment_len_out,
+        program_id_out,
+        false,
+    )
+}
+
+#[cfg(feature = "qualification-fixtures")]
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_authenticated_invalid_proof_program_deployment(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    max_supply: u64,
+    metadata: *const u8,
+    metadata_len: usize,
+    inclusion_height: u64,
+    activation_height: u64,
+    deactivation_height: u64,
+    expiry_height: u64,
+    fee: u64,
+    funding_k: u32,
+    program_k: u32,
+    deployment_out: *mut *mut u8,
+    deployment_len_out: *mut usize,
+    program_id_out: *mut u8,
+) -> i32 {
+    wallet_create_program_deployment_impl(
+        wallet_snapshot,
+        wallet_snapshot_len,
+        seed,
+        max_supply,
+        metadata,
+        metadata_len,
+        inclusion_height,
+        activation_height,
+        deactivation_height,
+        expiry_height,
+        fee,
+        funding_k,
+        program_k,
+        deployment_out,
+        deployment_len_out,
+        program_id_out,
+        true,
+    )
 }
 
 #[no_mangle]

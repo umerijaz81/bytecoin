@@ -396,6 +396,9 @@ void ser_members(api::walletd::CreateOnyxProgramDeployment::Request &v, ISeria &
 	seria_kv("deactivation_height", v.deactivation_height, s);
 	seria_kv("fee", v.fee, s);
 	seria_kv("expiry_height", v.expiry_height, s);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	seria_kv("qualification_invalid_proof", v.qualification_invalid_proof, s);
+#endif
 }
 
 void ser_members(api::walletd::CreateOnyxProgramDeployment::Response &v, ISeria &s) {
