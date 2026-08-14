@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-14
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `a0395f2` (`Qualify reciprocal Onyx verifier overload`)
+Last implementation revision reviewed: `18f00d0` (`Retry overloaded Onyx P2P proofs automatically`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `a0395f2`.
+- **Implemented and committed** means the code is in the branch history at or before `18f00d0`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -844,6 +844,15 @@ Validation performed before commit:
   507.6 seconds at exact revision `a0395f2`, after a 506.5-second working-tree pass. Same-height
   reconnect was observed not to reannounce the existing pool item, so automatic P2P retry fairness is
   not claimed and remains future work.
+- Commit `18f00d0` closes that gap with a process-wide, event-loop-owned automatic retry registry under
+  the existing 1,024-entry cooldown bound. It stores one bounded descriptor/source/hop/expiry per hash,
+  evicts the earliest expiry, clears peer-owned entries on disconnect, and uses one non-resetting
+  one-second poll timer so new attacker traffic cannot postpone older retries. Expired eligible items
+  request their bodies again from the live peer; pool/chain ownership, changed fee policy, and stale
+  references terminate retry, while only body-download cap pressure remains queued. The live cold-target/
+  warm-relay run records cooldowns and pending retries 0 to 1 to 0, downloads zero, peers connected,
+  acquisitions 0 to 1 to 2, and automatic one-entry admission after 29.797 seconds without reconnect
+  or resubmission. All 17 checks pass in 521.6 seconds at exact revision `18f00d0`.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -865,14 +874,15 @@ Validation performed before commit:
 - P2P transaction-body downloads are now capped at 32 active requests per peer and 128 process-wide,
   regardless of the larger descriptor chunk allowed on the wire. Verifier-overloaded transaction IDs
   enter a bounded 30-second cooldown; the table holds at most 1,024 IDs and evicts the soonest-expiring
-  entry when full. Alternate peers and reannouncements consult the same cooldown, overload remains a
-  non-ban event, and later announcements may retry. Duplicate hashes within one descriptor message
+  entry when full. Alternate peers and reannouncements consult the same cooldown; the bounded automatic
+  retry registry re-requests eligible bodies from live sources after expiry. Overload remains a
+  non-ban event. Duplicate hashes within one descriptor message
   now cause a controlled protocol disconnect rather than an insertion invariant. Deterministic policy tests and both feature-mode
   builds pass; deterministic transfer P2P/RPC contention passes, while repeated fairness,
   non-transfer mixed-ingress, and named-hardware qualification remains open.
 - Private daemon statistics expose current/peak Onyx verifier concurrency, permit acquisitions,
   global/per-source overload rejections, proof-free precheck conflicts, abandoned proof RPCs, active
-  transaction downloads, and current cooldown entries.
+  transaction downloads, current cooldown entries, and pending automatic retries.
   These are the authoritative limiter-engagement inputs for live load reports; absent optional fields
   mean zero.
 - `tools/onyx_verifier_load.py` turns distinct prebuilt Onyx transactions into a barrier-synchronized
@@ -1054,8 +1064,9 @@ Remaining:
   join is covered in `933eb94`; three authenticated invalid transfer rejections plus permit reuse are
   covered in `d96060f`; offline shutdown persistence plus stale completion/retry are covered in
   `c39ba96`; and deterministic transfer P2P/RPC contention plus proof-free retry are covered in
-  `47c3485`. Reciprocal RPC-active/P2P overload, non-ban cooldown cleanup, and explicit capacity reuse
-  are covered in `a0395f2`; automatic P2P reannouncement fairness is not.
+  `47c3485`. Reciprocal RPC-active/P2P overload and non-ban cooldown cleanup are covered in `a0395f2`;
+  bounded automatic live-peer retry and admission are covered in `18f00d0`. Repeated multi-peer fairness
+  remains open.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-14**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `a0395f2` (`Qualify reciprocal Onyx verifier overload`)
+Implementation revision documented: `18f00d0` (`Retry overloaded Onyx P2P proofs automatically`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `a0395f2` on this branch.
+- **Committed**: present at or before Git revision `18f00d0` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -998,6 +998,25 @@ entry. All 17 checks pass in 507.6 seconds at exact revision `a0395f2`, after a 
 pass. A same-height reconnect did not itself reannounce an already-known pool item during two discarded
 harness designs, so this milestone does not claim automatic P2P reannouncement fairness; repeated
 and sustained fairness remains open.
+
+Commit `18f00d0` closes the missing automatic-retry path. A process-wide event-loop registry retains
+only the source peer, bounded descriptor, stem hop, and expiry for verifier-overloaded P2P bodies. It
+shares the existing 1,024-entry pressure bound, evicts the earliest expiry when full, removes every
+entry on source disconnect, and uses one anti-starvation one-second polling timer rather than one timer
+or worker job per hash. When the 30-second cooldown expires, the node requests the body again from the
+live source peer. Pool/chain ownership transfer, raised fee policy, and stale referenced blocks are
+terminal; only real per-peer/global download-cap exhaustion remains queued. Consensus verification and
+all pool/peer mutation remain unchanged on their authoritative paths.
+
+The private statistics and load tool now expose `onyx_verifier_pending_retries`. The deterministic
+campaign warms only the relay with an authenticated-invalid proof, starts a cold abandoned target RPC
+proof, and then submits the warm valid relay proof. Its P2P broadcast reaches the busy target in 0.531
+seconds. Target acquisitions move 0 to 1, global overload rejections 0 to 1, cooldowns and pending
+retries 0 to 1, downloads return to zero, and two peers remain connected. With no reconnect or second
+submission, the target automatically retries 29.797 seconds after RPC cleanup: acquisitions move 1 to
+2, cooldowns/pending retries/downloads all become zero, and exactly one pool entry is admitted. All 17
+checks pass in 521.6 seconds at exact revision `18f00d0`; two prior final-working-tree campaigns also
+passed. Repeated multi-peer fairness and sustained named-host limits remain open.
 
 #### Implemented: authenticated private-transfer prechecks and single-proof admission
 

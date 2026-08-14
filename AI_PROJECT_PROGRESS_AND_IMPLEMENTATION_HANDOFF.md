@@ -3,7 +3,7 @@
 - Document date: **2026-08-14**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `a0395f2` (`Qualify reciprocal Onyx verifier overload`)
+- Committed revision reviewed: `18f00d0` (`Retry overloaded Onyx P2P proofs automatically`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `a0395f2` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `18f00d0` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `a0395f2`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `18f00d0`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -959,11 +959,30 @@ at exact revision `a0395f2`, after a 506.5-second working-tree pass. Two discard
 established that a same-height reconnect is not a valid automatic pool-reannouncement oracle; this
 milestone therefore does not claim eventual P2P fairness without an explicit reannouncement.
 
-Validation through `a0395f2`: ordinary ZK, qualification-feature ZK, and non-ZK Release
-`bytecoind`/`tests`/`walletd`/`minerd` builds
-passed; both `tests.exe --jade` runs passed; Python compilation and the load-runner unit suite passed; the complete
-C++ `--zk` suite passed; and the expanded two-node process campaign passed. The normal non-ZK daemon
-still excludes the crash/fault controls.
+Commit `18f00d0` implements bounded automatic retry instead of waiting for that external event. One
+process-wide event-loop registry stores source peer, bounded descriptor, stem hop, and expiry under the
+same 1,024-entry bound as cooldown state. Earliest-expiry eviction, peer-disconnect cleanup, and one
+non-resetting one-second polling timer prevent attacker-controlled memory or timer growth and prevent
+new arrivals from indefinitely postponing older entries. After cooldown, eligible bodies are requested
+again from the live source. Pool/chain ownership transfer, increased fee policy, and stale referenced
+blocks terminate retry; only real per-peer/global download-cap pressure stays queued. Consensus proof
+verification and all mutable node state remain on their existing authoritative paths.
+
+The final harness exposes and checks `onyx_verifier_pending_retries`. It warms only the relay with the
+authenticated-invalid fixture, starts a cold abandoned target RPC proof, and submits the warm valid
+relay proof. The real P2P broadcast reaches the busy target in 0.531 seconds. Acquisitions move 0 to 1,
+global overload rejections 0 to 1, cooldowns/pending retries 0 to 1, downloads zero, and two peers stay
+connected. With no reconnect or second submission, automatic retry completes 29.797 seconds after RPC
+cleanup: acquisitions move 1 to 2, cooldowns/pending retries/downloads all become zero, and one pool
+entry is admitted. All 17 checks pass in 521.6 seconds at exact revision `18f00d0`; two prior final-tree
+runs also passed.
+
+Validation through `18f00d0`: qualification-feature ZK Release `bytecoind`/`tests` and Jade pass;
+ordinary ZK and non-ZK Release daemons build; their full build/Jade matrices passed immediately before
+the final terminal retry-filter adjustment; Python compilation and load-runner units pass; and the
+17-check exact-revision process campaign passes. Earlier complete C++ `--zk` evidence remains valid
+because this milestone changes node scheduling/P2P qualification rather than circuits or consensus.
+The normal non-ZK daemon still excludes the crash/fault controls.
 
 ### 15.4 Remaining verifier qualification work
 
@@ -974,7 +993,7 @@ still excludes the crash/fault controls.
    active-proof shutdown, a three-attempt authenticated invalid private-transfer campaign, and
    deterministic stale-tip discard/retry are now live-qualified.
 3. Repeat RPC-only, P2P-only, and mixed-ingress campaigns, extend mixed ingress beyond transfers, and
-   measure fairness while ordinary RPC, wallet scanning, mining, and block application remain active.
+   measure multi-peer fairness while ordinary RPC, wallet scanning, mining, and block application remain active.
 4. Extend authenticated-invalid and valid-proof work into sustained floods while proving
    queue/download/cooldown bounds and no permit leaks.
 5. Establish percentile latency, CPU, and RSS thresholds from repeated measurements rather than the
@@ -1074,9 +1093,9 @@ and repeated runs for defensible CPU, latency, and RSS thresholds. The pending t
 live-qualified in `715d019`, exact duplicate resubmission in `59b0721`, HTTP client abandonment after
 verifier start in `d8abdef`, active-proof worker join in `933eb94`, bounded authenticated invalid-transfer
 rejection/permit reuse in `d96060f`, offline shutdown persistence plus stale discard/retry in
-`c39ba96`, deterministic transfer P2P/RPC contention plus proof-free retry in `47c3485`, and reciprocal
-RPC-active/P2P overload plus bounded cooldown/capacity reuse in `a0395f2`. Automatic P2P
-reannouncement fairness remains open.
+`c39ba96`, deterministic transfer P2P/RPC contention plus proof-free retry in `47c3485`, reciprocal
+RPC-active/P2P overload in `a0395f2`, and bounded automatic live-peer retry/admission in `18f00d0`.
+Repeated multi-peer fairness remains open.
 
 ## 16. O6 - network privacy, RandomX, scalability, and release tooling
 
@@ -1280,8 +1299,8 @@ Commit `585bc4d` implements bounded asynchronous HTTP/P2P verification and the r
 passes with continuous daemon sampling, deterministic overload, P2P propagation, mining/wallet
 progress, and exact cross-node supply equality. Commit `715d019` moves authenticated conflicts before
 worker submission and live-qualifies the pending transfer case; `47c3485` adds deterministic transfer
-P2P/RPC contention and proof-free retry; `a0395f2` adds reciprocal P2P overload, non-ban cooldown, and
-explicit post-cooldown capacity reuse. Continue with cold/warm, automatic P2P retry/fairness,
+P2P/RPC contention and proof-free retry; `a0395f2` adds reciprocal P2P overload/non-ban cooldown; and
+`18f00d0` adds bounded automatic live-peer retry. Continue with cold/warm, repeated multi-peer fairness,
 non-transfer invalid-proof, sustained-load, repeated-host, and hosted-CI campaigns in section 15.4.
 
 Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS

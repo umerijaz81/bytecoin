@@ -305,6 +305,22 @@ revision `a0395f2`, after a 506.5-second working-tree pass. Same-height reconnec
 the already-known relay pool item in discarded harness attempts, so automatic P2P reannouncement and
 long-run fairness remain open rather than inferred.
 
+The `18f00d0` extension implements automatic retry without requiring a reconnect or new announcement.
+A process-wide event-loop registry retains source peer, bounded descriptor, stem hop, and expiry under
+the existing 1,024-entry cooldown bound. It evicts earliest expiry, removes peer-owned entries on
+disconnect, and drives all entries from one non-resetting one-second timer. After cooldown, an eligible
+body is requested again from its live source. Pool/chain ownership, raised fee policy, and stale
+references terminate retry; only per-peer/global body-download cap exhaustion remains queued.
+
+The deterministic process phase warms only the relay through one authenticated-invalid rejection,
+starts a cold abandoned target RPC proof, and then submits the warm valid relay proof. The relay returns
+and broadcasts through real P2P in 0.531 seconds while the target remains active. Target acquisitions
+move 0 to 1, global overload rejections 0 to 1, cooldowns and pending retries 0 to 1, downloads return
+to zero, and both peers remain connected. With no harness retry action, the target automatically
+requests, verifies, and admits the transaction 29.797 seconds after RPC cleanup. Acquisitions move 1
+to 2 and cooldowns/pending retries/downloads all end at zero. The full 17-check campaign passes in
+521.6 seconds at exact revision `18f00d0`.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused
@@ -325,8 +341,9 @@ feature-mode builds, both Jade suites, and the complete C++ ZK suite pass.
 
 The P2P body-download backlog now has explicit non-consensus bounds: 32 active transaction downloads
 per peer and 128 process-wide. A transaction ID that encounters local Onyx verifier overload is
-suppressed for 30 seconds across alternate-peer retry callbacks and reannouncements. Cooldown memory
-is capped at 1,024 IDs with expiry cleanup and bounded eviction. Duplicate hashes in a descriptor
+suppressed for 30 seconds across alternate-peer retry callbacks and reannouncements. Cooldown and
+automatic-retry memory are capped at 1,024 IDs with expiry cleanup and bounded eviction. Eligible
+entries automatically request their bodies again from a live source after expiry. Duplicate hashes in a descriptor
 message are rejected before state insertion. The policy boundary tests and both
 feature-mode builds pass. These controls must still be exercised under real parallel proofs while
 recording peak RSS, CPU, latency, ordinary wallet progress, and block application progress.
