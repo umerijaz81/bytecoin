@@ -355,8 +355,31 @@ deployment is submitted twice and returns `-101` after 197.641 and 90.89 seconds
 to 7, active verification returns to zero, the pool remains empty, and transaction lookup remains
 false. The report is
 `build/onyx-qualification/onyx-verifier-invalid-deployment-v1-2e0eee2.json` with local qualification
-scope. Issuance, bridge, and program-call invalid-proof load plus sustained deployment floods remain
-open.
+scope. Issuance and program-call invalid-proof load plus sustained deployment floods remain open.
+
+Commit `b468475` adds a qualification-only authenticated-invalid bridge. Its completed `k=13` Halo2
+proof is corrupted before the ownership sighash is returned. The gated wallet signer structurally
+extracts the exact proof-bound metadata but still resolves the wallet-owned legacy output, checks its
+amount/index/key image, derives the one-time secret, and produces plus verifies the real CryptoNote
+ring signature. Ordinary bridge signing still requires full Halo2 verification, and ordinary ZK/non-
+ZK artifacts exclude the fixture ABI and RPC selector.
+
+The process campaign signs and submits that bridge twice while the legacy output remains unspent, then
+constructs a distinct valid bridge for the same output and completes migration. At exact revision
+`e60afb9`, the 6,454-byte invalid envelope returns `-101` in 3.641 and 3.531 seconds. Acquisitions move
+0 to 2, active verification returns to zero, pool count remains zero, and lookup remains false. The
+valid bridge is subsequently mined, final supply is 742,000 bridged, 2 fees, and 741,998 circulating,
+and all 20 checks pass in 1,028.7 seconds. The report is
+`build/onyx-qualification/onyx-verifier-invalid-bridge-v1-e60afb9.json` with local qualification
+scope.
+
+The first exact attempt demonstrated why retry requests and global overload rejections cannot be
+required to match exactly: a backup body may already be scheduled before the primary installs the
+cooldown, so that body can reject without being a timer-issued retry. Commit `e60afb9` adds a focused
+unit oracle requiring one or two retry requests and between one and `requests + 1` global rejections.
+It retains the exact source 1-to-2-to-1-to-0 transition, backup admission, acquisition, pool, cooldown,
+and download cleanup checks. Issuance/program-call invalid-proof load and sustained bridge floods
+remain open.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete

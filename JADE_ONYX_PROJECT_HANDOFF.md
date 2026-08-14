@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-14
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `2e0eee2` (`Stabilize Onyx retry failover qualification`)
+Last implementation revision reviewed: `e60afb9` (`Correct Onyx retry counter qualification`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `2e0eee2`.
+- **Implemented and committed** means the code is in the branch history at or before `e60afb9`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -870,6 +870,16 @@ Validation performed before commit:
   checks pass in 1,019.3 seconds. Two 9,123-byte invalid-deployment submissions return `-101` in
   197.641 and 90.89 seconds, acquisitions move 5 to 7, verifier activity returns to zero, and neither
   the pool nor transaction lookup contains the deployment.
+- Commit `b468475` adds a compile-time-only bridge builder that corrupts the completed `k=13` proof
+  before returning its ownership sighash, plus a qualification signer that still proves ownership of
+  the exact unspent legacy output and produces/verifies the real CryptoNote ring signature. Ordinary
+  signing continues to require Halo2, and ordinary artifacts exclude the builder, signing selectors,
+  and FFI symbol. At exact `e60afb9`, two 6,454-byte invalid bridge submissions return `-101` in
+  3.641 and 3.531 seconds, acquisitions move 0 to 2, and all verifier/pool/lookup state cleans up. A
+  distinct valid bridge then spends the same output; all 20 checks pass in 1,028.7 seconds with exact
+  final supply. Commit `e60afb9` also corrects and unit-tests the retry-counter oracle: global
+  rejections may include one pre-cooldown backup body beyond timer-issued requests, while all source,
+  admission, and cleanup invariants remain strict.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -1087,8 +1097,10 @@ Remaining:
   bounded automatic live-peer retry and admission are covered in `18f00d0`; bounded two-source
   reannouncement, primary disconnect, and backup admission are covered in `43e6d73`; and two
   authenticated-invalid capped-token deployment attempts plus deterministic concurrent peer
-  orchestration are covered in `e9d0f1c`/`2e0eee2`. Issuance, bridge, and program-call invalid-proof
-  load, repeated multi-hash/more-than-two-source load, and sustained fairness remain open.
+  orchestration are covered in `e9d0f1c`/`2e0eee2`; and two ownership-authenticated invalid bridge
+  attempts followed by a valid spend of the same legacy output are covered in `b468475`/`e60afb9`.
+  Issuance and program-call invalid-proof load, repeated multi-hash/more-than-two-source load, and
+  sustained fairness remain open.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-14**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `2e0eee2` (`Stabilize Onyx retry failover qualification`)
+Implementation revision documented: `e60afb9` (`Correct Onyx retry counter qualification`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `2e0eee2` on this branch.
+- **Committed**: present at or before Git revision `e60afb9` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -1108,6 +1108,30 @@ asynchronous Onyx verification result`) after 197.641 and 90.89 seconds. Verifie
 both attempts. The reciprocal retry phase independently records sources 1 to 2 to 1 to 0, two bounded
 retry requests, backup admission, and complete retry/download cleanup. This is a bounded two-attempt
 local result, not sustained invalid-deployment flood or release evidence.
+
+#### Implemented in `b468475`: authenticated-invalid bridge qualification
+
+Qualification builds can now corrupt a completed `k=13` bridge proof before its ownership sighash is
+returned. A compile-time-only signing path structurally extracts those exact proof-bound fields, then
+performs the ordinary wallet-owned output lookup, amount/index/key-image checks, one-time-key
+derivation, real one-member CryptoNote ring signature, and signature self-verification. Ordinary
+signing still requires full bridge proof verification. The invalid builder, signing RPC selectors,
+and C ABI export are absent from ordinary ZK/non-ZK artifacts, and the release scanner forbids the
+new symbol.
+
+The live campaign constructs and signs the invalid bridge while its legacy output is unspent, submits
+it twice, and only afterward constructs, signs, admits, and mines a distinct valid bridge spending the
+same output. At exact revision `e60afb9`, the 6,454-byte invalid bridge returns `-101` after 3.641 and
+3.531 seconds. Verifier acquisitions move 0 to 2, active verification returns to zero, the pool stays
+empty, and lookup remains false. The valid bridge then funds the wallet; all 20 checks pass in 1,028.7
+seconds and final supply remains exact at 742,000 bridged, 2 fees, and 741,998 circulating.
+
+The first exact attempt also exposed a test-oracle error. Global overload rejections include the
+original primary body and can include a backup body already scheduled before cooldown, whereas retry
+requests count only timer-issued bodies. Commit `e60afb9` unit-tests and enforces the valid bound of
+one or two timer requests and one through `requests + 1` rejections, while retaining exact source
+1-to-2-to-1-to-0, backup admission, pool, cooldown, download, and verifier-acquisition assertions.
+This is bounded two-attempt local evidence, not sustained bridge-flood or release evidence.
 
 #### Implemented: registry-authenticated token-issuance precheck
 
