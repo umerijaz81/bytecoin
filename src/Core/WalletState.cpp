@@ -544,6 +544,26 @@ bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, A
     Amount fee, uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image,
     Height expiry_height, const BinaryArray &memo, BinaryArray *unsigned_bridge,
     std::array<uint8_t, 32> *ownership_sighash) const {
+	return create_onyx_bridge_impl(recipient, legacy_amount, fee, legacy_stack_index,
+	    legacy_key_image, expiry_height, memo, unsigned_bridge, ownership_sighash, false);
+}
+
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool WalletState::create_onyx_authenticated_invalid_proof_bridge(
+    const std::array<uint8_t, 91> &recipient, Amount legacy_amount, Amount fee,
+    uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image,
+    Height expiry_height, const BinaryArray &memo, BinaryArray *unsigned_bridge,
+    std::array<uint8_t, 32> *ownership_sighash) const {
+	return create_onyx_bridge_impl(recipient, legacy_amount, fee, legacy_stack_index,
+	    legacy_key_image, expiry_height, memo, unsigned_bridge, ownership_sighash, true);
+}
+#endif
+
+bool WalletState::create_onyx_bridge_impl(const std::array<uint8_t, 91> &recipient,
+    Amount legacy_amount, Amount fee, uint64_t legacy_stack_index,
+    const std::array<uint8_t, 32> &legacy_key_image, Height expiry_height,
+    const BinaryArray &memo, BinaryArray *unsigned_bridge,
+    std::array<uint8_t, 32> *ownership_sighash, bool authenticated_invalid_proof) const {
 #ifdef onyx_USE_ZK
 	if (m_wallet.get_onyx_seed() == Hash{} || unsigned_bridge == nullptr || ownership_sighash == nullptr)
 		return false;
@@ -568,6 +588,14 @@ bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, A
 	}
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (authenticated_invalid_proof)
+		return zk::Halo2ProofSystem::wallet_create_authenticated_invalid_proof_bridge(seed, recipient,
+		    expiry_height, fee, legacy_amount, legacy_stack_index, legacy_key_image, memo,
+		    parameters::ONYX_BRIDGE_CIRCUIT_K, unsigned_bridge, ownership_sighash);
+#else
+	(void)authenticated_invalid_proof;
+#endif
 	return zk::Halo2ProofSystem::wallet_create_bridge(seed, recipient, expiry_height, fee, legacy_amount,
 	    legacy_stack_index, legacy_key_image, memo, parameters::ONYX_BRIDGE_CIRCUIT_K, unsigned_bridge,
 	    ownership_sighash);
@@ -578,14 +606,38 @@ bool WalletState::create_onyx_bridge(const std::array<uint8_t, 91> &recipient, A
 
 bool WalletState::sign_onyx_bridge(
     const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature) const {
+	return sign_onyx_bridge_impl(unsigned_bridge, ownership_signature, false);
+}
+
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool WalletState::sign_onyx_authenticated_invalid_proof_bridge(
+    const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature) const {
+	return sign_onyx_bridge_impl(unsigned_bridge, ownership_signature, true);
+}
+#endif
+
+bool WalletState::sign_onyx_bridge_impl(
+    const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature,
+    bool authenticated_invalid_proof) const {
 	if (ownership_signature != nullptr)
 		ownership_signature->fill(0);
 #ifdef onyx_USE_ZK
 	if (unsigned_bridge.empty() || ownership_signature == nullptr || m_wallet.is_view_only() || m_wallet.get_hw())
 		return false;
 	zk::Halo2ProofSystem::VerifiedBridgeDelta bridge;
-	if (!zk::Halo2ProofSystem::verify_bridge(unsigned_bridge, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge) ||
-	    bridge.ownership_signature != std::array<uint8_t, 64>{})
+	bool authenticated = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (authenticated_invalid_proof)
+		authenticated = zk::Halo2ProofSystem::extract_bridge_metadata(unsigned_bridge, &bridge);
+	else
+		authenticated = zk::Halo2ProofSystem::verify_bridge(
+		    unsigned_bridge, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge);
+#else
+	(void)authenticated_invalid_proof;
+		authenticated = zk::Halo2ProofSystem::verify_bridge(
+		    unsigned_bridge, parameters::ONYX_BRIDGE_CIRCUIT_K, &bridge);
+#endif
+	if (!authenticated || bridge.ownership_signature != std::array<uint8_t, 64>{})
 		return false;
 	KeyImage key_image{};
 	Hash sighash{};

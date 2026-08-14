@@ -2999,8 +2999,8 @@ pub extern "C" fn onyx_token_program_descriptor(
     })
 }
 
-#[no_mangle]
-pub extern "C" fn onyx_wallet_create_bridge(
+#[allow(clippy::too_many_arguments)]
+fn wallet_create_bridge_impl(
     seed: *const u8,
     recipient: *const u8,
     expiry_height: u64,
@@ -3014,6 +3014,7 @@ pub extern "C" fn onyx_wallet_create_bridge(
     bridge_out: *mut *mut u8,
     bridge_len_out: *mut usize,
     ownership_sighash_out: *mut u8,
+    authenticated_invalid_proof: bool,
 ) -> i32 {
     ffi_i32(|| {
         if bridge_out.is_null() || bridge_len_out.is_null() || ownership_sighash_out.is_null() {
@@ -3047,23 +3048,56 @@ pub extern "C" fn onyx_wallet_create_bridge(
             Ok(sender) => sender,
             Err(_) => return -2,
         };
-        let bridge = match wallet::build_bridge(
-            &sender,
-            &address,
-            expiry_height,
-            fee,
-            legacy_amount,
-            legacy_stack_index,
-            unsafe { slice::from_raw_parts(legacy_key_image, 32) }
-                .try_into()
-                .unwrap(),
-            if memo_len == 0 {
-                vec![]
-            } else {
-                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
-            },
-            circuit_k,
-        ) {
+        let legacy_key_image: [u8; 32] = unsafe { slice::from_raw_parts(legacy_key_image, 32) }
+            .try_into()
+            .unwrap();
+        let memo = if memo_len == 0 {
+            vec![]
+        } else {
+            unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+        };
+        #[cfg(feature = "qualification-fixtures")]
+        let built = if authenticated_invalid_proof {
+            wallet::build_authenticated_invalid_proof_bridge(
+                &sender,
+                &address,
+                expiry_height,
+                fee,
+                legacy_amount,
+                legacy_stack_index,
+                legacy_key_image,
+                memo,
+                circuit_k,
+            )
+        } else {
+            wallet::build_bridge(
+                &sender,
+                &address,
+                expiry_height,
+                fee,
+                legacy_amount,
+                legacy_stack_index,
+                legacy_key_image,
+                memo,
+                circuit_k,
+            )
+        };
+        #[cfg(not(feature = "qualification-fixtures"))]
+        let built = {
+            let _ = authenticated_invalid_proof;
+            wallet::build_bridge(
+                &sender,
+                &address,
+                expiry_height,
+                fee,
+                legacy_amount,
+                legacy_stack_index,
+                legacy_key_image,
+                memo,
+                circuit_k,
+            )
+        };
+        let bridge = match built {
             Ok(bridge) => bridge,
             Err(_) => return -2,
         };
@@ -3083,6 +3117,75 @@ pub extern "C" fn onyx_wallet_create_bridge(
         }
         1
     })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_bridge(
+    seed: *const u8,
+    recipient: *const u8,
+    expiry_height: u64,
+    fee: u64,
+    legacy_amount: u64,
+    legacy_stack_index: u64,
+    legacy_key_image: *const u8,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    bridge_out: *mut *mut u8,
+    bridge_len_out: *mut usize,
+    ownership_sighash_out: *mut u8,
+) -> i32 {
+    wallet_create_bridge_impl(
+        seed,
+        recipient,
+        expiry_height,
+        fee,
+        legacy_amount,
+        legacy_stack_index,
+        legacy_key_image,
+        memo,
+        memo_len,
+        circuit_k,
+        bridge_out,
+        bridge_len_out,
+        ownership_sighash_out,
+        false,
+    )
+}
+
+#[cfg(feature = "qualification-fixtures")]
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_authenticated_invalid_proof_bridge(
+    seed: *const u8,
+    recipient: *const u8,
+    expiry_height: u64,
+    fee: u64,
+    legacy_amount: u64,
+    legacy_stack_index: u64,
+    legacy_key_image: *const u8,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    bridge_out: *mut *mut u8,
+    bridge_len_out: *mut usize,
+    ownership_sighash_out: *mut u8,
+) -> i32 {
+    wallet_create_bridge_impl(
+        seed,
+        recipient,
+        expiry_height,
+        fee,
+        legacy_amount,
+        legacy_stack_index,
+        legacy_key_image,
+        memo,
+        memo_len,
+        circuit_k,
+        bridge_out,
+        bridge_len_out,
+        ownership_sighash_out,
+        true,
+    )
 }
 
 #[no_mangle]

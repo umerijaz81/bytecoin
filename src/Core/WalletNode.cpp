@@ -693,9 +693,18 @@ bool WalletNode::on_create_onyx_bridge(http::Client *, http::RequestBody &&, jso
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Invalid legacy key image encoding");
 	const Height expiry = get_onyx_construction_window(request.expiry_height).expiry_height;
 	std::array<uint8_t, 32> sighash{};
-	if (!get_wallet_state().create_onyx_bridge(recipient, request.legacy_amount, request.fee,
-	        request.legacy_stack_index, key_image, expiry, common::as_binary_array(request.memo),
-	        &response.unsigned_bridge, &sighash))
+	bool created = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (request.qualification_invalid_proof)
+		created = get_wallet_state().create_onyx_authenticated_invalid_proof_bridge(recipient,
+		    request.legacy_amount, request.fee, request.legacy_stack_index, key_image, expiry,
+		    common::as_binary_array(request.memo), &response.unsigned_bridge, &sighash);
+	else
+#endif
+		created = get_wallet_state().create_onyx_bridge(recipient, request.legacy_amount, request.fee,
+		    request.legacy_stack_index, key_image, expiry, common::as_binary_array(request.memo),
+		    &response.unsigned_bridge, &sighash);
+	if (!created)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx bridge");
 	std::copy(sighash.begin(), sighash.end(), response.ownership_sighash.data);
 	return true;
@@ -708,7 +717,15 @@ bool WalletNode::on_sign_onyx_bridge(http::Client *, http::RequestBody &&, json_
 		throw json_rpc::Error(json_rpc::INVALID_REQUEST, "Wallet is not synchronized");
 	check_onyx_construction_available();
 	std::array<uint8_t, 64> signature{};
-	if (!get_wallet_state().sign_onyx_bridge(request.unsigned_bridge, &signature))
+	bool signed_bridge = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (request.qualification_invalid_proof)
+		signed_bridge = get_wallet_state().sign_onyx_authenticated_invalid_proof_bridge(
+		    request.unsigned_bridge, &signature);
+	else
+#endif
+		signed_bridge = get_wallet_state().sign_onyx_bridge(request.unsigned_bridge, &signature);
+	if (!signed_bridge)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS,
 		    "Unable to sign Onyx bridge (the envelope must be unsigned and reference a wallet-owned unspent output)");
 	response.ownership_signature = common::to_hex(signature.data(), signature.size());

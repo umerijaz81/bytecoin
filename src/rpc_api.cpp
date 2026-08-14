@@ -472,6 +472,9 @@ void ser_members(api::walletd::CreateOnyxBridge::Request &v, ISeria &s) {
 	seria_kv("legacy_key_image", v.legacy_key_image, s);
 	seria_kv("expiry_height", v.expiry_height, s);
 	seria_kv("memo", v.memo, s);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	seria_kv("qualification_invalid_proof", v.qualification_invalid_proof, s);
+#endif
 }
 
 void ser_members(api::walletd::CreateOnyxBridge::Response &v, ISeria &s) {
@@ -481,6 +484,9 @@ void ser_members(api::walletd::CreateOnyxBridge::Response &v, ISeria &s) {
 
 void ser_members(api::walletd::SignOnyxBridge::Request &v, ISeria &s) {
 	seria_kv("unsigned_bridge", v.unsigned_bridge, s);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	seria_kv("qualification_invalid_proof", v.qualification_invalid_proof, s);
+#endif
 }
 
 void ser_members(api::walletd::SignOnyxBridge::Response &v, ISeria &s) {

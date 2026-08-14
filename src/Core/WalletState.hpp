@@ -134,6 +134,15 @@ public:
 	bool create_onyx_bridge(const std::array<uint8_t, 91> &recipient, Amount legacy_amount, Amount fee,
 	    uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image, Height expiry_height,
 	    const BinaryArray &memo, BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash) const;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	bool create_onyx_authenticated_invalid_proof_bridge(const std::array<uint8_t, 91> &recipient,
+	    Amount legacy_amount, Amount fee, uint64_t legacy_stack_index,
+	    const std::array<uint8_t, 32> &legacy_key_image, Height expiry_height,
+	    const BinaryArray &memo, BinaryArray *unsigned_bridge,
+	    std::array<uint8_t, 32> *ownership_sighash) const;
+	bool sign_onyx_authenticated_invalid_proof_bridge(
+	    const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature) const;
+#endif
 	bool sign_onyx_bridge(
 	    const BinaryArray &unsigned_bridge, std::array<uint8_t, 64> *ownership_signature) const;
 	bool finalize_onyx_bridge(const BinaryArray &unsigned_bridge,
@@ -172,6 +181,12 @@ protected:
 	};
 
 private:
+	bool create_onyx_bridge_impl(const std::array<uint8_t, 91> &recipient, Amount legacy_amount,
+	    Amount fee, uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image,
+	    Height expiry_height, const BinaryArray &memo, BinaryArray *unsigned_bridge,
+	    std::array<uint8_t, 32> *ownership_sighash, bool authenticated_invalid_proof) const;
+	bool sign_onyx_bridge_impl(const BinaryArray &unsigned_bridge,
+	    std::array<uint8_t, 64> *ownership_signature, bool authenticated_invalid_proof) const;
 	bool create_onyx_program_deployment_impl(Amount max_supply, const BinaryArray &metadata,
 	    Height inclusion_height, Height activation_height, Height deactivation_height,
 	    Amount fee, Height expiry_height, BinaryArray *envelope,

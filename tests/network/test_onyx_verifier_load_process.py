@@ -55,6 +55,7 @@ LOAD_TOOL = ROOT / "tools" / "onyx_verifier_load.py"
 MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
 INVALID_PROOF_ATTEMPTS = 3
 INVALID_DEPLOYMENT_PROOF_ATTEMPTS = 2
+INVALID_BRIDGE_PROOF_ATTEMPTS = 2
 
 
 class SubmitBlockCaptureProxy:
@@ -281,6 +282,95 @@ def main():
                 raise RuntimeError(f"no legacy output is large enough for load setup: {unspents!r}")
 
             bridge_fee = 1
+            invalid_unsigned = source_wallet.call(
+                "create_onyx_bridge",
+                {
+                    "address": source_onyx["address"],
+                    "legacy_amount": migration_output["amount"],
+                    "fee": bridge_fee,
+                    "legacy_stack_index": migration_output["stack_index"],
+                    "legacy_key_image": migration_output["key_image"],
+                    "expiry_height": 0,
+                    "memo": "authenticated invalid bridge qualification",
+                    "qualification_invalid_proof": True,
+                },
+            )["unsigned_bridge"]
+            invalid_signature = source_wallet.call(
+                "sign_onyx_bridge",
+                {
+                    "unsigned_bridge": invalid_unsigned,
+                    "qualification_invalid_proof": True,
+                },
+            )["ownership_signature"]
+            invalid_proof_bridge = source_wallet.call(
+                "finalize_onyx_bridge",
+                {
+                    "unsigned_bridge": invalid_unsigned,
+                    "ownership_signature": invalid_signature,
+                },
+            )
+            invalid_bridge_before = node.statistics()
+            invalid_bridge_started = time.monotonic()
+            invalid_bridge_responses = []
+            invalid_bridge_attempt_seconds = []
+            for _ in range(INVALID_BRIDGE_PROOF_ATTEMPTS):
+                attempt_started = time.monotonic()
+                invalid_bridge_responses.append(
+                    rpc_response(
+                        rpc_port,
+                        "send_transaction",
+                        {
+                            "binary_transaction": invalid_proof_bridge[
+                                "binary_transaction"
+                            ]
+                        },
+                    )
+                )
+                invalid_bridge_attempt_seconds.append(
+                    round(time.monotonic() - attempt_started, 6)
+                )
+            invalid_bridge_after = node.statistics()
+            authenticated_invalid_bridge = {
+                "transaction_hash": invalid_proof_bridge["transaction_hash"],
+                "bytes": len(
+                    bytes.fromhex(invalid_proof_bridge["binary_transaction"])
+                ),
+                "attempts": INVALID_BRIDGE_PROOF_ATTEMPTS,
+                "attempt_seconds": invalid_bridge_attempt_seconds,
+                "elapsed_seconds": round(
+                    time.monotonic() - invalid_bridge_started, 6
+                ),
+                "responses": invalid_bridge_responses,
+                "verifier_acquired_before": invalid_bridge_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": invalid_bridge_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_active_after": invalid_bridge_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after": invalid_bridge_after.get(
+                    "transaction_pool_count", 0
+                ),
+                "transaction_known_after": transaction_known(
+                    node, invalid_proof_bridge["transaction_hash"]
+                ),
+            }
+            if (
+                any("error" not in response for response in invalid_bridge_responses)
+                or authenticated_invalid_bridge["verifier_acquired_after"]
+                != authenticated_invalid_bridge["verifier_acquired_before"]
+                + INVALID_BRIDGE_PROOF_ATTEMPTS
+                or authenticated_invalid_bridge["verifier_active_after"] != 0
+                or authenticated_invalid_bridge["pool_count_after"] != 0
+                or authenticated_invalid_bridge["transaction_known_after"]
+            ):
+                raise RuntimeError(
+                    "authenticated invalid bridge did not reach and cleanly leave "
+                    f"the verifier: {authenticated_invalid_bridge!r}"
+                )
+
             unsigned = source_wallet.call(
                 "create_onyx_bridge",
                 {
@@ -300,6 +390,8 @@ def main():
                 "finalize_onyx_bridge",
                 {"unsigned_bridge": unsigned, "ownership_signature": signature},
             )
+            if bridge["transaction_hash"] == invalid_proof_bridge["transaction_hash"]:
+                raise RuntimeError("invalid bridge fixture duplicated the valid bridge")
             rpc_call(
                 rpc_port,
                 "send_transaction",
@@ -1900,6 +1992,18 @@ def main():
                         "transaction_known_after"
                     ]
                 ),
+                "authenticated_invalid_bridge_reached_verifier_without_admission": (
+                    all(
+                        "error" in response
+                        for response in authenticated_invalid_bridge["responses"]
+                    )
+                    and authenticated_invalid_bridge["verifier_acquired_after"]
+                    == authenticated_invalid_bridge["verifier_acquired_before"]
+                    + authenticated_invalid_bridge["attempts"]
+                    and authenticated_invalid_bridge["verifier_active_after"] == 0
+                    and authenticated_invalid_bridge["pool_count_after"] == 0
+                    and not authenticated_invalid_bridge["transaction_known_after"]
+                ),
                 "one_accepted_one_busy": classifications
                 == ["accepted", "verifier_busy"],
                 "tip_unchanged_during_unmined_load": (
@@ -1953,6 +2057,7 @@ def main():
                 "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
                 "authenticated_invalid_proof": authenticated_invalid_proof,
                 "authenticated_invalid_deployment": authenticated_invalid_deployment,
+                "authenticated_invalid_bridge": authenticated_invalid_bridge,
                 "graceful_shutdown": graceful_shutdown,
                 "stale_chain_completion": stale_chain_completion,
                 "mixed_ingress": mixed_ingress,

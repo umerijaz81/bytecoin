@@ -303,6 +303,15 @@ int onyx_wallet_create_bridge(
     uint64_t fee, uint64_t legacy_amount, uint64_t legacy_stack_index,
     const uint8_t legacy_key_image[32], const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
     uint8_t **bridge_out, size_t *bridge_len_out, uint8_t ownership_sighash_out[32]);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+/* Non-distributable fixture: corrupt the completed bridge proof before returning the ownership
+ * sighash, so an external legacy signature can authenticate those exact invalid proof bytes. */
+int onyx_wallet_create_authenticated_invalid_proof_bridge(
+    const uint8_t seed[32], const uint8_t recipient[91], uint64_t expiry_height,
+    uint64_t fee, uint64_t legacy_amount, uint64_t legacy_stack_index,
+    const uint8_t legacy_key_image[32], const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
+    uint8_t **bridge_out, size_t *bridge_len_out, uint8_t ownership_sighash_out[32]);
+#endif
 int onyx_wallet_finalize_bridge(
     const uint8_t *unsigned_bridge, size_t unsigned_bridge_len,
     const uint8_t ownership_signature[64], uint8_t **bridge_out, size_t *bridge_len_out);

@@ -152,6 +152,60 @@ pub fn build_bridge(
     memo: Vec<u8>,
     circuit_k: u32,
 ) -> Result<AuthorizedBridge, WalletBuildError> {
+    build_bridge_internal(
+        sender,
+        recipient,
+        expiry_height,
+        fee,
+        legacy_amount,
+        legacy_stack_index,
+        legacy_key_image,
+        memo,
+        circuit_k,
+        false,
+    )
+}
+
+#[cfg(feature = "qualification-fixtures")]
+#[allow(clippy::too_many_arguments)]
+pub fn build_authenticated_invalid_proof_bridge(
+    sender: &KeyBundle,
+    recipient: &RecipientAddress,
+    expiry_height: u64,
+    fee: u64,
+    legacy_amount: u64,
+    legacy_stack_index: u64,
+    legacy_key_image: [u8; 32],
+    memo: Vec<u8>,
+    circuit_k: u32,
+) -> Result<AuthorizedBridge, WalletBuildError> {
+    build_bridge_internal(
+        sender,
+        recipient,
+        expiry_height,
+        fee,
+        legacy_amount,
+        legacy_stack_index,
+        legacy_key_image,
+        memo,
+        circuit_k,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_bridge_internal(
+    sender: &KeyBundle,
+    recipient: &RecipientAddress,
+    expiry_height: u64,
+    fee: u64,
+    legacy_amount: u64,
+    legacy_stack_index: u64,
+    legacy_key_image: [u8; 32],
+    memo: Vec<u8>,
+    circuit_k: u32,
+    invalidate_proof: bool,
+) -> Result<AuthorizedBridge, WalletBuildError> {
     let note_value = legacy_amount
         .checked_sub(fee)
         .filter(|value| *value != 0)
@@ -230,6 +284,18 @@ pub fn build_bridge(
         },
     )
     .map_err(|_| WalletBuildError::Crypto)?;
+    #[cfg(feature = "qualification-fixtures")]
+    let mut proof = proof;
+    #[cfg(feature = "qualification-fixtures")]
+    if invalidate_proof {
+        // The legacy ownership sighash covers these exact proof bytes. Corrupt the completed Halo2
+        // transcript before the external CryptoNote ownership signature is produced so structural
+        // extraction and legacy authorization succeed while the authoritative bridge proof fails.
+        let last = proof.last_mut().ok_or(WalletBuildError::Crypto)?;
+        *last ^= 0x01;
+    }
+    #[cfg(not(feature = "qualification-fixtures"))]
+    let _ = invalidate_proof;
     Ok(AuthorizedBridge {
         preimage,
         backend_id: BRIDGE_BACKEND.to_owned(),
@@ -1838,6 +1904,35 @@ mod tests {
             .scan_transfer(&sender.full_viewing_key().unwrap(), &change)
             .unwrap();
         assert_eq!(sender_wallet.unspent_balance().unwrap(), 3);
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[test]
+    fn invalid_bridge_fixture_preserves_sighash_but_fails_halo2() {
+        const K: u32 = 13;
+        let network = [33; NETWORK_ID_BYTES];
+        let sender = MasterSeed::new([74; 32]).derive(network).unwrap();
+        let recipient = sender.address(0).unwrap();
+        let bridge = build_authenticated_invalid_proof_bridge(
+            &sender,
+            &recipient,
+            50,
+            2,
+            25,
+            7,
+            [91; 32],
+            b"qualification only".to_vec(),
+            K,
+        )
+        .unwrap();
+
+        assert_ne!(bridge.ownership_sighash().unwrap(), [0; 32]);
+        assert_eq!(bridge.ownership_signature, [0; 64]);
+        assert!(crate::proof::verify_bridge_proof(K, &bridge).is_err());
+        assert_eq!(
+            crate::bridge::AuthorizedBridge::decode(&bridge.encode().unwrap()).unwrap(),
+            bridge
+        );
     }
 
     #[cfg(feature = "qualification-fixtures")]

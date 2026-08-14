@@ -270,6 +270,25 @@ void test_zk() {
 		invariant(Halo2ProofSystem::wallet_create_bridge(seed, recipient, 100, 5, 30, 42,
 		              key_image, memo, 13, &unsigned_bridge, &ownership_sighash),
 		    "bridge proving failed through C++ adapter");
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+		BinaryArray invalid_unsigned_bridge;
+		std::array<uint8_t, 32> invalid_ownership_sighash{};
+		invariant(Halo2ProofSystem::wallet_create_authenticated_invalid_proof_bridge(seed,
+		              recipient, 100, 5, 30, 42, key_image, memo, 13,
+		              &invalid_unsigned_bridge, &invalid_ownership_sighash),
+		    "authenticated-invalid bridge fixture failed through C++ adapter");
+		Halo2ProofSystem::VerifiedBridgeDelta invalid_bridge_metadata;
+		const std::array<uint8_t, 64> invalid_zero_signature{};
+		invariant(Halo2ProofSystem::extract_bridge_metadata(
+		              invalid_unsigned_bridge, &invalid_bridge_metadata),
+		    "authenticated-invalid bridge lost structural metadata");
+		invariant(invalid_bridge_metadata.ownership_sighash == invalid_ownership_sighash &&
+		              invalid_bridge_metadata.ownership_signature == invalid_zero_signature,
+		    "authenticated-invalid bridge sighash changed across the C ABI");
+		invariant(!Halo2ProofSystem::verify_bridge(invalid_unsigned_bridge, 13,
+		              &invalid_bridge_metadata),
+		    "authenticated-invalid bridge unexpectedly passed Halo2");
+#endif
 		std::array<uint8_t, 64> ownership_signature{};
 		ownership_signature.fill(9);
 		BinaryArray bridge;

@@ -180,6 +180,14 @@ public:
 	    uint64_t legacy_amount, uint64_t legacy_stack_index,
 	    const std::array<uint8_t, 32> &legacy_key_image, const BinaryArray &memo, uint32_t circuit_k,
 	    BinaryArray *unsigned_bridge, std::array<uint8_t, 32> *ownership_sighash);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	static bool wallet_create_authenticated_invalid_proof_bridge(const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 91> &recipient, uint64_t expiry_height, uint64_t fee,
+	    uint64_t legacy_amount, uint64_t legacy_stack_index,
+	    const std::array<uint8_t, 32> &legacy_key_image, const BinaryArray &memo,
+	    uint32_t circuit_k, BinaryArray *unsigned_bridge,
+	    std::array<uint8_t, 32> *ownership_sighash);
+#endif
 	static bool wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
 	    const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge);
 	static bool wallet_create_program_deployment(const BinaryArray &wallet_snapshot,

@@ -746,6 +746,37 @@ bool Halo2ProofSystem::wallet_create_bridge(const std::array<uint8_t, 32> &seed,
 	return true;
 }
 
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool Halo2ProofSystem::wallet_create_authenticated_invalid_proof_bridge(
+    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
+    uint64_t expiry_height, uint64_t fee, uint64_t legacy_amount,
+    uint64_t legacy_stack_index, const std::array<uint8_t, 32> &legacy_key_image,
+    const BinaryArray &memo, uint32_t circuit_k, BinaryArray *unsigned_bridge,
+    std::array<uint8_t, 32> *ownership_sighash) {
+	if (unsigned_bridge == nullptr || ownership_sighash == nullptr) {
+		if (unsigned_bridge != nullptr)
+			unsigned_bridge->clear();
+		if (ownership_sighash != nullptr)
+			ownership_sighash->fill(0);
+		return false;
+	}
+	OnyxBuffer encoded;
+	std::array<uint8_t, 32> sighash{};
+	const int rc = onyx_wallet_create_authenticated_invalid_proof_bridge(seed.data(), recipient.data(),
+	    expiry_height, fee, legacy_amount, legacy_stack_index, legacy_key_image.data(),
+	    memo.empty() ? nullptr : memo.data(), memo.size(), circuit_k, &encoded.data, &encoded.size,
+	    sighash.data());
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_AUTHORIZED_TRANSACTION_BYTES)) {
+		unsigned_bridge->clear();
+		ownership_sighash->fill(0);
+		return false;
+	}
+	*unsigned_bridge = encoded.copy();
+	*ownership_sighash = sighash;
+	return true;
+}
+#endif
+
 bool Halo2ProofSystem::wallet_finalize_bridge(const BinaryArray &unsigned_bridge,
     const std::array<uint8_t, 64> &ownership_signature, BinaryArray *finalized_bridge) {
 	if (finalized_bridge == nullptr)
