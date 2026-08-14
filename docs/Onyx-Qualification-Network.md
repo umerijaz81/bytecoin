@@ -336,10 +336,34 @@ after abandoned-RPC cleanup, two automatic requests match two overload rejection
 0 to 2, and cooldowns/pending retries/downloads end at zero with one pool entry. All 18 checks pass in
 554.4 seconds; the preceding working-tree pass completes in 554.1 seconds.
 
+Commit `e9d0f1c` adds a qualification-only authenticated-invalid capped-token deployment. The wallet
+builder corrupts the completed funding Halo2 proof before producing genuine spend and binding
+signatures. A focused Rust regression therefore observes successful funding authorization followed
+by complete deployment-verifier rejection. The private ABI and RPC selector are compiled only with
+the qualification fixture flags; ordinary ZK/non-ZK artifact scans require their absence.
+
+The original reciprocal source phase submitted the warmed primary and backup RPCs sequentially. On a
+slower run, the backup's local valid-proof verification could exceed the target's 30-second cooldown,
+so the primary retry could be accepted before an alternate descriptor was announced. Commit
+`2e0eee2` starts both local verifications together after the primary acquires its verifier. This makes
+the topology exercise the intended overlap without changing production cooldowns, source caps, or
+consensus verification. At exact revision `2e0eee2`, sources again move 1 to 2 to 1 to 0, two requests
+match two overload rejections, and admission occurs through the backup.
+
+The full 19-check `2e0eee2` campaign passes in 1,019.3 seconds. Its 9,123-byte authenticated-invalid
+deployment is submitted twice and returns `-101` after 197.641 and 90.89 seconds. Acquisitions move 5
+to 7, active verification returns to zero, the pool remains empty, and transaction lookup remains
+false. The report is
+`build/onyx-qualification/onyx-verifier-invalid-deployment-v1-2e0eee2.json` with local qualification
+scope. Issuance, bridge, and program-call invalid-proof load plus sustained deployment floods remain
+open.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused
-real-deployment regression passes; issuance metadata and live load measurements remain open.
+real-deployment regression passes. The two-attempt authenticated-invalid deployment campaign above
+now covers permit acquisition, rejection, and cleanup; sustained deployment load and issuance live
+measurements remain open.
 
 Issuance admission is state-aware: the canonical registry supplies the issuer key and cap, after
 which the precheck verifies registry identity, active schema, issuer and value-binding signatures,

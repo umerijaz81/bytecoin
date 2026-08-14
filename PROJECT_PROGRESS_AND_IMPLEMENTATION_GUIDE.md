@@ -3,7 +3,7 @@
 Last reconciled: **2026-08-14**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `43e6d73` (`Retain alternate Onyx P2P retry sources`)
+Implementation revision documented: `2e0eee2` (`Stabilize Onyx retry failover qualification`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `43e6d73` on this branch.
+- **Committed**: present at or before Git revision `2e0eee2` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -1085,6 +1085,29 @@ extraction, and application proof duplication while retaining full stateful veri
 The optimized real-deployment regression matched the authenticated output to full verification and
 then completed stateful application/replay checks. Cargo check, ZK/non-ZK Release daemon and test
 builds, and both Jade suites pass.
+
+#### Implemented in `e9d0f1c`: authenticated-invalid deployment qualification
+
+The qualification-only wallet fixture can now build a capped-token deployment whose funding transfer
+is completely authorized but whose Halo2 funding proof is corrupted before the real spend and binding
+signatures are produced. Rust first proves that funding authorization succeeds, then proves that the
+complete deployment verifier rejects the envelope. The private C ABI, wallet method, and RPC selector
+exist only in `qualification-fixtures`/`BYTECOIN_ONYX_INVALID_PROOF_TESTS` builds. Ordinary ZK and
+non-ZK release artifacts are scanned to ensure the fixture symbol and RPC marker are absent.
+
+Commit `2e0eee2` also makes the primary and backup relay submissions concurrent after both local
+verifiers are warmed. Sequential submission was timing-sensitive on this host: the backup's full
+local verification could exceed the target's 30-second cooldown, allowing the primary retry to be
+admitted before an alternate announcement existed. The change affects qualification orchestration
+only; the production cooldown, retry-source cap, verifier bound, and consensus paths are unchanged.
+
+At exact revision `2e0eee2`, the 19-check process campaign passes in 1,019.3 seconds. The 9,123-byte
+authenticated-invalid deployment is submitted twice; both attempts return `-101` (`Invalid
+asynchronous Onyx verification result`) after 197.641 and 90.89 seconds. Verifier acquisitions move
+5 to 7, active verifiers return to zero, the pool remains empty, and the transaction is unknown after
+both attempts. The reciprocal retry phase independently records sources 1 to 2 to 1 to 0, two bounded
+retry requests, backup admission, and complete retry/download cleanup. This is a bounded two-attempt
+local result, not sustained invalid-deployment flood or release evidence.
 
 #### Implemented: registry-authenticated token-issuance precheck
 

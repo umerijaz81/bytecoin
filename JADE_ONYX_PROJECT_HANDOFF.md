@@ -3,7 +3,7 @@
 Last reviewed: 2026-08-14
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `43e6d73` (`Retain alternate Onyx P2P retry sources`)
+Last implementation revision reviewed: `2e0eee2` (`Stabilize Onyx retry failover qualification`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `43e6d73`.
+- **Implemented and committed** means the code is in the branch history at or before `2e0eee2`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -861,6 +861,15 @@ Validation performed before commit:
   automatic requests exactly match two overload rejections, acquisitions move 0 to 2, the transaction
   is admitted through the surviving backup, all retry/download state drains, and all 18 checks pass
   in 554.4 seconds. The prior working-tree pass completed in 554.1 seconds.
+- Commit `e9d0f1c` adds a compile-time-only capped-token deployment fixture with a corrupted funding
+  Halo2 proof covered by genuine spend and binding signatures. Funding authorization succeeds, but
+  full deployment verification rejects. Ordinary release-artifact scans exclude the fixture ABI and
+  RPC selector. Commit `2e0eee2` starts the warmed primary and backup relay submissions concurrently,
+  eliminating a host-speed race in which sequential backup verification could outlive the 30-second
+  target cooldown without changing production retry behavior. At exact `2e0eee2`, all 19 process
+  checks pass in 1,019.3 seconds. Two 9,123-byte invalid-deployment submissions return `-101` in
+  197.641 and 90.89 seconds, acquisitions move 5 to 7, verifier activity returns to zero, and neither
+  the pool nor transaction lookup contains the deployment.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -1076,8 +1085,10 @@ Remaining:
   `c39ba96`; and deterministic transfer P2P/RPC contention plus proof-free retry are covered in
   `47c3485`. Reciprocal RPC-active/P2P overload and non-ban cooldown cleanup are covered in `a0395f2`;
   bounded automatic live-peer retry and admission are covered in `18f00d0`; bounded two-source
-  reannouncement, primary disconnect, and backup admission are covered in `43e6d73`. Repeated
-  multi-hash/more-than-two-source and sustained fairness remain open.
+  reannouncement, primary disconnect, and backup admission are covered in `43e6d73`; and two
+  authenticated-invalid capped-token deployment attempts plus deterministic concurrent peer
+  orchestration are covered in `e9d0f1c`/`2e0eee2`. Issuance, bridge, and program-call invalid-proof
+  load, repeated multi-hash/more-than-two-source load, and sustained fairness remain open.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 
