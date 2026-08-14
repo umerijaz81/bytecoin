@@ -225,8 +225,12 @@ bool Node::P2PProtocolBytecoin::on_transaction_descs(
 			continue;  // Already have
 		if (m_node->downloading_transactions.count(desc.hash) != 0)
 			continue;  // Already downloading
-		if (m_node->m_onyx_verifier_retry_cooldown.is_deferred(desc.hash))
-			continue;  // Local verifier overload cooldown; a later announcement can retry.
+		if (m_node->m_onyx_verifier_retry_cooldown.is_deferred(desc.hash)) {
+#ifdef onyx_USE_ZK
+			m_node->remember_onyx_p2p_retry_source(this, desc, stem_hop);
+#endif
+			continue;  // Local verifier overload cooldown; retain a bounded alternate source.
+		}
 		request_transaction_descs.push_back(desc);
 	}
 	//	TODO - remove sort when no 3.4.0 version is running in the wild

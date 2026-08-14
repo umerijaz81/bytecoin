@@ -149,19 +149,26 @@ protected:
 	static constexpr size_t MAX_GLOBAL_TRANSACTION_DOWNLOADS = 128;
 	static constexpr size_t MAX_PEER_TRANSACTION_DOWNLOADS = 32;
 	static constexpr size_t MAX_ONYX_VERIFIER_RETRY_COOLDOWNS = 1024;
+	static constexpr size_t MAX_ONYX_VERIFIER_RETRY_SOURCES = 4;
 	BoundedRetryCooldown<Hash> m_onyx_verifier_retry_cooldown{
 	    MAX_ONYX_VERIFIER_RETRY_COOLDOWNS, std::chrono::seconds(30)};
 #ifdef onyx_USE_ZK
-	struct DeferredOnyxP2PRetry {
-		P2PProtocolBytecoin *source = nullptr;
-		TransactionDesc announced;
+	struct DeferredOnyxP2PSource {
+		P2PProtocolBytecoin *peer = nullptr;
 		uint8_t stem_hop = 0;
+	};
+	struct DeferredOnyxP2PRetry {
+		TransactionDesc announced;
+		std::vector<DeferredOnyxP2PSource> sources;
 		std::chrono::steady_clock::time_point expires;
 	};
 	std::map<Hash, DeferredOnyxP2PRetry> m_deferred_onyx_p2p_retries;
 	platform::Timer m_onyx_p2p_retry_timer;
 	bool m_onyx_p2p_retry_timer_scheduled = false;
+	uint64_t m_onyx_p2p_retry_requests = 0;
 	void defer_onyx_p2p_retry(
+	    P2PProtocolBytecoin *source, const TransactionDesc &announced, uint8_t stem_hop);
+	void remember_onyx_p2p_retry_source(
 	    P2PProtocolBytecoin *source, const TransactionDesc &announced, uint8_t stem_hop);
 	void on_onyx_p2p_retry_timer();
 #endif

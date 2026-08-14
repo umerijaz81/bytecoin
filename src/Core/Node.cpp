@@ -334,6 +334,34 @@ void Node::on_api_http_disconnect(http::Client *who) {
 }
 
 #ifdef onyx_USE_ZK
+namespace {
+bool same_onyx_retry_descriptor(const TransactionDesc &left, const TransactionDesc &right) {
+	return left.hash == right.hash && left.size == right.size && left.fee == right.fee &&
+	       left.newest_referenced_block == right.newest_referenced_block;
+}
+}  // namespace
+
+void Node::remember_onyx_p2p_retry_source(
+    P2PProtocolBytecoin *source, const TransactionDesc &announced, uint8_t stem_hop) {
+	if (source == nullptr)
+		return;
+	auto found = m_deferred_onyx_p2p_retries.find(announced.hash);
+	if (found == m_deferred_onyx_p2p_retries.end() ||
+	    !same_onyx_retry_descriptor(found->second.announced, announced))
+		return;
+	auto &sources = found->second.sources;
+	for (auto &candidate : sources) {
+		if (candidate.peer == source) {
+			candidate.stem_hop = stem_hop;
+			return;
+		}
+	}
+	// Alternative-source memory is deliberately capped per transaction as well as by the global
+	// transaction bound. A peer can improve failover but cannot grow retry state without limit.
+	if (sources.size() < MAX_ONYX_VERIFIER_RETRY_SOURCES)
+		sources.push_back(DeferredOnyxP2PSource{source, stem_hop});
+}
+
 void Node::defer_onyx_p2p_retry(
     P2PProtocolBytecoin *source, const TransactionDesc &announced, uint8_t stem_hop) {
 	const auto now = std::chrono::steady_clock::now();
@@ -354,8 +382,18 @@ void Node::defer_onyx_p2p_retry(
 		    });
 		m_deferred_onyx_p2p_retries.erase(earliest);
 	}
-	m_deferred_onyx_p2p_retries[announced.hash] =
-	    DeferredOnyxP2PRetry{source, announced, stem_hop, expires};
+	if (found == m_deferred_onyx_p2p_retries.end()) {
+		DeferredOnyxP2PRetry retry;
+		retry.announced = announced;
+		retry.expires = expires;
+		m_deferred_onyx_p2p_retries.emplace(announced.hash, std::move(retry));
+	} else {
+		if (!same_onyx_retry_descriptor(found->second.announced, announced))
+			found->second.sources.clear();
+		found->second.announced = announced;
+		found->second.expires = expires;
+	}
+	remember_onyx_p2p_retry_source(source, announced, stem_hop);
 	// Poll on the event loop. A one-second cadence avoids a timer per attacker-selected hash and
 	// allows download-cap contention to drain without introducing another unbounded queue.
 	if (!m_onyx_p2p_retry_timer_scheduled) {
@@ -367,23 +405,39 @@ void Node::defer_onyx_p2p_retry(
 void Node::on_onyx_p2p_retry_timer() {
 	m_onyx_p2p_retry_timer_scheduled = false;
 	for (auto it = m_deferred_onyx_p2p_retries.begin(); it != m_deferred_onyx_p2p_retries.end();) {
-		if (it->second.source == nullptr ||
-		    m_block_chain.get_memory_state_transactions().count(it->first) != 0 ||
+		if (it->second.sources.empty() || m_block_chain.get_memory_state_transactions().count(it->first) != 0 ||
 		    m_block_chain.has_transaction(it->first)) {
 			it = m_deferred_onyx_p2p_retries.erase(it);
 			continue;
 		}
-		if (m_onyx_verifier_retry_cooldown.is_deferred(it->first)) {
-			++it;
+		++it;
+	}
+
+	// Issue at most one body request per tick. Selecting the oldest eligible entry prevents a
+	// post-cooldown thundering herd; moving a capacity-blocked entry one second forward gives every
+	// other expired hash a turn instead of repeatedly favoring map/hash order.
+	const auto now = std::chrono::steady_clock::now();
+	auto selected = m_deferred_onyx_p2p_retries.end();
+	for (auto it = m_deferred_onyx_p2p_retries.begin(); it != m_deferred_onyx_p2p_retries.end(); ++it) {
+		if (m_onyx_verifier_retry_cooldown.is_deferred(it->first) || it->second.expires > now)
 			continue;
+		if (selected == m_deferred_onyx_p2p_retries.end() ||
+		    std::tie(it->second.expires, it->first) <
+		        std::tie(selected->second.expires, selected->first))
+			selected = it;
+	}
+	if (selected != m_deferred_onyx_p2p_retries.end()) {
+		auto *source = selected->second.sources.front().peer;
+		const uint8_t stem_hop = selected->second.sources.front().stem_hop;
+		const TransactionDesc announced = selected->second.announced;
+		++m_onyx_p2p_retry_requests;
+		if (source->retry_onyx_transaction(announced, stem_hop)) {
+			m_deferred_onyx_p2p_retries.erase(selected);
+		} else {
+			std::rotate(selected->second.sources.begin(), selected->second.sources.begin() + 1,
+			    selected->second.sources.end());
+			selected->second.expires = now + std::chrono::seconds(1);
 		}
-		auto *source = it->second.source;
-		const TransactionDesc announced = it->second.announced;
-		const uint8_t stem_hop = it->second.stem_hop;
-		if (source->retry_onyx_transaction(announced, stem_hop))
-			it = m_deferred_onyx_p2p_retries.erase(it);
-		else
-			++it;  // Per-peer/global body-download capacity is still full; retry on the next tick.
 	}
 	if (!m_deferred_onyx_p2p_retries.empty()) {
 		m_onyx_p2p_retry_timer_scheduled = true;
@@ -742,6 +796,9 @@ api::cnd::GetStatistics::Response Node::create_statistics_response(const api::cn
 	res.onyx_verifier_retry_cooldowns = m_onyx_verifier_retry_cooldown.size();
 #ifdef onyx_USE_ZK
 	res.onyx_verifier_pending_retries = m_deferred_onyx_p2p_retries.size();
+	for (const auto &retry : m_deferred_onyx_p2p_retries)
+		res.onyx_verifier_retry_sources += retry.second.sources.size();
+	res.onyx_verifier_retry_requests = m_onyx_p2p_retry_requests;
 #endif
 	return res;
 }
@@ -1239,7 +1296,11 @@ void Node::cancel_onyx_p2p_source(P2PProtocolBytecoin *source) {
 		if (entry.second->source == source)
 			entry.second->source = nullptr;
 	for (auto it = m_deferred_onyx_p2p_retries.begin(); it != m_deferred_onyx_p2p_retries.end();) {
-		if (it->second.source == source)
+		auto &sources = it->second.sources;
+		sources.erase(std::remove_if(sources.begin(), sources.end(),
+		                  [source](const auto &candidate) { return candidate.peer == source; }),
+		    sources.end());
+		if (sources.empty())
 			it = m_deferred_onyx_p2p_retries.erase(it);
 		else
 			++it;

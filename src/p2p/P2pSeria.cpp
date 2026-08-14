@@ -85,6 +85,8 @@ void ser_members(CoreStatistics &v, seria::ISeria &s) {
 	seria_kv_optional("transaction_downloads_active", v.transaction_downloads_active, s);
 	seria_kv_optional("onyx_verifier_retry_cooldowns", v.onyx_verifier_retry_cooldowns, s);
 	seria_kv_optional("onyx_verifier_pending_retries", v.onyx_verifier_pending_retries, s);
+	seria_kv_optional("onyx_verifier_retry_sources", v.onyx_verifier_retry_sources, s);
+	seria_kv_optional("onyx_verifier_retry_requests", v.onyx_verifier_retry_requests, s);
 }
 
 void ser_members(BasicNodeData &v, seria::ISeria &s) {

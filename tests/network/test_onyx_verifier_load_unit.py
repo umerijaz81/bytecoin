@@ -38,6 +38,8 @@ class OnyxVerifierLoadUnitTests(unittest.TestCase):
         self.assertEqual(metrics["onyx_verifier_precheck_conflicts"], 0)
         self.assertEqual(metrics["onyx_verifier_abandoned_rpcs"], 0)
         self.assertEqual(metrics["onyx_verifier_pending_retries"], 0)
+        self.assertEqual(metrics["onyx_verifier_retry_sources"], 0)
+        self.assertEqual(metrics["onyx_verifier_retry_requests"], 0)
         self.assertEqual(LOAD.classify({"result": {}}), "accepted")
         self.assertEqual(
             LOAD.classify({"error": {"code": LOAD.VERIFIER_BUSY}}), "verifier_busy"
