@@ -500,6 +500,9 @@ struct CreateOnyxStandardProgramCall {
 		std::string prior_state;  // canonical 32-byte field, hex encoded
 		std::string next_state;   // canonical 32-byte field, hex encoded
 		std::string witness;      // concatenated canonical 32-byte fields, hex encoded
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+		bool qualification_invalid_proof = false;
+#endif
 	};
 	struct Response {
 		BinaryArray binary_transaction;

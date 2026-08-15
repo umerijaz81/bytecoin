@@ -891,6 +891,62 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
         witness: Vec<CanonicalField>,
         circuit_k: u32,
     ) -> Result<ContextualAuthorizedTransaction, WalletBuildError> {
+        self.build_standard_program_call_impl(
+            keys,
+            program_id,
+            valid_from_height,
+            expiry_height,
+            application,
+            prior_state,
+            next_state,
+            witness,
+            circuit_k,
+            false,
+        )
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_authenticated_invalid_proof_standard_program_call(
+        &self,
+        keys: &KeyBundle,
+        program_id: [u8; 32],
+        valid_from_height: u64,
+        expiry_height: u64,
+        application: StandardApplication,
+        prior_state: CanonicalField,
+        next_state: CanonicalField,
+        witness: Vec<CanonicalField>,
+        circuit_k: u32,
+    ) -> Result<ContextualAuthorizedTransaction, WalletBuildError> {
+        self.build_standard_program_call_impl(
+            keys,
+            program_id,
+            valid_from_height,
+            expiry_height,
+            application,
+            prior_state,
+            next_state,
+            witness,
+            circuit_k,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_standard_program_call_impl(
+        &self,
+        keys: &KeyBundle,
+        program_id: [u8; 32],
+        valid_from_height: u64,
+        expiry_height: u64,
+        application: StandardApplication,
+        prior_state: CanonicalField,
+        next_state: CanonicalField,
+        witness: Vec<CanonicalField>,
+        circuit_k: u32,
+        invalidate_proof: bool,
+    ) -> Result<ContextualAuthorizedTransaction, WalletBuildError> {
         if !(10..=20).contains(&circuit_k)
             || valid_from_height > expiry_height
             || prior_state == next_state
@@ -944,7 +1000,7 @@ impl<const DEPTH: usize> WalletState<DEPTH> {
                 application,
                 witness,
             }),
-            false,
+            invalidate_proof,
         )?;
         Ok(ContextualAuthorizedTransaction {
             transaction: built.transaction,
@@ -2355,6 +2411,105 @@ mod tests {
                 DEPTH as u32,
             ),
             0
+        );
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[test]
+    fn invalid_standard_call_fixture_preserves_authorization_and_precheck_but_fails_halo2() {
+        const DEPTH: usize = 2;
+        let network = [17; NETWORK_ID_BYTES];
+        let keys = MasterSeed::new([44; 32]).derive(network).unwrap();
+        let mut wallet = funded_wallet::<DEPTH>(&keys, network, &[1]);
+        let entry = standard_program_entry(StandardProgramKind::Nft, 10, None).unwrap();
+        let program_id = entry.id().unwrap();
+        wallet.register_program(entry.clone()).unwrap();
+
+        let collection_id = Fp::from(21).to_repr();
+        let token_id = Fp::from(22).to_repr();
+        let serial = Fp::from(33);
+        let owner_secret = Fp::from(34);
+        let poseidon = |left, right| {
+            PrimitiveHash::<Fp, P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([left, right])
+        };
+        let collection = poseidon(Fp::from(21), Fp::zero());
+        let token = poseidon(Fp::from(22), Fp::zero());
+        let identity = poseidon(collection, token);
+        let instance = poseidon(identity, serial);
+        let prior = CanonicalField::from_field(poseidon(owner_secret, instance));
+        let next = CanonicalField::from_field(Fp::from(901));
+        let envelope = wallet
+            .build_authenticated_invalid_proof_standard_program_call(
+                &keys,
+                program_id,
+                10,
+                20,
+                StandardApplication::Nft {
+                    collection_id,
+                    token_id,
+                    serial: 33,
+                    transfer_nonce: 1,
+                },
+                prior,
+                next,
+                vec![CanonicalField::from_field(owner_secret)],
+                STANDARD_CIRCUIT_K,
+            )
+            .unwrap();
+
+        crate::authorization::verify_authorized_transaction(&envelope.transaction).unwrap();
+        assert!(envelope
+            .verify_standard(
+                wallet.program_registry(),
+                10,
+                DEPTH as u32,
+                STANDARD_CIRCUIT_K,
+            )
+            .is_err());
+        assert_eq!(
+            ContextualAuthorizedTransaction::decode(&envelope.encode().unwrap()).unwrap(),
+            envelope
+        );
+
+        let public_output = |note: &WalletNote| crate::transaction::PublicOutput {
+            commitment: note.commitment,
+            value_commitment: value_commitment_bytes(
+                note.plaintext.value,
+                note.plaintext.randomness.field(),
+            ),
+            ephemeral_key: [1; 32],
+            ciphertext: vec![2],
+            outgoing_ciphertext: vec![3],
+        };
+        let mut consensus = crate::state::ShieldedState::<DEPTH>::new(10);
+        consensus.register_program(entry).unwrap();
+        let setup = TransactionPreimage {
+            network_id: network,
+            anchor: consensus.root(),
+            expiry_height: 50,
+            fee: 0,
+            spends: vec![],
+            outputs: vec![public_output(&wallet.notes()[0])],
+            programs: vec![],
+        };
+        consensus.apply_bridge(&setup, [1; 32], 1, 0, 0).unwrap();
+        assert_eq!(consensus.root(), wallet.root());
+
+        let encoded = envelope.encode().unwrap();
+        let snapshot = consensus.encode_snapshot();
+        assert_eq!(
+            crate::precheck_authenticated_standard_program_state::<DEPTH>(&snapshot, &envelope),
+            Ok(true)
+        );
+        assert_eq!(
+            crate::onyx_precheck_authenticated_standard_program_state(
+                snapshot.as_ptr(),
+                snapshot.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                DEPTH as u32,
+            ),
+            1
         );
     }
 

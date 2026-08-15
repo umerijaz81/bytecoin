@@ -461,6 +461,26 @@ bool WalletState::create_onyx_standard_program_call(const std::array<uint8_t, 32
     const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
     const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
     BinaryArray *envelope) const {
+	return create_onyx_standard_program_call_impl(program_id, inclusion_height, valid_from_height,
+	    expiry_height, application, prior_state, next_state, witness, envelope, false);
+}
+
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool WalletState::create_onyx_authenticated_invalid_proof_standard_program_call(
+    const std::array<uint8_t, 32> &program_id, Height inclusion_height,
+    Height valid_from_height, Height expiry_height, const BinaryArray &application,
+    const std::array<uint8_t, 32> &prior_state, const std::array<uint8_t, 32> &next_state,
+    const BinaryArray &witness, BinaryArray *envelope) const {
+	return create_onyx_standard_program_call_impl(program_id, inclusion_height, valid_from_height,
+	    expiry_height, application, prior_state, next_state, witness, envelope, true);
+}
+#endif
+
+bool WalletState::create_onyx_standard_program_call_impl(
+    const std::array<uint8_t, 32> &program_id, Height inclusion_height,
+    Height valid_from_height, Height expiry_height, const BinaryArray &application,
+    const std::array<uint8_t, 32> &prior_state, const std::array<uint8_t, 32> &next_state,
+    const BinaryArray &witness, BinaryArray *envelope, bool authenticated_invalid_proof) const {
 #ifdef onyx_USE_ZK
 	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || application.empty() ||
 	    witness.empty() || witness.size() % 32 != 0 || envelope == nullptr)
@@ -496,10 +516,19 @@ bool WalletState::create_onyx_standard_program_call(const std::array<uint8_t, 32
 			return false;
 		proving_snapshot = std::move(reserved);
 	}
-	return zk::Halo2ProofSystem::wallet_create_standard_program_call(proving_snapshot, seed, program_id,
-	    inclusion_height, valid_from_height, expiry_height, application, prior_state, next_state,
-	    witness, parameters::ONYX_PROGRAM_CIRCUIT_K, envelope);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (authenticated_invalid_proof)
+		return zk::Halo2ProofSystem::wallet_create_authenticated_invalid_proof_standard_program_call(
+		    proving_snapshot, seed, program_id, inclusion_height, valid_from_height, expiry_height,
+		    application, prior_state, next_state, witness, parameters::ONYX_PROGRAM_CIRCUIT_K,
+		    envelope);
+#endif
+	(void)authenticated_invalid_proof;
+	return zk::Halo2ProofSystem::wallet_create_standard_program_call(proving_snapshot, seed,
+	    program_id, inclusion_height, valid_from_height, expiry_height, application, prior_state,
+	    next_state, witness, parameters::ONYX_PROGRAM_CIRCUIT_K, envelope);
 #else
+	(void)authenticated_invalid_proof;
 	return false;
 #endif
 }

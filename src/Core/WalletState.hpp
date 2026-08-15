@@ -128,6 +128,13 @@ public:
 	    const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
 	    const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
 	    BinaryArray *envelope) const;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	bool create_onyx_authenticated_invalid_proof_standard_program_call(
+	    const std::array<uint8_t, 32> &program_id, Height inclusion_height,
+	    Height valid_from_height, Height expiry_height, const BinaryArray &application,
+	    const std::array<uint8_t, 32> &prior_state, const std::array<uint8_t, 32> &next_state,
+	    const BinaryArray &witness, BinaryArray *envelope) const;
+#endif
 	bool create_onyx_token_issuance(const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, Amount amount, Height inclusion_height,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope, uint64_t *sequence) const;
@@ -187,6 +194,11 @@ protected:
 	};
 
 private:
+	bool create_onyx_standard_program_call_impl(const std::array<uint8_t, 32> &program_id,
+	    Height inclusion_height, Height valid_from_height, Height expiry_height,
+	    const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
+	    const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
+	    BinaryArray *envelope, bool authenticated_invalid_proof) const;
 	bool create_onyx_token_issuance_impl(const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, Amount amount, Height inclusion_height,
 	    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope, uint64_t *sequence,

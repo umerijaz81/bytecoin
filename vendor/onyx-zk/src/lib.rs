@@ -3818,8 +3818,8 @@ pub extern "C" fn onyx_wallet_create_standard_program_deployment(
     })
 }
 
-#[no_mangle]
-pub extern "C" fn onyx_wallet_create_standard_program_call(
+#[allow(clippy::too_many_arguments)]
+fn wallet_create_standard_program_call_impl(
     wallet_snapshot: *const u8,
     wallet_snapshot_len: usize,
     seed: *const u8,
@@ -3836,6 +3836,7 @@ pub extern "C" fn onyx_wallet_create_standard_program_call(
     circuit_k: u32,
     transaction_out: *mut *mut u8,
     transaction_len_out: *mut usize,
+    authenticated_invalid_proof: bool,
 ) -> i32 {
     ffi_i32(|| {
         if transaction_out.is_null() || transaction_len_out.is_null() {
@@ -3911,23 +3912,55 @@ pub extern "C" fn onyx_wallet_create_standard_program_call(
             };
             witness_fields.push(value);
         }
-        let envelope = match wallet.build_standard_program_call(
-            &keys,
-            program_id,
-            valid_from_height,
-            expiry_height,
-            application,
-            prior_state,
-            next_state,
-            witness_fields,
-            circuit_k,
-        ) {
+        #[cfg(feature = "qualification-fixtures")]
+        let envelope_result = if authenticated_invalid_proof {
+            wallet.build_authenticated_invalid_proof_standard_program_call(
+                &keys,
+                program_id,
+                valid_from_height,
+                expiry_height,
+                application,
+                prior_state,
+                next_state,
+                witness_fields,
+                circuit_k,
+            )
+        } else {
+            wallet.build_standard_program_call(
+                &keys,
+                program_id,
+                valid_from_height,
+                expiry_height,
+                application,
+                prior_state,
+                next_state,
+                witness_fields,
+                circuit_k,
+            )
+        };
+        #[cfg(not(feature = "qualification-fixtures"))]
+        let envelope_result = {
+            let _ = authenticated_invalid_proof;
+            wallet.build_standard_program_call(
+                &keys,
+                program_id,
+                valid_from_height,
+                expiry_height,
+                application,
+                prior_state,
+                next_state,
+                witness_fields,
+                circuit_k,
+            )
+        };
+        let envelope = match envelope_result {
             Ok(envelope) => envelope,
             Err(_) => return -5,
         };
-        if envelope
-            .verify_standard(wallet.program_registry(), inclusion_height, 32, circuit_k)
-            .is_err()
+        if !authenticated_invalid_proof
+            && envelope
+                .verify_standard(wallet.program_registry(), inclusion_height, 32, circuit_k)
+                .is_err()
         {
             return -2;
         }
@@ -3944,6 +3977,87 @@ pub extern "C" fn onyx_wallet_create_standard_program_call(
         }
         1
     })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_standard_program_call(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    program_id: *const u8,
+    inclusion_height: u64,
+    valid_from_height: u64,
+    expiry_height: u64,
+    application: *const u8,
+    application_len: usize,
+    prior_state: *const u8,
+    next_state: *const u8,
+    witness: *const u8,
+    witness_count: usize,
+    circuit_k: u32,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    wallet_create_standard_program_call_impl(
+        wallet_snapshot,
+        wallet_snapshot_len,
+        seed,
+        program_id,
+        inclusion_height,
+        valid_from_height,
+        expiry_height,
+        application,
+        application_len,
+        prior_state,
+        next_state,
+        witness,
+        witness_count,
+        circuit_k,
+        transaction_out,
+        transaction_len_out,
+        false,
+    )
+}
+
+#[cfg(feature = "qualification-fixtures")]
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_authenticated_invalid_proof_standard_program_call(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    program_id: *const u8,
+    inclusion_height: u64,
+    valid_from_height: u64,
+    expiry_height: u64,
+    application: *const u8,
+    application_len: usize,
+    prior_state: *const u8,
+    next_state: *const u8,
+    witness: *const u8,
+    witness_count: usize,
+    circuit_k: u32,
+    transaction_out: *mut *mut u8,
+    transaction_len_out: *mut usize,
+) -> i32 {
+    wallet_create_standard_program_call_impl(
+        wallet_snapshot,
+        wallet_snapshot_len,
+        seed,
+        program_id,
+        inclusion_height,
+        valid_from_height,
+        expiry_height,
+        application,
+        application_len,
+        prior_state,
+        next_state,
+        witness,
+        witness_count,
+        circuit_k,
+        transaction_out,
+        transaction_len_out,
+        true,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

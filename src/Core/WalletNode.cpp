@@ -637,8 +637,17 @@ bool WalletNode::on_create_onyx_standard_program_call(http::Client *, http::Requ
 	if (valid_from > inclusion)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Standard program validity outside consensus window");
 	BinaryArray envelope;
-	if (!get_wallet_state().create_onyx_standard_program_call(program_id, inclusion, valid_from, expiry,
-	        application, prior_state, next_state, witness, &envelope))
+	bool created = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (request.qualification_invalid_proof)
+		created = get_wallet_state().create_onyx_authenticated_invalid_proof_standard_program_call(
+		    program_id, inclusion, valid_from, expiry, application, prior_state, next_state,
+		    witness, &envelope);
+	else
+#endif
+		created = get_wallet_state().create_onyx_standard_program_call(program_id, inclusion,
+		    valid_from, expiry, application, prior_state, next_state, witness, &envelope);
+	if (!created)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS, "Unable to construct Onyx standard program call");
 	Transaction transaction;
 	transaction.version = m_currency.onyx_transaction_version;

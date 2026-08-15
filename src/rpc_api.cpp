@@ -429,6 +429,9 @@ void ser_members(api::walletd::CreateOnyxStandardProgramCall::Request &v, ISeria
 	seria_kv("prior_state", v.prior_state, s);
 	seria_kv("next_state", v.next_state, s);
 	seria_kv("witness", v.witness, s);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	seria_kv("qualification_invalid_proof", v.qualification_invalid_proof, s);
+#endif
 }
 
 void ser_members(api::walletd::CreateOnyxStandardProgramCall::Response &v, ISeria &s) {

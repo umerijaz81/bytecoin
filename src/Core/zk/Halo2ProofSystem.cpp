@@ -929,6 +929,35 @@ bool Halo2ProofSystem::wallet_create_standard_program_call(const BinaryArray &wa
 	return true;
 }
 
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool Halo2ProofSystem::wallet_create_authenticated_invalid_proof_standard_program_call(
+    const BinaryArray &wallet_snapshot, const std::array<uint8_t, 32> &seed,
+    const std::array<uint8_t, 32> &program_id, uint64_t inclusion_height,
+    uint64_t valid_from_height, uint64_t expiry_height, const BinaryArray &application,
+    const std::array<uint8_t, 32> &prior_state, const std::array<uint8_t, 32> &next_state,
+    const BinaryArray &witness, uint32_t circuit_k, BinaryArray *transaction) {
+	if (transaction == nullptr)
+		return false;
+	if (wallet_snapshot.empty() || application.empty() || witness.empty() || witness.size() % 32 != 0) {
+		transaction->clear();
+		return false;
+	}
+	OnyxBuffer encoded;
+	const int rc = onyx_wallet_create_authenticated_invalid_proof_standard_program_call(
+	    wallet_snapshot.data(), wallet_snapshot.size(), seed.data(), program_id.data(),
+	    inclusion_height, valid_from_height, expiry_height, application.data(), application.size(),
+	    prior_state.data(), next_state.data(), witness.data(), witness.size() / 32, circuit_k,
+	    &encoded.data, &encoded.size);
+	if (rc != 1 || !encoded.valid_nonempty(ONYX_ZK_MAX_CONTEXTUAL_TRANSACTION_BYTES)) {
+		transaction->clear();
+		return false;
+	}
+	BinaryArray transaction_result = encoded.copy();
+	*transaction                   = std::move(transaction_result);
+	return true;
+}
+#endif
+
 bool Halo2ProofSystem::wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
     const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
     const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,

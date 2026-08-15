@@ -215,6 +215,14 @@ public:
 	    const BinaryArray &application, const std::array<uint8_t, 32> &prior_state,
 	    const std::array<uint8_t, 32> &next_state, const BinaryArray &witness,
 	    uint32_t circuit_k, BinaryArray *transaction);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	static bool wallet_create_authenticated_invalid_proof_standard_program_call(
+	    const BinaryArray &wallet_snapshot, const std::array<uint8_t, 32> &seed,
+	    const std::array<uint8_t, 32> &program_id, uint64_t inclusion_height,
+	    uint64_t valid_from_height, uint64_t expiry_height, const BinaryArray &application,
+	    const std::array<uint8_t, 32> &prior_state, const std::array<uint8_t, 32> &next_state,
+	    const BinaryArray &witness, uint32_t circuit_k, BinaryArray *transaction);
+#endif
 	static bool wallet_create_token_issuance(const BinaryArray &wallet_snapshot,
 	    const std::array<uint8_t, 32> &seed, const std::array<uint8_t, 91> &recipient,
 	    const std::array<uint8_t, 32> &program_id, uint64_t issued_amount, uint64_t inclusion_height,

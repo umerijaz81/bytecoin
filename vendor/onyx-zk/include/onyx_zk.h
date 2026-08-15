@@ -357,6 +357,17 @@ int onyx_wallet_create_standard_program_call(
     const uint8_t prior_state[32], const uint8_t next_state[32],
     const uint8_t *witness, size_t witness_count, uint32_t circuit_k,
     uint8_t **transaction_out, size_t *transaction_len_out);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+/* Non-distributable fixture: corrupt the completed contextual program proof bundle before the real
+ * spend and binding signatures cover those exact bytes. Qualification binaries only. */
+int onyx_wallet_create_authenticated_invalid_proof_standard_program_call(
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len, const uint8_t seed[32],
+    const uint8_t program_id[32], uint64_t inclusion_height, uint64_t valid_from_height,
+    uint64_t expiry_height, const uint8_t *application, size_t application_len,
+    const uint8_t prior_state[32], const uint8_t next_state[32],
+    const uint8_t *witness, size_t witness_count, uint32_t circuit_k,
+    uint8_t **transaction_out, size_t *transaction_len_out);
+#endif
 int onyx_wallet_create_token_issuance(
     const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
     const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],

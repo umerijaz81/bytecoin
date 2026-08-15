@@ -57,6 +57,7 @@ INVALID_PROOF_ATTEMPTS = 3
 INVALID_DEPLOYMENT_PROOF_ATTEMPTS = 2
 INVALID_BRIDGE_PROOF_ATTEMPTS = 2
 INVALID_ISSUANCE_PROOF_ATTEMPTS = 2
+INVALID_STANDARD_CALL_PROOF_ATTEMPTS = 2
 
 
 def reciprocal_retry_counters_bounded(metrics):
@@ -468,6 +469,51 @@ def main():
             if receiver_onyx.get("balance") != 0 or not receiver_onyx.get("address"):
                 raise RuntimeError(f"receiver wallet did not start empty: {receiver_onyx!r}")
 
+            # Give the standard-program qualification an exact deployment input of its own. This
+            # preserves the source wallet's bounded two-note shape for the later parallel transfer
+            # campaign, while the deployment leaves a canonical one-unit note for the NFT call.
+            standard_funding_amount = 100001
+            standard_funding_fee = 1
+            standard_funding = source_wallet.call(
+                "create_onyx_transaction",
+                {
+                    "address": receiver_onyx["address"],
+                    "amount": standard_funding_amount,
+                    "fee": standard_funding_fee,
+                    "expiry_height": 0,
+                    "memo": "authenticated invalid standard call funding",
+                },
+            )
+            rpc_call(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": standard_funding["binary_transaction"]},
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "load-standard-program-funding-confirmation",
+                rpc_port,
+                MINING_ADDRESS_A,
+                1,
+                timeout=args.rpc_timeout,
+            )
+            funded_height += 1
+            source_balance -= standard_funding_amount + standard_funding_fee
+            standard_wallet_balance = standard_funding_amount
+            wait_until(
+                "standard-program wallet funding",
+                lambda: source_wallet.status()["top_block_height"] >= funded_height
+                and receiver_wallet.status()["top_block_height"] >= funded_height
+                and relay_node.status()["top_block_height"] >= funded_height
+                and source_wallet.call("get_onyx_status")["balance"]
+                == source_balance
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == standard_wallet_balance,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=1800,
+            )
+
             # Token issuance authentication depends on a canonical registry entry. Deploy a real
             # capped-token policy and activate it for the next-block context before constructing an
             # issuer-signed envelope whose only invalid component is its Halo2 transcript.
@@ -626,6 +672,94 @@ def main():
                     f"the verifier without changing token state: {authenticated_invalid_issuance!r}"
                 )
 
+            # Standard-call authentication requires a real active registry entry and canonical
+            # state key. Deploy the pinned NFT profile, then submit an authorization-valid envelope
+            # whose program proof alone is invalid. Repeating the same envelope must reacquire and
+            # release the verifier without admitting it or materializing program state.
+            standard_deployment_fee = 100000
+            standard_activation_height = funded_height + 2
+            standard_deployment = receiver_wallet.call(
+                "create_onyx_standard_program_deployment",
+                {
+                    "kind": "nft",
+                    "activation_height": standard_activation_height,
+                    "deactivation_height": 0,
+                    "fee": standard_deployment_fee,
+                    "expiry_height": 0,
+                },
+            )
+            rpc_call(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": standard_deployment["binary_transaction"]},
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "load-standard-program-deployment-confirmation",
+                rpc_port,
+                MINING_ADDRESS_A,
+                1,
+                timeout=args.rpc_timeout,
+            )
+            funded_height += 1
+            standard_wallet_balance -= standard_deployment_fee
+            wait_until(
+                "standard-program activation and wallet accounting",
+                lambda: source_wallet.status()["top_block_height"] >= funded_height
+                and receiver_wallet.status()["top_block_height"] >= funded_height
+                and relay_node.status()["top_block_height"] >= funded_height
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == standard_wallet_balance,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=1800,
+            )
+            collection_id = (21).to_bytes(32, "little")
+            token_id = (22).to_bytes(32, "little")
+            nft_application = (
+                bytes((1, 1))
+                + collection_id
+                + token_id
+                + bytes((33, 1))
+            ).hex()
+            prior_state = (
+                "dea354729d447a92315a7730a8ffa9c2621f025a2e73cf2c794b7923939f1a00"
+            )
+            next_state = "8503" + "00" * 30
+            owner_witness = "22" + "00" * 31
+            standard_state_request = {
+                "program_id": standard_deployment["program_id"],
+                "application": nft_application,
+            }
+            standard_states_before = [
+                rpc_call(port, "get_onyx_standard_program_state", standard_state_request)
+                for port in (rpc_port, relay_rpc_port)
+            ]
+            if standard_states_before[1] != standard_states_before[0] or any(
+                state.get("found") or state.get("state") != ""
+                or state.get("block_height") != funded_height
+                for state in standard_states_before
+            ):
+                raise RuntimeError(
+                    "initial pinned NFT state was not absent and converged: "
+                    f"{standard_states_before!r}"
+                )
+            invalid_standard_call = receiver_wallet.call(
+                "create_onyx_standard_program_call",
+                {
+                    "program_id": standard_deployment["program_id"],
+                    "valid_from_height": 0,
+                    "expiry_height": 0,
+                    "application": nft_application,
+                    "prior_state": prior_state,
+                    "next_state": next_state,
+                    "witness": owner_witness,
+                    "qualification_invalid_proof": True,
+                },
+            )
+
+            # Construct every later source-wallet sibling before the rejected call so the full
+            # campaign's expensive proof fixtures are fixed against this exact chain tip.
             transfer_fee = 1
             transfer_amount = source_balance - transfer_fee
             if transfer_amount <= 0:
@@ -678,6 +812,87 @@ def main():
                 *(transaction["transaction_hash"] for transaction in transactions),
             }:
                 raise RuntimeError("invalid deployment fixture duplicated another transaction")
+
+            invalid_standard_call_before = node.statistics()
+            invalid_standard_call_started = time.monotonic()
+            invalid_standard_call_responses = []
+            invalid_standard_call_attempt_seconds = []
+            for _ in range(INVALID_STANDARD_CALL_PROOF_ATTEMPTS):
+                attempt_started = time.monotonic()
+                invalid_standard_call_responses.append(
+                    rpc_response(
+                        rpc_port,
+                        "send_transaction",
+                        {
+                            "binary_transaction": invalid_standard_call[
+                                "binary_transaction"
+                            ]
+                        },
+                    )
+                )
+                invalid_standard_call_attempt_seconds.append(
+                    round(time.monotonic() - attempt_started, 6)
+                )
+            invalid_standard_call_after = node.statistics()
+            standard_states_after = [
+                rpc_call(port, "get_onyx_standard_program_state", standard_state_request)
+                for port in (rpc_port, relay_rpc_port)
+            ]
+            standard_wallet_balance_after_invalid_call = receiver_wallet.call(
+                "get_onyx_status"
+            )["balance"]
+            authenticated_invalid_standard_call = {
+                "transaction_hash": invalid_standard_call["transaction_hash"],
+                "program_id": standard_deployment["program_id"],
+                "bytes": len(
+                    bytes.fromhex(invalid_standard_call["binary_transaction"])
+                ),
+                "attempts": INVALID_STANDARD_CALL_PROOF_ATTEMPTS,
+                "attempt_seconds": invalid_standard_call_attempt_seconds,
+                "elapsed_seconds": round(
+                    time.monotonic() - invalid_standard_call_started, 6
+                ),
+                "responses": invalid_standard_call_responses,
+                "verifier_acquired_before": invalid_standard_call_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": invalid_standard_call_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_active_after": invalid_standard_call_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after": invalid_standard_call_after.get(
+                    "transaction_pool_count", 0
+                ),
+                "transaction_known_after": transaction_known(
+                    node, invalid_standard_call["transaction_hash"]
+                ),
+                "states_before": standard_states_before,
+                "states_after": standard_states_after,
+                "wallet_balance_before": standard_wallet_balance,
+                "wallet_balance_after": standard_wallet_balance_after_invalid_call,
+            }
+            if (
+                any(
+                    "error" not in response
+                    for response in invalid_standard_call_responses
+                )
+                or authenticated_invalid_standard_call["verifier_acquired_after"]
+                != authenticated_invalid_standard_call["verifier_acquired_before"]
+                + INVALID_STANDARD_CALL_PROOF_ATTEMPTS
+                or authenticated_invalid_standard_call["verifier_active_after"] != 0
+                or authenticated_invalid_standard_call["pool_count_after"] != 0
+                or authenticated_invalid_standard_call["transaction_known_after"]
+                or standard_states_after != standard_states_before
+                or standard_wallet_balance_after_invalid_call
+                != standard_wallet_balance
+            ):
+                raise RuntimeError(
+                    "authenticated invalid standard-program call did not reach and cleanly "
+                    "leave the verifier without changing program or wallet state: "
+                    f"{authenticated_invalid_standard_call!r}"
+                )
 
             transaction_paths = []
             for index, transaction in enumerate(transactions):
@@ -2040,7 +2255,7 @@ def main():
                 and receiver_wallet.status()["top_block_height"] >= final_height
                 and source_wallet.call("get_onyx_status")["balance"] == 0
                 and receiver_wallet.call("get_onyx_status")["balance"]
-                == transfer_amount,
+                == standard_wallet_balance + transfer_amount,
                 nodes + [source_wallet, receiver_wallet],
                 timeout=180,
             )
@@ -2051,10 +2266,16 @@ def main():
                 final_audit,
                 relay_final_audit,
                 total_bridged=migration_output["amount"],
-                total_fees=bridge_fee + token_deployment_fee + transfer_fee,
-                circulating_supply=transfer_amount,
-                commitment_count=4,
-                program_count=1,
+                total_fees=(
+                    bridge_fee
+                    + standard_funding_fee
+                    + token_deployment_fee
+                    + standard_deployment_fee
+                    + transfer_fee
+                ),
+                circulating_supply=standard_wallet_balance + transfer_amount,
+                commitment_count=7,
+                program_count=2,
             )
             checks = {
                 "raw_load_report_passed": bool(load_report.get("passed")),
@@ -2202,6 +2423,29 @@ def main():
                     ].get("unspent_note_count")
                     == 0
                 ),
+                "authenticated_invalid_standard_call_reached_verifier_without_state_change": (
+                    all(
+                        "error" in response
+                        for response in authenticated_invalid_standard_call["responses"]
+                    )
+                    and authenticated_invalid_standard_call[
+                        "verifier_acquired_after"
+                    ]
+                    == authenticated_invalid_standard_call[
+                        "verifier_acquired_before"
+                    ]
+                    + authenticated_invalid_standard_call["attempts"]
+                    and authenticated_invalid_standard_call["verifier_active_after"]
+                    == 0
+                    and authenticated_invalid_standard_call["pool_count_after"] == 0
+                    and not authenticated_invalid_standard_call[
+                        "transaction_known_after"
+                    ]
+                    and authenticated_invalid_standard_call["states_after"]
+                    == authenticated_invalid_standard_call["states_before"]
+                    and authenticated_invalid_standard_call["wallet_balance_after"]
+                    == authenticated_invalid_standard_call["wallet_balance_before"]
+                ),
                 "authenticated_invalid_bridge_reached_verifier_without_admission": (
                     all(
                         "error" in response
@@ -2248,7 +2492,7 @@ def main():
                 ]
                 == 0
                 and receiver_wallet.call("get_onyx_status")["balance"]
-                == transfer_amount,
+                == standard_wallet_balance + transfer_amount,
                 "post_load_supply_conservation": supply_ok,
             }
             report = {
@@ -2268,6 +2512,7 @@ def main():
                 "authenticated_invalid_proof": authenticated_invalid_proof,
                 "authenticated_invalid_deployment": authenticated_invalid_deployment,
                 "authenticated_invalid_issuance": authenticated_invalid_issuance,
+                "authenticated_invalid_standard_call": authenticated_invalid_standard_call,
                 "authenticated_invalid_bridge": authenticated_invalid_bridge,
                 "graceful_shutdown": graceful_shutdown,
                 "stale_chain_completion": stale_chain_completion,
