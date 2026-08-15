@@ -1158,6 +1158,40 @@ output plus change correctly add two. The exact supply tuple and cross-node equa
 by a five-case unit suite. Ordinary ZK/non-ZK artifacts exclude the new ABI symbol and RPC marker.
 This remains bounded local evidence, not sustained issuance-flood or independent release evidence.
 
+#### Implemented in `13b4ea7`: authenticated-invalid standard-program-call qualification
+
+Standard calls require more than a structurally valid base transfer: the canonical registry entry,
+active pinned function, application-derived state key, prior/next state, witness, spend signatures,
+binding signature, base proof, and program proof must all agree. The qualification-only builder now
+creates the normal base-plus-program proof bundle, flips one byte in the completed program proof,
+and only then generates the real spend and binding signatures over those exact bytes. Consequently,
+canonical decoding, transaction authorization, and the authenticated state-conflict precheck all
+succeed, while the authoritative full verifier fails at the program proof.
+
+The test-only path is feature-gated end to end through Rust, the C ABI, `Halo2ProofSystem`,
+`WalletState`, and `create_onyx_standard_program_call`. Ordinary binaries neither accept the
+`qualification_invalid_proof` field nor export the invalid-call constructor; the release artifact
+scanner explicitly rejects both markers. The focused optimized Rust regression takes 146.1 seconds
+and proves authorization/precheck success versus full-proof rejection.
+
+The live harness uses a dedicated 100,001-unit note so the 100,000-unit NFT deployment leaves exactly
+one native unit for the call without exceeding the source wallet's bounded input shape. It deploys
+the pinned NFT entry, queries identical absent state from two nodes, constructs all later source
+siblings against the same tip, and submits the 12,390-byte invalid call twice. At exact revision
+`13b4ea7`, both attempts return `-101` after 56.219 and 55.297 seconds; acquisitions move 8 to 10,
+active verification returns to zero, pool and lookup stay empty, both state queries remain absent at
+height 7, and the call wallet remains at one unit. All 22 checks pass in 3,234.5 seconds. Independent
+nodes finish at height 9 with 742,000 bridged, 200,003 fees, 541,997 circulating, seven commitments,
+two programs, and identical audit roots. The report is
+`build/codex-invalid-proof/onyx-verifier-load-13b4ea7.json`.
+
+Two failed working-tree attempts refined only the harness. A capped-token-only status RPC cannot
+describe the pinned NFT profile, so canonical standard-state queries are the correct oracle. Adding
+a second deployment to the original source fragmented its balance beyond the supported proof input
+shape, so the NFT path now receives an exact independent funding note. Production admission,
+circuits, and consensus rules were not changed. This is bounded local evidence; sustained
+program-call floods and authenticated state-conflict load remain open.
+
 #### Implemented: registry-authenticated token-issuance precheck
 
 Issuance cannot safely use a state-independent extractor because its issuer key lives in the deployed

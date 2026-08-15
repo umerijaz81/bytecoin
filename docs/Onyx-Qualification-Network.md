@@ -355,7 +355,8 @@ deployment is submitted twice and returns `-101` after 197.641 and 90.89 seconds
 to 7, active verification returns to zero, the pool remains empty, and transaction lookup remains
 false. The report is
 `build/onyx-qualification/onyx-verifier-invalid-deployment-v1-2e0eee2.json` with local qualification
-scope. Program-call invalid-proof load plus sustained deployment floods remain open.
+scope. Program-call invalid-proof load is completed in `13b4ea7`; sustained deployment floods remain
+open.
 
 Commit `b468475` adds a qualification-only authenticated-invalid bridge. Its completed `k=13` Halo2
 proof is corrupted before the ownership sighash is returned. The gated wallet signer structurally
@@ -378,7 +379,8 @@ required to match exactly: a backup body may already be scheduled before the pri
 cooldown, so that body can reject without being a timer-issued retry. Commit `e60afb9` adds a focused
 unit oracle requiring one or two retry requests and between one and `requests + 1` global rejections.
 It retains the exact source 1-to-2-to-1-to-0 transition, backup admission, acquisition, pool, cooldown,
-and download cleanup checks. Program-call invalid-proof load and sustained bridge floods remain open.
+and download cleanup checks. Program-call invalid-proof load is completed in `13b4ea7`; sustained
+bridge floods remain open.
 
 Commit `aaa8e0c` adds qualification-only authenticated-invalid token issuance. Because issuance
 authorization depends on the canonical token registry, the process campaign first deploys a real
@@ -400,7 +402,27 @@ the primary in PeerDB and could import the stale-scenario height-6 block, so it 
 isolated relay while the backup connects inbound. Deployment funding produces an authenticated
 one-unit base output plus change, so it contributes two commitments; a focused five-case unit oracle
 now requires the exact supply tuple and cross-node equality. Neither change alters production
-consensus or verifier behavior. Program-call invalid-proof load and sustained issuance floods remain
+consensus or verifier behavior. Sustained issuance floods remain open.
+
+Commit `13b4ea7` adds qualification-only authenticated-invalid pinned-NFT calls. A dedicated wallet
+receives exactly 100,001 native units, spends 100,000 to deploy the canonical NFT profile, and keeps
+the remaining one-unit note for the call. The wallet creates the normal contextual base-plus-program
+proof bundle, corrupts the completed program proof, and signs the exact invalid bytes. Transaction
+authorization and the authenticated state precheck therefore pass, but full Halo2 verification
+rejects both submissions with `-101`.
+
+At exact `13b4ea7`, the 12,390-byte call takes 56.219 and 55.297 seconds. Acquisitions move 8 to 10,
+active proofs return to zero, pool and lookup remain empty, independent state queries stay identically
+absent at height 7, and the wallet remains at one unit. All 22 campaign checks pass in 3,234.5
+seconds. Independent nodes finish at height 9 with 742,000 bridged, 200,003 fees, 541,997
+circulating, seven commitments, and two programs. The exact report is
+`build/codex-invalid-proof/onyx-verifier-load-13b4ea7.json`; the raw report SHA-256 is
+`773eefe221b4e892ecc72a14dcd3774e94034264546b96534099e4507ddc65bf`.
+
+The qualification fixture is gated through Rust, the C ABI, C++, and wallet RPC. Ordinary ZK and
+non-ZK artifact scans reject its symbol and RPC marker. An optimized focused Rust test proves
+canonical decode and authorization plus precheck eligibility before full-proof rejection. This is
+bounded local evidence; sustained program-call floods and authenticated state-conflict load remain
 open.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's

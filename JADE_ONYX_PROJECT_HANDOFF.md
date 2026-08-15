@@ -1094,9 +1094,9 @@ Remaining:
 
 - Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
   HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
-- Extend the bounded authenticated private-transfer, deployment, bridge, and issuance invalid-proof
-  campaigns into sustained floods; add program-call conflict/invalid-proof load and repeat mixed
-  RPC/P2P ingress with fairness checks.
+- Extend the bounded authenticated private-transfer, deployment, bridge, issuance, and standard-call
+  invalid-proof campaigns into sustained floods; add program-call state-conflict load and repeat
+  mixed RPC/P2P ingress with fairness checks.
   Extend cheap rejection only through authenticated metadata extractors. The pending transfer
   conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`; abandoned
   HTTP response ownership and permit cleanup are covered in `d8abdef`; graceful active-proof worker
@@ -1110,8 +1110,11 @@ Remaining:
   orchestration are covered in `e9d0f1c`/`2e0eee2`; and two ownership-authenticated invalid bridge
   attempts followed by a valid spend of the same legacy output are covered in `b468475`/`e60afb9`;
   and two registry/issuer-authenticated invalid issuance attempts with exact supply preservation are
-  covered in `aaa8e0c`. Program-call invalid-proof load, repeated multi-hash/more-than-two-source
-  load, and sustained fairness remain open.
+  covered in `aaa8e0c`; and two authorization-valid invalid pinned-NFT calls with exact state,
+  balance, verifier-permit, and supply preservation are covered in `13b4ea7`. The exact 22-check
+  campaign takes 3,234.5 seconds and finishes at height 9 with 742,000 bridged, 200,003 fees,
+  541,997 circulating, seven commitments, and two programs. Program-call state-conflict load,
+  repeated multi-hash/more-than-two-source load, and sustained fairness remain open.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 

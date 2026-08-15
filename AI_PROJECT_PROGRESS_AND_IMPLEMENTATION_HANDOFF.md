@@ -1035,16 +1035,35 @@ the full 1,000,000-unit cap remains, and the receiver owns no token note or bala
 pass in 2,812.5 seconds. Both nodes finish at height 7 with the same audit: 742,000 bridged, 100,002
 fees, 641,998 circulating, four commitments, and one program.
 
+Commit `13b4ea7` closes the remaining authenticated-invalid standard-program-call family. The
+qualification-only Rust wallet corrupts the completed contextual bundle's program-proof transcript
+before the genuine spend and binding signatures cover those exact bytes. A focused optimized Rust
+test proves canonical decode and transaction authorization succeed, the authenticated standard-state
+precheck returns eligible, and the unchanged full base-plus-NFT Halo2 verifier rejects. The C ABI,
+C++ proof adapter, wallet-state builder, and wallet RPC field exist only when
+`ONYX_INVALID_PROOF_TESTS=ON`; ordinary ZK and non-ZK artifact scans forbid the exported fixture
+symbol and RPC marker.
+
+The exact process campaign funds a second wallet with 100,001 native units, deploys the pinned NFT
+profile for 100,000, and retains its one-unit note for the call. At `13b4ea7`, the 12,390-byte
+authenticated-invalid call returns `-101` twice after 56.219 and 55.297 seconds. Verifier
+acquisitions move 8 to 10, activity returns to zero, the pool and transaction lookup stay empty, both
+independent nodes retain absent NFT state at height 7, and the wallet balance remains one. All 22
+checks pass in 3,234.5 seconds. The final height-9 audit agrees across nodes: 742,000 bridged,
+200,003 fees, 541,997 circulating, seven commitments, and two programs. The exact report is
+`build/codex-invalid-proof/onyx-verifier-load-13b4ea7.json`; its raw-load report hash is
+`773eefe221b4e892ecc72a14dcd3774e94034264546b96534099e4507ddc65bf`.
+
 The expanded campaign also corrected two test-only assumptions. The reciprocal copied node is now
 pinned to its isolated relay so retained PeerDB state cannot import the primary's stale-scenario
 block. The supply oracle now counts both deployment funding outputs and is unit-tested field by field.
 Neither correction changes consensus or production admission behavior.
 
-Validation through `aaa8e0c`: qualification-feature ZK, ordinary ZK, and non-ZK Release
+Validation through `13b4ea7`: qualification-feature ZK, ordinary ZK, and non-ZK Release
 `bytecoind`/`walletd`/`tests` builds and their Jade suites pass; Python compilation and all five
-focused load-runner unit tests pass; the optimized Rust invalid-issuance fixture passes;
+focused load-runner unit tests pass; the optimized Rust invalid-standard-call fixture passes;
 qualification and ordinary complete C++ `--zk` suites pass; ordinary artifact scans pass; and the
-21-check exact-revision process campaign passes. The new Rust/C++ path is qualification-only, the
+22-check exact-revision process campaign passes. The new Rust/C++ path is qualification-only, the
 harness changes are orchestration/oracle-only, and production circuit and consensus behavior are
 unchanged.
 The normal non-ZK daemon still excludes the crash/fault controls.
@@ -1052,8 +1071,8 @@ The normal non-ZK daemon still excludes the crash/fault controls.
 ### 15.4 Remaining verifier qualification work
 
 1. Repeat separate cold-start and warm-cache runs on named x86-64 and ARM64 hosts.
-2. Exercise program-call authenticated conflicts and invalid proofs, and extend the two-attempt
-   authenticated-invalid deployment, bridge, and issuance results into sustained load, plus
+2. Exercise program-call authenticated state conflicts, and extend the two-attempt authenticated-
+   invalid deployment, bridge, issuance, and standard-call results into sustained load, plus
    stale-chain completion under deterministic and live conditions. Pending
    private-transfer conflict, exact duplicate resubmission, HTTP client abandonment, and graceful
    active-proof shutdown, a three-attempt authenticated invalid private-transfer campaign, and
@@ -1370,7 +1389,8 @@ worker submission and live-qualifies the pending transfer case; `47c3485` adds d
 P2P/RPC contention and proof-free retry; `a0395f2` adds reciprocal P2P overload/non-ban cooldown; and
 `18f00d0` adds bounded automatic live-peer retry; and `43e6d73` adds bounded alternate-source failover.
 Continue with cold/warm, repeated multi-hash/more-than-two-source fairness,
-program-call invalid-proof, sustained-load, repeated-host, and hosted-CI campaigns in section 15.4.
+program-call authenticated state-conflict, sustained-load, repeated-host, and hosted-CI campaigns in
+section 15.4. Bounded authenticated-invalid program-call verification is complete in `13b4ea7`.
 
 Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS
 thresholds without changing consensus validity or skipping verification.
