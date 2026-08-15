@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx Project Progress and Implementation Guide
 
-Last reconciled: **2026-08-14**
+Last reconciled: **2026-08-15**
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Implementation revision documented: `e60afb9` (`Correct Onyx retry counter qualification`)
+Implementation revision documented: `aaa8e0c` (`Qualify authenticated invalid Onyx issuance`)
 Purpose: detailed engineering handoff for a developer or another AI coding tool
 
 ## 1. Executive summary
@@ -46,7 +46,7 @@ Current overall status:
 
 Use these labels precisely in issues, commits, prompts, and future documentation:
 
-- **Committed**: present at or before Git revision `e60afb9` on this branch.
+- **Committed**: present at or before Git revision `aaa8e0c` on this branch.
 - **Working-tree implementation**: code exists locally but is not part of `HEAD`, has not received a
   branch commit, and may not have run in hosted CI.
 - **Locally qualified**: a bounded test passed on one machine. This is useful regression evidence but
@@ -1132,6 +1132,31 @@ requests count only timer-issued bodies. Commit `e60afb9` unit-tests and enforce
 one or two timer requests and one through `requests + 1` rejections, while retaining exact source
 1-to-2-to-1-to-0, backup admission, pool, cooldown, download, and verifier-acquisition assertions.
 This is bounded two-attempt local evidence, not sustained bridge-flood or release evidence.
+
+#### Implemented in `aaa8e0c`: authenticated-invalid token-issuance qualification
+
+Issuance qualification now uses a real canonical capped-token registry entry rather than a synthetic
+state-independent fixture. The live source wallet deploys a 1,000,000-unit token with the consensus
+minimum 100,000 deployment fee, mines it at height 5, and confirms activation for the height-6
+next-block context. The qualification-only wallet path corrupts the completed `k=14` issuance proof
+before producing both the value-binding signature and the registered issuer signature over those
+exact bytes. The registry-aware authentication precheck therefore succeeds, while the unchanged
+authoritative Halo2 verifier rejects.
+
+At exact revision `aaa8e0c`, the 6,656-byte sequence-zero issuance returns `-101` after 7.203 and
+6.797 seconds. Verifier acquisitions move 4 to 6, active verification returns to zero, pool and
+lookup remain empty, issued supply stays zero, next sequence stays zero, remaining cap stays
+1,000,000, and the receiver retains zero token notes and balance. The complete 21-check campaign
+passes in 2,812.5 seconds. Independent nodes finish at height 7 with 742,000 bridged, 100,002 fees,
+641,998 circulating, four commitments, one program, and identical audit roots.
+
+The first expanded run exposed two qualification-oracle issues, not consensus failures. The copied
+reciprocal target retained the primary node in PeerDB and imported the stale-scenario height-6 block;
+it is now explicitly pinned to the isolated relay while the backup connects inbound. The initial
+supply oracle also counted the deployment as one commitment, but its authenticated one-unit base
+output plus change correctly add two. The exact supply tuple and cross-node equality are now covered
+by a five-case unit suite. Ordinary ZK/non-ZK artifacts exclude the new ABI symbol and RPC marker.
+This remains bounded local evidence, not sustained issuance-flood or independent release evidence.
 
 #### Implemented: registry-authenticated token-issuance precheck
 

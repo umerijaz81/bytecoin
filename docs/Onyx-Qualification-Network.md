@@ -355,7 +355,7 @@ deployment is submitted twice and returns `-101` after 197.641 and 90.89 seconds
 to 7, active verification returns to zero, the pool remains empty, and transaction lookup remains
 false. The report is
 `build/onyx-qualification/onyx-verifier-invalid-deployment-v1-2e0eee2.json` with local qualification
-scope. Issuance and program-call invalid-proof load plus sustained deployment floods remain open.
+scope. Program-call invalid-proof load plus sustained deployment floods remain open.
 
 Commit `b468475` adds a qualification-only authenticated-invalid bridge. Its completed `k=13` Halo2
 proof is corrupted before the ownership sighash is returned. The gated wallet signer structurally
@@ -378,8 +378,30 @@ required to match exactly: a backup body may already be scheduled before the pri
 cooldown, so that body can reject without being a timer-issued retry. Commit `e60afb9` adds a focused
 unit oracle requiring one or two retry requests and between one and `requests + 1` global rejections.
 It retains the exact source 1-to-2-to-1-to-0 transition, backup admission, acquisition, pool, cooldown,
-and download cleanup checks. Issuance/program-call invalid-proof load and sustained bridge floods
-remain open.
+and download cleanup checks. Program-call invalid-proof load and sustained bridge floods remain open.
+
+Commit `aaa8e0c` adds qualification-only authenticated-invalid token issuance. Because issuance
+authorization depends on the canonical token registry, the process campaign first deploys a real
+1,000,000-unit capped-token policy with a 100,000 deployment fee, mines it at height 5, and confirms
+activation for the height-6 next-block context. The wallet corrupts the completed `k=14` issuance
+proof before producing the real value-binding and registered-issuer signatures. The registry-aware
+authentication precheck succeeds over those exact proof bytes, while full Halo2 verification fails.
+
+At exact `aaa8e0c`, the 6,656-byte sequence-zero issuance returns `-101` after 7.203 and 6.797
+seconds. Acquisitions move 4 to 6, active verification returns to zero, the pool and lookup remain
+empty, issued supply and next sequence stay zero, remaining supply stays 1,000,000, and the receiver
+has zero token balance and notes. All 21 checks pass in 2,812.5 seconds. The final independent-node
+audit is identical at height 7: 742,000 bridged, 100,002 fees, 641,998 circulating, four commitments,
+and one program. The report is
+`build/codex-invalid-proof/onyx-verifier-load-aaa8e0c.json` with local qualification scope.
+
+Two harness assumptions were corrected during this expansion. The copied reciprocal target retained
+the primary in PeerDB and could import the stale-scenario height-6 block, so it is now pinned to the
+isolated relay while the backup connects inbound. Deployment funding produces an authenticated
+one-unit base output plus change, so it contributes two commitments; a focused five-case unit oracle
+now requires the exact supply tuple and cross-node equality. Neither change alters production
+consensus or verifier behavior. Program-call invalid-proof load and sustained issuance floods remain
+open.
 
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete

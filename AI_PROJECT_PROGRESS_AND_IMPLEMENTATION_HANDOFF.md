@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx: Complete Project Progress and AI Implementation Handoff
 
-- Document date: **2026-08-14**
+- Document date: **2026-08-15**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `e60afb9` (`Correct Onyx retry counter qualification`)
+- Committed revision reviewed: `aaa8e0c` (`Qualify authenticated invalid Onyx issuance`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `e60afb9` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `aaa8e0c` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,7 +48,7 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `e60afb9`; the documentation-only follow-up may
+- Implementation baseline reviewed by this handoff: `aaa8e0c`; the documentation-only follow-up may
   be the branch tip. Always use the commands below to determine the current local/remote revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
@@ -1025,11 +1025,26 @@ output, proving cleanup and continued usability. All 20 checks pass in 1,028.7 s
 between timer requests and global overload rejections with a unit-tested bound that permits one
 already-scheduled backup body while preserving exact source failover and cleanup checks.
 
-Validation through `e60afb9`: qualification-feature ZK, ordinary ZK, and non-ZK Release
-`bytecoind`/`walletd`/`tests` builds and their Jade suites pass; Python compilation and all four
-focused load-runner unit tests pass; the optimized Rust invalid-bridge fixture passes;
+Commit `aaa8e0c` extends that boundary to registry-authenticated token issuance. The live harness
+deploys a real capped-token policy, mines it at height 5, verifies activation for height 6, and builds
+a sequence-zero issuance whose completed `k=14` proof is corrupted before the real value-binding and
+registered-issuer signatures are generated. At the exact commit, the 6,656-byte envelope returns
+`-101` twice after 7.203 and 6.797 seconds; acquisitions increase 4 to 6, verifier activity returns
+to zero, and the pool and lookup remain empty. Registry supply stays zero, next sequence stays zero,
+the full 1,000,000-unit cap remains, and the receiver owns no token note or balance. All 21 checks
+pass in 2,812.5 seconds. Both nodes finish at height 7 with the same audit: 742,000 bridged, 100,002
+fees, 641,998 circulating, four commitments, and one program.
+
+The expanded campaign also corrected two test-only assumptions. The reciprocal copied node is now
+pinned to its isolated relay so retained PeerDB state cannot import the primary's stale-scenario
+block. The supply oracle now counts both deployment funding outputs and is unit-tested field by field.
+Neither correction changes consensus or production admission behavior.
+
+Validation through `aaa8e0c`: qualification-feature ZK, ordinary ZK, and non-ZK Release
+`bytecoind`/`walletd`/`tests` builds and their Jade suites pass; Python compilation and all five
+focused load-runner unit tests pass; the optimized Rust invalid-issuance fixture passes;
 qualification and ordinary complete C++ `--zk` suites pass; ordinary artifact scans pass; and the
-20-check exact-revision process campaign passes. The new Rust/C++ path is qualification-only, the
+21-check exact-revision process campaign passes. The new Rust/C++ path is qualification-only, the
 harness changes are orchestration/oracle-only, and production circuit and consensus behavior are
 unchanged.
 The normal non-ZK daemon still excludes the crash/fault controls.
@@ -1037,8 +1052,8 @@ The normal non-ZK daemon still excludes the crash/fault controls.
 ### 15.4 Remaining verifier qualification work
 
 1. Repeat separate cold-start and warm-cache runs on named x86-64 and ARM64 hosts.
-2. Exercise issuance/program-call authenticated conflicts and invalid proofs, and extend the
-   two-attempt authenticated-invalid deployment and bridge results into sustained load, plus
+2. Exercise program-call authenticated conflicts and invalid proofs, and extend the two-attempt
+   authenticated-invalid deployment, bridge, and issuance results into sustained load, plus
    stale-chain completion under deterministic and live conditions. Pending
    private-transfer conflict, exact duplicate resubmission, HTTP client abandonment, and graceful
    active-proof shutdown, a three-attempt authenticated invalid private-transfer campaign, and
@@ -1355,7 +1370,7 @@ worker submission and live-qualifies the pending transfer case; `47c3485` adds d
 P2P/RPC contention and proof-free retry; `a0395f2` adds reciprocal P2P overload/non-ban cooldown; and
 `18f00d0` adds bounded automatic live-peer retry; and `43e6d73` adds bounded alternate-source failover.
 Continue with cold/warm, repeated multi-hash/more-than-two-source fairness,
-non-transfer invalid-proof, sustained-load, repeated-host, and hosted-CI campaigns in section 15.4.
+program-call invalid-proof, sustained-load, repeated-host, and hosted-CI campaigns in section 15.4.
 
 Exit condition: repeated named-host results establish defensible percentile latency, CPU, and RSS
 thresholds without changing consensus validity or skipping verification.

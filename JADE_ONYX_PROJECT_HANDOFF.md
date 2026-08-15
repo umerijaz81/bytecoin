@@ -1,9 +1,9 @@
 # Jade/Onyx Project Progress and Implementation Handoff
 
-Last reviewed: 2026-08-14
+Last reviewed: 2026-08-15
 Repository: `https://github.com/umerijaz81/bytecoin.git`  
 Working branch: `kimiK3/jade-onyx-hardening`  
-Last implementation revision reviewed: `e60afb9` (`Correct Onyx retry counter qualification`)
+Last implementation revision reviewed: `aaa8e0c` (`Qualify authenticated invalid Onyx issuance`)
 
 ## 1. Purpose and status vocabulary
 
@@ -13,7 +13,7 @@ has been tested, and what still requires implementation or independent evidence.
 
 The words below have precise meanings:
 
-- **Implemented and committed** means the code is in the branch history at or before `e60afb9`.
+- **Implemented and committed** means the code is in the branch history at or before `aaa8e0c`.
 - **In progress** means code exists only in the current working tree and must not be treated as
   finished, reviewed, or published.
 - **Repository-complete** means the planned code and automated tests exist. It does not imply that
@@ -880,6 +880,16 @@ Validation performed before commit:
   final supply. Commit `e60afb9` also corrects and unit-tests the retry-counter oracle: global
   rejections may include one pre-cooldown backup body beyond timer-issued requests, while all source,
   admission, and cleanup invariants remain strict.
+- Commit `aaa8e0c` adds a compile-time-only token-issuance builder that corrupts the completed `k=14`
+  proof before the value-binding and registered-issuer signatures cover those exact bytes. The live
+  campaign first deploys and mines a real 1,000,000-unit capped-token registry entry, then submits the
+  6,656-byte sequence-zero issuance twice. At the exact commit both attempts return `-101` in 7.203
+  and 6.797 seconds; acquisitions move 4 to 6, verifier/pool/lookup state cleans up, issued supply and
+  next sequence remain zero, and the receiver has no token notes. All 21 checks pass in 2,812.5
+  seconds. Both nodes finish at height 7 with 742,000 bridged, 100,002 fees, 641,998 circulating,
+  four commitments, one program, and identical roots. The copied reciprocal target is now pinned to
+  its isolated relay, and a five-case unit oracle covers the exact registry-bearing supply tuple.
+  Ordinary ZK/non-ZK artifacts exclude the fixture symbol and RPC marker.
 - Private transfers now use a signature-authenticated, proof-free metadata extractor for semantic fee
   calculation, read-only `get_tx_fee()`, pool nullifier checks, and a current-snapshot spent-nullifier
   precheck. A non-conflicting transfer still enters the full stateful Halo2 verifier exactly once
@@ -1084,9 +1094,9 @@ Remaining:
 
 - Repeat cold/warm and sustained valid-proof campaigns on named hardware. The first local parallel
   HTTP/P2P proof-load run is green, but one run cannot define percentile latency, RSS, or CPU limits.
-- Extend the bounded authenticated private-transfer invalid-proof campaign into sustained and
-  non-transfer proof floods; add non-transfer conflict load and repeat mixed RPC/P2P ingress with
-  fairness checks.
+- Extend the bounded authenticated private-transfer, deployment, bridge, and issuance invalid-proof
+  campaigns into sustained floods; add program-call conflict/invalid-proof load and repeat mixed
+  RPC/P2P ingress with fairness checks.
   Extend cheap rejection only through authenticated metadata extractors. The pending transfer
   conflict is covered in `715d019`; exact duplicate resubmission is covered in `59b0721`; abandoned
   HTTP response ownership and permit cleanup are covered in `d8abdef`; graceful active-proof worker
@@ -1098,9 +1108,10 @@ Remaining:
   reannouncement, primary disconnect, and backup admission are covered in `43e6d73`; and two
   authenticated-invalid capped-token deployment attempts plus deterministic concurrent peer
   orchestration are covered in `e9d0f1c`/`2e0eee2`; and two ownership-authenticated invalid bridge
-  attempts followed by a valid spend of the same legacy output are covered in `b468475`/`e60afb9`.
-  Issuance and program-call invalid-proof load, repeated multi-hash/more-than-two-source load, and
-  sustained fairness remain open.
+  attempts followed by a valid spend of the same legacy output are covered in `b468475`/`e60afb9`;
+  and two registry/issuer-authenticated invalid issuance attempts with exact supply preservation are
+  covered in `aaa8e0c`. Program-call invalid-proof load, repeated multi-hash/more-than-two-source
+  load, and sustained fairness remain open.
 - Wider randomized rollback campaigns across earlier deployment, issuance, and transfer boundaries.
 - A longer local run and the independently operated 14-day public soak.
 
