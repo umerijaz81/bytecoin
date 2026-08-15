@@ -363,6 +363,16 @@ int onyx_wallet_create_token_issuance(
     uint64_t issued_amount, uint64_t inclusion_height, uint64_t expiry_height,
     const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
     uint8_t **issuance_out, size_t *issuance_len_out, uint64_t *sequence_out);
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+/* Non-distributable fixture: alter a completed issuance proof and then authenticate those exact
+ * bytes with the real value-binding and registered issuer keys. Qualification binaries only. */
+int onyx_wallet_create_authenticated_invalid_proof_token_issuance(
+    const uint8_t *wallet_snapshot, size_t wallet_snapshot_len,
+    const uint8_t seed[32], const uint8_t recipient[91], const uint8_t program_id[32],
+    uint64_t issued_amount, uint64_t inclusion_height, uint64_t expiry_height,
+    const uint8_t *memo, size_t memo_len, uint32_t circuit_k,
+    uint8_t **issuance_out, size_t *issuance_len_out, uint64_t *sequence_out);
+#endif
 int onyx_wallet_create_transfer(
     const uint8_t *snapshot, size_t snapshot_len, const uint8_t seed[32],
     const uint8_t recipient[91], uint64_t amount, uint64_t fee, uint64_t expiry_height,

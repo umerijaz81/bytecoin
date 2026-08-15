@@ -666,8 +666,17 @@ bool WalletNode::on_create_onyx_token_issuance(http::Client *, http::RequestBody
 	const Height inclusion              = window.inclusion_height;
 	const Height expiry                 = window.expiry_height;
 	BinaryArray envelope;
-	if (!get_wallet_state().create_onyx_token_issuance(recipient, program_id, request.amount,
-	        inclusion, expiry, common::as_binary_array(request.memo), &envelope, &response.sequence))
+	bool created = false;
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (request.qualification_invalid_proof)
+		created = get_wallet_state().create_onyx_authenticated_invalid_proof_token_issuance(
+		    recipient, program_id, request.amount, inclusion, expiry,
+		    common::as_binary_array(request.memo), &envelope, &response.sequence);
+	else
+#endif
+		created = get_wallet_state().create_onyx_token_issuance(recipient, program_id, request.amount,
+		    inclusion, expiry, common::as_binary_array(request.memo), &envelope, &response.sequence);
+	if (!created)
 		throw json_rpc::Error(json_rpc::INVALID_PARAMS,
 		    "Unable to construct Onyx token issuance (inactive program, cap, issuer, or pending sequence)");
 	Transaction transaction;

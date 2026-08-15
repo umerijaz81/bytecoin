@@ -56,6 +56,7 @@ MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
 INVALID_PROOF_ATTEMPTS = 3
 INVALID_DEPLOYMENT_PROOF_ATTEMPTS = 2
 INVALID_BRIDGE_PROOF_ATTEMPTS = 2
+INVALID_ISSUANCE_PROOF_ATTEMPTS = 2
 
 
 def reciprocal_retry_counters_bounded(metrics):
@@ -70,6 +71,27 @@ def reciprocal_retry_counters_bounded(metrics):
     # The primary body always accounts for one rejection. A backup body can already be scheduled
     # before cooldown installation and reject independently of the timer-issued request counter.
     return 1 <= retry_requests <= 2 and 1 <= rejections <= retry_requests + 1
+
+
+def supply_audits_match_expected(
+    final_audit,
+    relay_audit,
+    *,
+    total_bridged,
+    total_fees,
+    circulating_supply,
+    commitment_count,
+    program_count,
+):
+    """Require exact independent-node agreement and the complete expected supply tuple."""
+    return (
+        final_audit.get("total_bridged") == total_bridged
+        and final_audit.get("total_fees") == total_fees
+        and final_audit.get("circulating_supply") == circulating_supply
+        and final_audit.get("commitment_count") == commitment_count
+        and final_audit.get("program_count") == program_count
+        and relay_audit == final_audit
+    )
 
 
 class SubmitBlockCaptureProxy:
@@ -445,6 +467,164 @@ def main():
             receiver_onyx = receiver_wallet.call("get_onyx_status")
             if receiver_onyx.get("balance") != 0 or not receiver_onyx.get("address"):
                 raise RuntimeError(f"receiver wallet did not start empty: {receiver_onyx!r}")
+
+            # Token issuance authentication depends on a canonical registry entry. Deploy a real
+            # capped-token policy and activate it for the next-block context before constructing an
+            # issuer-signed envelope whose only invalid component is its Halo2 transcript.
+            token_cap = 1000000
+            token_deployment_fee = 100000
+            token_activation_height = funded_height + 2
+            token_deployment = source_wallet.call(
+                "create_onyx_program_deployment",
+                {
+                    "max_supply": token_cap,
+                    "metadata": "authenticated invalid issuance qualification",
+                    "activation_height": token_activation_height,
+                    "deactivation_height": 0,
+                    "fee": token_deployment_fee,
+                    "expiry_height": 0,
+                },
+            )
+            rpc_call(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": token_deployment["binary_transaction"]},
+            )
+            mine_blocks(
+                minerd,
+                root,
+                "load-token-deployment-confirmation",
+                rpc_port,
+                MINING_ADDRESS_A,
+                1,
+                timeout=args.rpc_timeout,
+            )
+            funded_height += 1
+            source_balance -= token_deployment_fee
+            wait_until(
+                "capped-token activation and wallet accounting",
+                lambda: source_wallet.status()["top_block_height"] >= funded_height
+                and receiver_wallet.status()["top_block_height"] >= funded_height
+                and relay_node.status()["top_block_height"] >= funded_height
+                and source_wallet.call("get_onyx_status")["balance"]
+                == source_balance,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=1800,
+            )
+            token_status_before = source_wallet.call(
+                "get_onyx_program_status",
+                {"program_id": token_deployment["program_id"]},
+            )
+            if (
+                token_status_before["query_height"] != token_activation_height
+                or token_status_before["activation_height"] != token_activation_height
+                or token_status_before["max_supply"] != token_cap
+                or token_status_before["issued_supply"] != 0
+                or token_status_before["remaining_supply"] != token_cap
+                or token_status_before["next_sequence"] != 0
+                or not token_status_before["active"]
+            ):
+                raise RuntimeError(
+                    "capped-token registry entry did not activate exactly: "
+                    f"{token_status_before!r}"
+                )
+
+            invalid_proof_issuance = source_wallet.call(
+                "create_onyx_token_issuance",
+                {
+                    "address": receiver_onyx["address"],
+                    "program_id": token_deployment["program_id"],
+                    "amount": 1000,
+                    "expiry_height": 0,
+                    "memo": "authenticated invalid issuance qualification",
+                    "qualification_invalid_proof": True,
+                },
+            )
+            if invalid_proof_issuance["sequence"] != 0:
+                raise RuntimeError(
+                    "invalid issuance fixture did not use canonical sequence zero: "
+                    f"{invalid_proof_issuance!r}"
+                )
+            invalid_issuance_before = node.statistics()
+            invalid_issuance_started = time.monotonic()
+            invalid_issuance_responses = []
+            invalid_issuance_attempt_seconds = []
+            for _ in range(INVALID_ISSUANCE_PROOF_ATTEMPTS):
+                attempt_started = time.monotonic()
+                invalid_issuance_responses.append(
+                    rpc_response(
+                        rpc_port,
+                        "send_transaction",
+                        {
+                            "binary_transaction": invalid_proof_issuance[
+                                "binary_transaction"
+                            ]
+                        },
+                    )
+                )
+                invalid_issuance_attempt_seconds.append(
+                    round(time.monotonic() - attempt_started, 6)
+                )
+            invalid_issuance_after = node.statistics()
+            token_status_after = source_wallet.call(
+                "get_onyx_program_status",
+                {"program_id": token_deployment["program_id"]},
+            )
+            receiver_token_balance_after = receiver_wallet.call(
+                "get_onyx_asset_balance",
+                {
+                    "program_id": token_deployment["program_id"],
+                    "asset_id": token_deployment["program_id"],
+                },
+            )
+            authenticated_invalid_issuance = {
+                "transaction_hash": invalid_proof_issuance["transaction_hash"],
+                "program_id": token_deployment["program_id"],
+                "sequence": invalid_proof_issuance["sequence"],
+                "bytes": len(
+                    bytes.fromhex(invalid_proof_issuance["binary_transaction"])
+                ),
+                "attempts": INVALID_ISSUANCE_PROOF_ATTEMPTS,
+                "attempt_seconds": invalid_issuance_attempt_seconds,
+                "elapsed_seconds": round(
+                    time.monotonic() - invalid_issuance_started, 6
+                ),
+                "responses": invalid_issuance_responses,
+                "verifier_acquired_before": invalid_issuance_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": invalid_issuance_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_active_after": invalid_issuance_after.get(
+                    "onyx_verifier_active", 0
+                ),
+                "pool_count_after": invalid_issuance_after.get(
+                    "transaction_pool_count", 0
+                ),
+                "transaction_known_after": transaction_known(
+                    node, invalid_proof_issuance["transaction_hash"]
+                ),
+                "program_status_before": token_status_before,
+                "program_status_after": token_status_after,
+                "receiver_asset_balance_after": receiver_token_balance_after,
+            }
+            if (
+                any("error" not in response for response in invalid_issuance_responses)
+                or authenticated_invalid_issuance["verifier_acquired_after"]
+                != authenticated_invalid_issuance["verifier_acquired_before"]
+                + INVALID_ISSUANCE_PROOF_ATTEMPTS
+                or authenticated_invalid_issuance["verifier_active_after"] != 0
+                or authenticated_invalid_issuance["pool_count_after"] != 0
+                or authenticated_invalid_issuance["transaction_known_after"]
+                or token_status_after != token_status_before
+                or receiver_token_balance_after.get("balance") != 0
+                or receiver_token_balance_after.get("unspent_note_count") != 0
+            ):
+                raise RuntimeError(
+                    "authenticated invalid issuance did not reach and cleanly leave "
+                    f"the verifier without changing token state: {authenticated_invalid_issuance!r}"
+                )
 
             transfer_fee = 1
             transfer_amount = source_balance - transfer_fee
@@ -858,7 +1038,7 @@ def main():
             nodes.remove(stale_node)
 
             # Exercise the single global verifier boundary across real ingress types, not merely
-            # two JSON-RPC clients. Start from the clean, offline-persisted height-4 snapshot so this
+            # two JSON-RPC clients. Start from the clean, offline-persisted funded snapshot so this
             # qualification cannot contaminate the primary campaign's pool. The relay admits the
             # first sibling over RPC and announces it to the target over P2P. While the target is
             # verifying that P2P transaction, the other sibling must fail fast over RPC. Once the P2P
@@ -1037,7 +1217,7 @@ def main():
 
             # Reciprocal direction: warm only the relay verifier with an authenticated-invalid proof,
             # then begin a cold abandoned target RPC proof before submitting the valid relay RPC.
-            # All three nodes start from the same clean height-4 state. The warm primary relay
+            # All three nodes start from the same clean funded state. The warm primary relay
             # broadcasts while the cold target verifier is still owned by RPC. The warm backup then
             # reannounces the same body during cooldown. The target must retain that alternate source,
             # survive the primary's disconnect, and retry through the backup after expiry.
@@ -1053,6 +1233,10 @@ def main():
                 "onyx",
                 reciprocal_target_p2p,
                 reciprocal_target_rpc,
+                # The copied database retains the primary node in PeerDB. Pin the target to the
+                # isolated relay so it cannot import the already-mined stale-chain block; the
+                # backup still connects inbound and supplies the second retry source.
+                exclusive_port=reciprocal_relay_p2p,
                 data=reciprocal_target_data,
             )
             nodes.append(reciprocal_target)
@@ -1863,12 +2047,14 @@ def main():
             final_status = node.status()
             final_audit = rpc_call(rpc_port, "get_onyx_supply_audit")
             relay_final_audit = rpc_call(relay_rpc_port, "get_onyx_supply_audit")
-            supply_ok = (
-                final_audit.get("total_bridged") == migration_output["amount"]
-                and final_audit.get("total_fees") == bridge_fee + transfer_fee
-                and final_audit.get("circulating_supply") == transfer_amount
-                and final_audit.get("commitment_count") == 2
-                and relay_final_audit == final_audit
+            supply_ok = supply_audits_match_expected(
+                final_audit,
+                relay_final_audit,
+                total_bridged=migration_output["amount"],
+                total_fees=bridge_fee + token_deployment_fee + transfer_fee,
+                circulating_supply=transfer_amount,
+                commitment_count=4,
+                program_count=1,
             )
             checks = {
                 "raw_load_report_passed": bool(load_report.get("passed")),
@@ -1992,6 +2178,30 @@ def main():
                         "transaction_known_after"
                     ]
                 ),
+                "authenticated_invalid_issuance_reached_verifier_without_state_change": (
+                    all(
+                        "error" in response
+                        for response in authenticated_invalid_issuance["responses"]
+                    )
+                    and authenticated_invalid_issuance["verifier_acquired_after"]
+                    == authenticated_invalid_issuance["verifier_acquired_before"]
+                    + authenticated_invalid_issuance["attempts"]
+                    and authenticated_invalid_issuance["verifier_active_after"] == 0
+                    and authenticated_invalid_issuance["pool_count_after"] == 0
+                    and not authenticated_invalid_issuance[
+                        "transaction_known_after"
+                    ]
+                    and authenticated_invalid_issuance["program_status_after"]
+                    == authenticated_invalid_issuance["program_status_before"]
+                    and authenticated_invalid_issuance[
+                        "receiver_asset_balance_after"
+                    ].get("balance")
+                    == 0
+                    and authenticated_invalid_issuance[
+                        "receiver_asset_balance_after"
+                    ].get("unspent_note_count")
+                    == 0
+                ),
                 "authenticated_invalid_bridge_reached_verifier_without_admission": (
                     all(
                         "error" in response
@@ -2057,6 +2267,7 @@ def main():
                 "abandoned_rpc_cleanup": abandoned_rpc_cleanup,
                 "authenticated_invalid_proof": authenticated_invalid_proof,
                 "authenticated_invalid_deployment": authenticated_invalid_deployment,
+                "authenticated_invalid_issuance": authenticated_invalid_issuance,
                 "authenticated_invalid_bridge": authenticated_invalid_bridge,
                 "graceful_shutdown": graceful_shutdown,
                 "stale_chain_completion": stale_chain_completion,

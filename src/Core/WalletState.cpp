@@ -507,6 +507,24 @@ bool WalletState::create_onyx_standard_program_call(const std::array<uint8_t, 32
 bool WalletState::create_onyx_token_issuance(const std::array<uint8_t, 91> &recipient,
     const std::array<uint8_t, 32> &program_id, Amount amount, Height inclusion_height,
     Height expiry_height, const BinaryArray &memo, BinaryArray *envelope, uint64_t *sequence) const {
+	return create_onyx_token_issuance_impl(recipient, program_id, amount, inclusion_height,
+	    expiry_height, memo, envelope, sequence, false);
+}
+
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+bool WalletState::create_onyx_authenticated_invalid_proof_token_issuance(
+    const std::array<uint8_t, 91> &recipient, const std::array<uint8_t, 32> &program_id,
+    Amount amount, Height inclusion_height, Height expiry_height, const BinaryArray &memo,
+    BinaryArray *envelope, uint64_t *sequence) const {
+	return create_onyx_token_issuance_impl(recipient, program_id, amount, inclusion_height,
+	    expiry_height, memo, envelope, sequence, true);
+}
+#endif
+
+bool WalletState::create_onyx_token_issuance_impl(const std::array<uint8_t, 91> &recipient,
+    const std::array<uint8_t, 32> &program_id, Amount amount, Height inclusion_height,
+    Height expiry_height, const BinaryArray &memo, BinaryArray *envelope, uint64_t *sequence,
+    bool authenticated_invalid_proof) const {
 #ifdef onyx_USE_ZK
 	if (m_onyx_wallet_snapshot.empty() || m_wallet.get_onyx_seed() == Hash{} || envelope == nullptr ||
 	    sequence == nullptr)
@@ -532,10 +550,18 @@ bool WalletState::create_onyx_token_issuance(const std::array<uint8_t, 91> &reci
 	}
 	std::array<uint8_t, 32> seed{};
 	std::copy(m_wallet.get_onyx_seed().data, m_wallet.get_onyx_seed().data + seed.size(), seed.begin());
+#ifdef BYTECOIN_ONYX_INVALID_PROOF_TESTS
+	if (authenticated_invalid_proof)
+		return zk::Halo2ProofSystem::wallet_create_authenticated_invalid_proof_token_issuance(
+		    m_onyx_wallet_snapshot, seed, recipient, program_id, amount, inclusion_height,
+		    expiry_height, memo, parameters::ONYX_TOKEN_CIRCUIT_K, envelope, sequence);
+#endif
+	(void)authenticated_invalid_proof;
 	return zk::Halo2ProofSystem::wallet_create_token_issuance(m_onyx_wallet_snapshot, seed,
 	    recipient, program_id, amount, inclusion_height, expiry_height, memo,
 	    parameters::ONYX_TOKEN_CIRCUIT_K, envelope, sequence);
 #else
+	(void)authenticated_invalid_proof;
 	return false;
 #endif
 }

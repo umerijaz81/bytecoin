@@ -28,6 +28,7 @@ FORBIDDEN_MARKERS = (
     b"qualification_invalid_proof",
     b"onyx_wallet_create_authenticated_invalid_proof_transfer",
     b"onyx_wallet_create_authenticated_invalid_proof_program_deployment",
+    b"onyx_wallet_create_authenticated_invalid_proof_token_issuance",
     b"onyx_wallet_create_authenticated_invalid_proof_bridge",
 )
 

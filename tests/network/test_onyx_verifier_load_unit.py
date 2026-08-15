@@ -78,6 +78,35 @@ class OnyxVerifierLoadUnitTests(unittest.TestCase):
         self.assertFalse(bounded(1, 3))
         self.assertFalse(bounded(3, 3))
 
+    def test_supply_oracle_requires_exact_registry_bearing_state(self):
+        audit = {
+            "total_bridged": 742000,
+            "total_fees": 100002,
+            "circulating_supply": 641998,
+            "commitment_count": 4,
+            "program_count": 1,
+            "commitment_root": "ab" * 32,
+        }
+        expected = {
+            "total_bridged": 742000,
+            "total_fees": 100002,
+            "circulating_supply": 641998,
+            "commitment_count": 4,
+            "program_count": 1,
+        }
+        self.assertTrue(
+            PROCESS.supply_audits_match_expected(audit, dict(audit), **expected)
+        )
+        for field in expected:
+            changed = dict(audit)
+            changed[field] += 1
+            self.assertFalse(
+                PROCESS.supply_audits_match_expected(audit, changed, **expected)
+            )
+            self.assertFalse(
+                PROCESS.supply_audits_match_expected(changed, changed, **expected)
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

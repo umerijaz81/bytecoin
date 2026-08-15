@@ -3233,8 +3233,8 @@ pub extern "C" fn onyx_wallet_finalize_bridge(
     })
 }
 
-#[no_mangle]
-pub extern "C" fn onyx_wallet_create_token_issuance(
+#[allow(clippy::too_many_arguments)]
+fn wallet_create_token_issuance_impl(
     wallet_snapshot: *const u8,
     wallet_snapshot_len: usize,
     seed: *const u8,
@@ -3249,6 +3249,7 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
     issuance_out: *mut *mut u8,
     issuance_len_out: *mut usize,
     sequence_out: *mut u64,
+    authenticated_invalid_proof: bool,
 ) -> i32 {
     ffi_i32(|| {
         if issuance_out.is_null() || issuance_len_out.is_null() || sequence_out.is_null() {
@@ -3338,32 +3339,65 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
         {
             return -8;
         }
-        let issuance = match wallet::build_token_issuance(
-            &issuer,
-            &address,
-            wallet.root(),
-            program_id,
-            sequence,
-            issued_amount,
-            expiry_height,
-            if memo_len == 0 {
-                vec![]
-            } else {
-                unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
-            },
-            circuit_k,
-        ) {
+        let memo = if memo_len == 0 {
+            vec![]
+        } else {
+            unsafe { slice::from_raw_parts(memo, memo_len) }.to_vec()
+        };
+        #[cfg(feature = "qualification-fixtures")]
+        let issuance_result = if authenticated_invalid_proof {
+            wallet::build_authenticated_invalid_proof_token_issuance(
+                &issuer,
+                &address,
+                wallet.root(),
+                program_id,
+                sequence,
+                issued_amount,
+                expiry_height,
+                memo,
+                circuit_k,
+            )
+        } else {
+            wallet::build_token_issuance(
+                &issuer,
+                &address,
+                wallet.root(),
+                program_id,
+                sequence,
+                issued_amount,
+                expiry_height,
+                memo,
+                circuit_k,
+            )
+        };
+        #[cfg(not(feature = "qualification-fixtures"))]
+        let issuance_result = {
+            let _ = authenticated_invalid_proof;
+            wallet::build_token_issuance(
+                &issuer,
+                &address,
+                wallet.root(),
+                program_id,
+                sequence,
+                issued_amount,
+                expiry_height,
+                memo,
+                circuit_k,
+            )
+        };
+        let issuance = match issuance_result {
             Ok(issuance) => issuance,
             Err(_) => return -2,
         };
-        if verify_token_issuance_dispatch(
-            &issuance,
-            32,
-            circuit_k,
-            Some(wallet.program_registry()),
-            inclusion_height,
-        )
-        .is_err()
+        if !authenticated_invalid_proof
+            && verify_token_issuance_dispatch(
+                &issuance,
+                32,
+                circuit_k,
+                Some(wallet.program_registry()),
+                inclusion_height,
+            )
+            .is_err()
         {
             return -2;
         }
@@ -3379,6 +3413,79 @@ pub extern "C" fn onyx_wallet_create_token_issuance(
         }
         1
     })
+}
+
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_token_issuance(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    program_id: *const u8,
+    issued_amount: u64,
+    inclusion_height: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    issuance_out: *mut *mut u8,
+    issuance_len_out: *mut usize,
+    sequence_out: *mut u64,
+) -> i32 {
+    wallet_create_token_issuance_impl(
+        wallet_snapshot,
+        wallet_snapshot_len,
+        seed,
+        recipient,
+        program_id,
+        issued_amount,
+        inclusion_height,
+        expiry_height,
+        memo,
+        memo_len,
+        circuit_k,
+        issuance_out,
+        issuance_len_out,
+        sequence_out,
+        false,
+    )
+}
+
+#[cfg(feature = "qualification-fixtures")]
+#[no_mangle]
+pub extern "C" fn onyx_wallet_create_authenticated_invalid_proof_token_issuance(
+    wallet_snapshot: *const u8,
+    wallet_snapshot_len: usize,
+    seed: *const u8,
+    recipient: *const u8,
+    program_id: *const u8,
+    issued_amount: u64,
+    inclusion_height: u64,
+    expiry_height: u64,
+    memo: *const u8,
+    memo_len: usize,
+    circuit_k: u32,
+    issuance_out: *mut *mut u8,
+    issuance_len_out: *mut usize,
+    sequence_out: *mut u64,
+) -> i32 {
+    wallet_create_token_issuance_impl(
+        wallet_snapshot,
+        wallet_snapshot_len,
+        seed,
+        recipient,
+        program_id,
+        issued_amount,
+        inclusion_height,
+        expiry_height,
+        memo,
+        memo_len,
+        circuit_k,
+        issuance_out,
+        issuance_len_out,
+        sequence_out,
+        true,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

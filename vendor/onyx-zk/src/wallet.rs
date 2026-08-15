@@ -315,6 +315,59 @@ pub fn build_token_issuance(
     memo: Vec<u8>,
     circuit_k: u32,
 ) -> Result<AuthorizedTokenIssuance, WalletBuildError> {
+    build_token_issuance_impl(
+        issuer,
+        recipient,
+        anchor,
+        program_id,
+        sequence,
+        issued_amount,
+        expiry_height,
+        memo,
+        circuit_k,
+        false,
+    )
+}
+
+#[cfg(feature = "qualification-fixtures")]
+pub fn build_authenticated_invalid_proof_token_issuance(
+    issuer: &KeyBundle,
+    recipient: &RecipientAddress,
+    anchor: CanonicalField,
+    program_id: [u8; 32],
+    sequence: u64,
+    issued_amount: u64,
+    expiry_height: u64,
+    memo: Vec<u8>,
+    circuit_k: u32,
+) -> Result<AuthorizedTokenIssuance, WalletBuildError> {
+    build_token_issuance_impl(
+        issuer,
+        recipient,
+        anchor,
+        program_id,
+        sequence,
+        issued_amount,
+        expiry_height,
+        memo,
+        circuit_k,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_token_issuance_impl(
+    issuer: &KeyBundle,
+    recipient: &RecipientAddress,
+    anchor: CanonicalField,
+    program_id: [u8; 32],
+    sequence: u64,
+    issued_amount: u64,
+    expiry_height: u64,
+    memo: Vec<u8>,
+    circuit_k: u32,
+    invalidate_proof: bool,
+) -> Result<AuthorizedTokenIssuance, WalletBuildError> {
     if issued_amount == 0
         || recipient.network_id
             != issuer
@@ -391,6 +444,18 @@ pub fn build_token_issuance(
         program_id,
     )
     .map_err(|_| WalletBuildError::Crypto)?;
+    #[cfg(feature = "qualification-fixtures")]
+    let mut proof = proof;
+    #[cfg(feature = "qualification-fixtures")]
+    if invalidate_proof {
+        // Both issuance authorization signatures cover these exact proof bytes. Corrupt the
+        // completed transcript first so registry/issuer/binding authentication succeeds while the
+        // authoritative Halo2 verifier rejects the fixture.
+        let last = proof.last_mut().ok_or(WalletBuildError::Crypto)?;
+        *last ^= 0x01;
+    }
+    #[cfg(not(feature = "qualification-fixtures"))]
+    let _ = invalidate_proof;
     let binding_signature = sign_binding_authorization(
         &preimage,
         TOKEN_PROGRAM_BACKEND,
@@ -1963,6 +2028,60 @@ mod tests {
         crate::authorization::verify_authorized_transaction(&transaction).unwrap();
         assert!(
             crate::proof::verify_authorized_multi_transfer::<DEPTH, 1, 2>(K, &transaction).is_err()
+        );
+    }
+
+    #[cfg(feature = "qualification-fixtures")]
+    #[test]
+    fn invalid_token_issuance_fixture_preserves_registry_authorization_but_fails_halo2() {
+        const DEPTH: usize = 2;
+        const K: u32 = 14;
+        let network = [34; NETWORK_ID_BYTES];
+        let issuer = MasterSeed::new([75; 32]).derive(network).unwrap();
+        let recipient = issuer.address(1).unwrap();
+        let policy = crate::token_program::TokenIssuancePolicy {
+            issuer: issuer.address(0).unwrap().spend_authority_key,
+            max_supply: 100,
+            metadata: b"symbol=QAI;decimals=2".to_vec(),
+        };
+        let entry = standard_token_program::<DEPTH>(K, &policy.encode().unwrap(), 1, None).unwrap();
+        let program_id = entry.id().unwrap();
+        let mut wallet = WalletState::<DEPTH>::new(network);
+        wallet.register_program(entry).unwrap();
+
+        let issuance = build_authenticated_invalid_proof_token_issuance(
+            &issuer,
+            &recipient,
+            wallet.root(),
+            program_id,
+            0,
+            25,
+            20,
+            b"qualification only".to_vec(),
+            K,
+        )
+        .unwrap();
+
+        assert_eq!(
+            crate::token_issuance::authenticate_token_issuance::<DEPTH>(
+                K,
+                &issuance,
+                wallet.program_registry(),
+                1,
+            )
+            .unwrap(),
+            100
+        );
+        assert!(crate::token_issuance::verify_token_issuance::<DEPTH, 1>(
+            K,
+            &issuance,
+            wallet.program_registry(),
+            1,
+        )
+        .is_err());
+        assert_eq!(
+            AuthorizedTokenIssuance::decode(&issuance.encode().unwrap()).unwrap(),
+            issuance
         );
     }
 
