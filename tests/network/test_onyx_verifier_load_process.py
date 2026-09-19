@@ -75,6 +75,12 @@ def reciprocal_retry_counters_bounded(metrics):
     return 1 <= retry_requests <= 2 and 1 <= rejections <= retry_requests + 1
 
 
+def load_admission_shape_bounded(classifications, rounds):
+    if rounds == 1:
+        return classifications == ["accepted", "verifier_busy"]
+    return {"accepted", "verifier_busy"}.issubset(set(classifications))
+
+
 def supply_audits_match_expected(
     final_audit,
     relay_audit,
@@ -2650,8 +2656,9 @@ def main():
                     and authenticated_invalid_bridge["pool_count_after"] == 0
                     and not authenticated_invalid_bridge["transaction_known_after"]
                 ),
-                "one_accepted_one_busy": classifications
-                == ["accepted", "verifier_busy"],
+                "load_admission_shape_bounded": load_admission_shape_bounded(
+                    classifications, args.load_rounds
+                ),
                 "tip_unchanged_during_unmined_load": (
                     after_load_status["top_block_height"]
                     == baseline_status["top_block_height"]

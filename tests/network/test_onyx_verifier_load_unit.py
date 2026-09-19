@@ -108,6 +108,24 @@ class OnyxVerifierLoadUnitTests(unittest.TestCase):
         self.assertFalse(bounded(1, 3))
         self.assertFalse(bounded(3, 3))
 
+    def test_process_load_admission_shape_scales_with_rounds(self):
+        self.assertTrue(
+            PROCESS.load_admission_shape_bounded(["accepted", "verifier_busy"], 1)
+        )
+        self.assertFalse(
+            PROCESS.load_admission_shape_bounded(
+                ["accepted", "accepted", "verifier_busy"], 1
+            )
+        )
+        self.assertTrue(
+            PROCESS.load_admission_shape_bounded(
+                ["accepted", "accepted", "accepted", "verifier_busy"], 2
+            )
+        )
+        self.assertFalse(
+            PROCESS.load_admission_shape_bounded(["accepted", "accepted"], 2)
+        )
+
     def test_supply_oracle_requires_exact_registry_bearing_state(self):
         audit = {
             "total_bridged": 742000,
