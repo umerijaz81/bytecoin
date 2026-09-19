@@ -53,6 +53,7 @@ SCHEMA = "bytecoin-onyx-verifier-load-process-v1"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOAD_TOOL = ROOT / "tools" / "onyx_verifier_load.py"
 MAX_PENDING_TRANSFER_CONFLICT_SECONDS = 30.0
+MAX_PENDING_PROGRAM_CONFLICT_SECONDS = 30.0
 INVALID_PROOF_ATTEMPTS = 3
 INVALID_DEPLOYMENT_PROOF_ATTEMPTS = 2
 INVALID_BRIDGE_PROOF_ATTEMPTS = 2
@@ -757,6 +758,45 @@ def main():
                     "qualification_invalid_proof": True,
                 },
             )
+            competing_nft_application = (
+                bytes((1, 1))
+                + collection_id
+                + token_id
+                + bytes((33, 2))
+            ).hex()
+            competing_next_state = "8603" + "00" * 30
+            valid_standard_call = receiver_wallet.call(
+                "create_onyx_standard_program_call",
+                {
+                    "program_id": standard_deployment["program_id"],
+                    "valid_from_height": 0,
+                    "expiry_height": 0,
+                    "application": nft_application,
+                    "prior_state": prior_state,
+                    "next_state": next_state,
+                    "witness": owner_witness,
+                },
+            )
+            conflicting_standard_call = source_wallet.call(
+                "create_onyx_standard_program_call",
+                {
+                    "program_id": standard_deployment["program_id"],
+                    "valid_from_height": 0,
+                    "expiry_height": 0,
+                    "application": competing_nft_application,
+                    "prior_state": prior_state,
+                    "next_state": competing_next_state,
+                    "witness": owner_witness,
+                },
+            )
+            if len(
+                {
+                    invalid_standard_call["transaction_hash"],
+                    valid_standard_call["transaction_hash"],
+                    conflicting_standard_call["transaction_hash"],
+                }
+            ) != 3:
+                raise RuntimeError("standard-program call fixtures were not distinct")
 
             # Construct every later source-wallet sibling before the rejected call so the full
             # campaign's expensive proof fixtures are fixed against this exact chain tip.
@@ -892,6 +932,107 @@ def main():
                     "authenticated invalid standard-program call did not reach and cleanly "
                     "leave the verifier without changing program or wallet state: "
                     f"{authenticated_invalid_standard_call!r}"
+                )
+
+            rpc_call(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": valid_standard_call["binary_transaction"]},
+            )
+            wait_until(
+                "primary standard-program call admission",
+                lambda: transaction_known(node, valid_standard_call["transaction_hash"])
+                and node.statistics().get("transaction_pool_count", 0) == 1,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=args.rpc_timeout,
+            )
+            program_conflict_before = node.statistics()
+            program_conflict_started = time.monotonic()
+            program_conflict_response = rpc_response(
+                rpc_port,
+                "send_transaction",
+                {"binary_transaction": conflicting_standard_call["binary_transaction"]},
+            )
+            program_conflict_elapsed = time.monotonic() - program_conflict_started
+            program_conflict_after = node.statistics()
+            authenticated_program_state_conflict = {
+                "primary_transaction_hash": valid_standard_call["transaction_hash"],
+                "conflicting_transaction_hash": conflicting_standard_call[
+                    "transaction_hash"
+                ],
+                "elapsed_seconds": round(program_conflict_elapsed, 6),
+                "response": program_conflict_response,
+                "verifier_acquired_before": program_conflict_before.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "verifier_acquired_after": program_conflict_after.get(
+                    "onyx_verifier_acquired", 0
+                ),
+                "precheck_conflicts_before": program_conflict_before.get(
+                    "onyx_verifier_precheck_conflicts", 0
+                ),
+                "precheck_conflicts_after": program_conflict_after.get(
+                    "onyx_verifier_precheck_conflicts", 0
+                ),
+                "pool_count_after": program_conflict_after.get(
+                    "transaction_pool_count", 0
+                ),
+                "primary_known_after": transaction_known(
+                    node, valid_standard_call["transaction_hash"]
+                ),
+                "conflict_known_after": transaction_known(
+                    node, conflicting_standard_call["transaction_hash"]
+                ),
+            }
+            if (
+                program_conflict_elapsed > MAX_PENDING_PROGRAM_CONFLICT_SECONDS
+                or authenticated_program_state_conflict["verifier_acquired_after"]
+                != authenticated_program_state_conflict["verifier_acquired_before"]
+                or authenticated_program_state_conflict["precheck_conflicts_after"]
+                != authenticated_program_state_conflict["precheck_conflicts_before"] + 1
+                or authenticated_program_state_conflict["pool_count_after"] != 1
+                or not authenticated_program_state_conflict["primary_known_after"]
+                or authenticated_program_state_conflict["conflict_known_after"]
+            ):
+                raise RuntimeError(
+                    "independent-nullifier standard-program state conflict did not skip the "
+                    f"verifier exactly: {authenticated_program_state_conflict!r}"
+                )
+
+            mine_blocks(
+                minerd,
+                root,
+                "load-standard-program-call-confirmation",
+                rpc_port,
+                MINING_ADDRESS_A,
+                1,
+                timeout=args.rpc_timeout,
+            )
+            funded_height += 1
+            wait_until(
+                "standard-program call state and wallet convergence",
+                lambda: node.status()["top_block_height"] >= funded_height
+                and relay_node.status()["top_block_height"] >= funded_height
+                and source_wallet.status()["top_block_height"] >= funded_height
+                and receiver_wallet.status()["top_block_height"] >= funded_height
+                and receiver_wallet.call("get_onyx_status")["balance"]
+                == standard_wallet_balance,
+                nodes + [source_wallet, receiver_wallet],
+                timeout=1800,
+            )
+            standard_states_confirmed = [
+                rpc_call(port, "get_onyx_standard_program_state", standard_state_request)
+                for port in (rpc_port, relay_rpc_port)
+            ]
+            if standard_states_confirmed[1] != standard_states_confirmed[0] or any(
+                not state.get("found")
+                or state.get("state") != next_state
+                or state.get("block_height") != funded_height
+                for state in standard_states_confirmed
+            ):
+                raise RuntimeError(
+                    "accepted standard-program state did not converge exactly: "
+                    f"{standard_states_confirmed!r}"
                 )
 
             transaction_paths = []
@@ -2274,7 +2415,7 @@ def main():
                     + transfer_fee
                 ),
                 circulating_supply=standard_wallet_balance + transfer_amount,
-                commitment_count=7,
+                commitment_count=8,
                 program_count=2,
             )
             checks = {
@@ -2446,6 +2587,28 @@ def main():
                     and authenticated_invalid_standard_call["wallet_balance_after"]
                     == authenticated_invalid_standard_call["wallet_balance_before"]
                 ),
+                "authenticated_program_state_conflict_skipped_verifier": (
+                    authenticated_program_state_conflict["elapsed_seconds"]
+                    <= MAX_PENDING_PROGRAM_CONFLICT_SECONDS
+                    and authenticated_program_state_conflict[
+                        "verifier_acquired_after"
+                    ]
+                    == authenticated_program_state_conflict[
+                        "verifier_acquired_before"
+                    ]
+                    and authenticated_program_state_conflict[
+                        "precheck_conflicts_after"
+                    ]
+                    == authenticated_program_state_conflict[
+                        "precheck_conflicts_before"
+                    ]
+                    + 1
+                    and authenticated_program_state_conflict["pool_count_after"] == 1
+                    and authenticated_program_state_conflict["primary_known_after"]
+                    and not authenticated_program_state_conflict[
+                        "conflict_known_after"
+                    ]
+                ),
                 "authenticated_invalid_bridge_reached_verifier_without_admission": (
                     all(
                         "error" in response
@@ -2513,6 +2676,7 @@ def main():
                 "authenticated_invalid_deployment": authenticated_invalid_deployment,
                 "authenticated_invalid_issuance": authenticated_invalid_issuance,
                 "authenticated_invalid_standard_call": authenticated_invalid_standard_call,
+                "authenticated_program_state_conflict": authenticated_program_state_conflict,
                 "authenticated_invalid_bridge": authenticated_invalid_bridge,
                 "graceful_shutdown": graceful_shutdown,
                 "stale_chain_completion": stale_chain_completion,

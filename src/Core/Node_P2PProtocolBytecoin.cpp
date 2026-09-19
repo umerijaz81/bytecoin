@@ -258,6 +258,12 @@ void Node::P2PProtocolBytecoin::transaction_download_finished(const Hash &tid, b
 	auto tit = m_transaction_descs.find(tid);
 	if (tit == m_transaction_descs.end())
 		return;
+	// Another source may finish while our GetObjects request is still in flight. Keep
+	// its descriptor until the response (or disconnect) releases our download slot.
+	// Erasing it here would leave m_downloading_transaction_count unaccounted for.
+	auto active = m_node->downloading_transactions.find(tid);
+	if (active != m_node->downloading_transactions.end() && active->second == this)
+		return;
 	if (!success && m_node->m_onyx_verifier_retry_cooldown.is_deferred(tid)) {
 		m_transaction_descs.erase(tit);
 		m_stem_transaction_hops.erase(tid);
@@ -526,6 +532,21 @@ void Node::P2PProtocolBytecoin::on_msg_notify_request_objects(p2p::GetObjects::R
 		invariant(tit != m_transaction_descs.end(), "");
 		if (tit->second.size != btx.size())
 			return disconnect("Lied about transcation size");
+		// A competing source can have completed this same download while this response
+		// was in flight. Do not spend another verifier permit on a known transaction.
+		if (m_node->m_block_chain.get_memory_state_transactions().count(tid) != 0 ||
+		    m_node->m_block_chain.has_transaction(tid)) {
+			m_node->downloading_transactions.erase(cit);
+			m_transaction_descs.erase(tit);
+			m_stem_transaction_hops.erase(tid);
+			invariant(m_downloading_transaction_count > 0, "");
+			m_downloading_transaction_count -= 1;
+			if (m_downloading_transaction_count != 0)
+				m_download_transactions_timer.once(m_node->m_config.download_transaction_timeout);
+			else
+				m_download_transactions_timer.cancel();
+			return;
+		}
 		bool retryable_verifier_overload = false;
 		if (m_node->m_block_chain.in_chain(tit->second.newest_referenced_block)) {
 			Height newest_referenced_height = 0;
@@ -688,7 +709,7 @@ void Node::P2PProtocolBytecoin::on_disconnect(const std::string &ban_reason) {
 	m_syncpool_timer.cancel();
 	for (auto const &cit : m_transaction_descs) {
 		auto tit = m_node->downloading_transactions.find(cit.first);
-		if (tit->second == this) {
+		if (tit != m_node->downloading_transactions.end() && tit->second == this) {
 			tit = m_node->downloading_transactions.erase(tit);
 			m_downloading_transaction_count -= 1;
 		}
