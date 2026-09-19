@@ -1576,11 +1576,155 @@ Freeze one commit only after repository work passes. Then complete the external 
 order. Any code change after freeze creates a new candidate revision and invalidates revision-bound
 evidence that no longer applies.
 
-## 17. Validation command matrix
+## 17. Updated completion plan — 2026-09-13
+
+This section supersedes the older ordering in section 16 when choosing the next repository task. The
+last fully published baseline is `e955f90`; do not describe later working-tree changes as complete
+until their focused and full qualification reports pass, their documentation is updated, and their
+scoped commits are pushed. Preserve the user-owned `.gitignore` modification and staged
+`Bytecoin_Onyx_Security_Review.md` throughout.
+
+### Phase A — authenticated standard-program conflict qualification
+
+Current state: **implemented in `06e55bc` and locally qualified by the pre-commit working-tree
+campaign; documentation update pending commit**.
+The first full run exposed a separate P2P transaction-download ownership bug: a competing source's
+completion could erase an active downloader's descriptor without releasing its counted slot, causing
+an invariant failure on relay-node disconnect. The candidate fix in
+`src/Core/Node_P2PProtocolBytecoin.cpp` retains the descriptor while the body is in flight, avoids
+re-verifying a now-known response, and guards disconnect cleanup. The rerun
+`working-tree-program-conflict-download-fix` passed all 22 checks and produced
+`build/codex-invalid-proof/onyx-verifier-load-working-tree-program-conflict-download-fix.json`
+with SHA-256 `ebe537d29c0b89d1f76711b5145e3d0a16c4d909654a10b6176062d7537e18df`. Its raw load
+report SHA-256 is `b68b6308279a787da39ebbd2e599afd20d3eb81de7aae4817e37137364c4008b`.
+
+Scope:
+
+- `tests/network/test_onyx_verifier_load_process.py`
+- `src/Core/Node_P2PProtocolBytecoin.cpp`
+- `docs/Onyx-Qualification-Network.md`
+- this guide and the Jade/Onyx status documents
+
+Required result:
+
+1. Construct two independently authorized NFT calls from distinct notes and nullifiers that target
+   the same stable state key but commit to different next states.
+2. Admit the primary call, submit the sibling through the asynchronous RPC path, and prove the
+   sibling never enters the pool.
+3. Prove the proof-free conflict counter increments exactly once while verifier permit acquisitions
+   do not increase, demonstrating rejection before expensive proof verification.
+4. Mine the primary call and prove identical program state, supply, fee, commitment and nullifier
+   views on all qualification nodes.
+5. Retain the revision-bound JSON report and record its SHA-256 in the documentation.
+
+Remaining exit criterion: commit the documentation update without the user-owned files, rerun the
+focused checks, optionally rerun the full process campaign against the committed revision if a fresh
+post-commit artifact is required, and push.
+
+### Phase B — sustained verifier scheduling, fairness, and resource ceilings
+
+Primary files:
+
+- `tools/onyx_verifier_load.py`
+- `tests/test_onyx_verifier_load.py`
+- `tests/network/test_onyx_verifier_load_process.py`
+- verifier scheduler/statistics code under `src/`
+
+Deliverables:
+
+1. Add configurable repeated cold and warm campaigns for every activated circuit/profile.
+2. Exercise multiple distinct proof hashes from more than two independent sources over RPC and P2P,
+   including valid, invalid, duplicate, state-conflicting, abandoned and slow-download traffic.
+3. Record latency distributions, verifier acquisitions/rejections, per-source fairness, cache
+   hit/miss/size, active and peak verifiers, CPU, RSS/peak RSS, disk growth and ordinary chain/wallet
+   progress.
+4. Add deterministic assertions for bounded queues, bounded caches, no starvation, no admission
+   bypass, no uncontrolled memory growth and exact final consensus state.
+5. Separate named-hardware observations from portable invariants. Do not invent release thresholds;
+   derive candidate limits from recorded variance and keep reports labelled non-release evidence.
+
+Exit criterion: unit tests and the three-node campaign pass for cold/warm, sequential, parallel and
+mixed-ingress modes, with an atomic revision-bound report and documented safe local limits.
+
+### Phase C — rollback, persistence, corruption, and incident rehearsal automation
+
+Primary files:
+
+- SQLite/state tests referenced by `docs/Onyx-Qualification-Network.md`
+- `tests/network/test_onyx_qualification_process.py`
+- `tools/release/` evidence schemas and validators
+- `docs/Incident-Response.md`
+
+Deliverables:
+
+1. Compose the existing apply/undo, reopen, WAL, checkpoint, disk-full, write/sync fault and daemon
+   crash cases into one restartable campaign runner.
+2. Cover bridge, native transfer and every activated standard program across partition, competing
+   branch, reorganization, rollback, restart and recovery boundaries.
+3. Snapshot independently calculated supply and state roots before and after each boundary; retain
+   chronological logs, block hashes, database digests and resource samples.
+4. Produce and validate a local incident-evidence bundle, then reproduce it from a clean directory.
+   Local actors must remain explicitly marked as non-independent.
+
+Exit criterion: deterministic recovery or fail-closed behavior for every injected boundary, exact
+supply/state convergence, minimized failure artifacts, and schema-valid local rehearsal evidence.
+
+### Phase D — historical, privacy-network, PoW, and platform matrices
+
+Deliverables:
+
+1. Acquire released historical Bytecoin binaries from authenticated, digest-pinned provenance and
+   run the V4 compatibility/upgrade matrix for Dandelion++, P2P framing and the RandomX/Onyx
+   activation boundary.
+2. Run real Tor and I2P daemons in isolated multi-node tests covering restart, authentication
+   failure, referral poisoning, timeout, disconnect and peer-database recovery. Capture traffic on
+   Linux, Windows and macOS and assert no direct fallback or DNS leak.
+3. Run long Dandelion++ partition/churn/eclipse/timing campaigns and fix the recovered-wallet height
+   race only after reproducing it.
+4. Measure RandomX startup, steady throughput, memory and power on named native x86-64 and ARM64
+   hosts, including seed epochs, partitions, reorganizations and restarts.
+5. Execute clean-clone builds/tests on Linux x86-64, macOS ARM64 and Windows x86-64 and retain exact
+   environment manifests.
+
+Exit criterion: every matrix cell has a revision- and environment-bound report or an explicit,
+truthful unavailable reason. Emulator-only evidence must never be labelled real Tor/I2P evidence.
+
+### Phase E — sustained fuzzing and release-candidate assembly
+
+Deliverables:
+
+1. Run sustained sanitizer/coverage campaigns for envelopes, proof inputs, RPC, compiler parser/type
+   checker/IR/backend, snapshots, Dandelion and persistence boundaries; record corpus digests,
+   duration, coverage, crashes and minimized reproducers.
+2. Resolve every compiler warning, sanitizer failure and hosted-CI regression without weakening an
+   assertion or silently excluding a target.
+3. From a clean frozen commit, generate source archive, dependency lock verification, checksums,
+   SPDX SBOMs, provenance and typed qualification evidence with `tools/release/`.
+4. Rebuild all supported targets in two clean local environments where available and verify archive,
+   evidence, SBOM and binary digests. Keep these results local until genuinely independent builders
+   attest them.
+
+Exit criterion: the frozen candidate is clean, all repository tests/workflows pass, all generated
+materials validate from scratch, and no known critical/high defect or unexplained test interruption
+remains.
+
+### Phase F — external release gates (coordination required; not locally completable)
+
+After Phase E freezes one exact revision, external operators must complete the gates in section 15:
+two independent audits, two independent builders per supported platform, a three-operator public
+14-day/10,000-block soak, an observed incident drill, and governance approval. Any source change
+creates a new candidate and invalidates evidence that is revision-bound to the old candidate.
+
+Repository work is complete only when Phases A through E pass. Release readiness is complete only
+when Phase F evidence also passes the strict release verifier. An AI must never convert a pending
+external gate into a passing JSON document without the named actors, elapsed time and independently
+verifiable artifacts.
+
+## 18. Validation command matrix
 
 Use separate build directories. Adjust executable layout for the chosen CMake generator.
 
-### 17.1 Preliminary integrity
+### 18.1 Preliminary integrity
 
 ```powershell
 git status --short --branch
@@ -1589,7 +1733,7 @@ python -m py_compile tests\network\test_onyx_qualification_process.py
 python tools\release\verify_dependencies.py
 ```
 
-### 17.2 ZK-enabled C++
+### 18.2 ZK-enabled C++
 
 ```powershell
 cmake -S . -B build-onyx -DONYX_ZK=ON
@@ -1601,7 +1745,7 @@ cmake --build build-onyx --config Release --target tests bytecoind walletd miner
 Do not report the full `--zk` suite as passing unless it reaches its final success exit. Record the
 last completed stage and timeout/interrupt separately if it is bounded.
 
-### 17.3 Non-ZK C++
+### 18.3 Non-ZK C++
 
 ```powershell
 cmake -S . -B build-nozk -DONYX_ZK=OFF
@@ -1612,7 +1756,7 @@ cmake --build build-nozk --config Release --target tests bytecoind walletd miner
 
 The final command must refuse before opening a qualification database or network connection.
 
-### 17.4 Rust proof backend
+### 18.4 Rust proof backend
 
 ```powershell
 cargo check --release --locked --offline --manifest-path vendor\onyx-zk\Cargo.toml
@@ -1622,7 +1766,7 @@ cargo test --release --locked --offline --manifest-path vendor\onyx-zk\Cargo.tom
 Use a focused test filter during iteration, but run the full locked/offline suite before accepting a
 cryptographic milestone.
 
-### 17.5 Local three-node process qualification
+### 18.5 Local three-node process qualification
 
 ```powershell
 python tests\network\test_onyx_qualification_process.py `
@@ -1633,7 +1777,7 @@ python tests\network\test_onyx_qualification_process.py `
   --report build-onyx\onyx-qualification.json
 ```
 
-### 17.6 Compiler and SDKs
+### 18.6 Compiler and SDKs
 
 ```powershell
 python -m unittest discover -s tests\onyx_compiler -p "test_*.py"
@@ -1644,7 +1788,7 @@ cargo test --locked --offline --manifest-path sdk\onyx\rust\Cargo.toml
 
 Read each SDK README for packaging verification in addition to unit tests.
 
-### 17.7 Release tooling
+### 18.7 Release tooling
 
 ```powershell
 python -m unittest discover -s tests\release -p "test_*.py"
@@ -1656,7 +1800,7 @@ python tools\release\verify_release_gates.py
 Expected incompleteness is success only when the verifier rejects missing evidence for the correct
 reason; a crash or acceptance of placeholders is a failure.
 
-### 17.8 Fuzzing/sanitizers
+### 18.8 Fuzzing/sanitizers
 
 Follow `docs/Onyx-Fuzzing.md` exactly. A typical Linux configuration is:
 
@@ -1666,7 +1810,7 @@ cmake -S . -B build-fuzz -DSANITIZE=fuzzer,address,undefined -DONYX_ZK=ON
 
 Store campaign metadata outside release evidence until an independent operator attests it.
 
-## 18. Rules another AI must not weaken
+## 19. Rules another AI must not weaken
 
 Another AI or developer must not:
 
@@ -1687,7 +1831,7 @@ Another AI or developer must not:
 - Claim this project is unbreakable, foolproof, fully trustless, audited, or production-ready before
   the evidence supports that wording.
 
-## 19. Suggested task template for another AI tool
+## 20. Suggested task template for another AI tool
 
 Give the AI one bounded milestone at a time. A useful prompt structure is:
 
@@ -1718,7 +1862,7 @@ Recommended task sizes:
 Avoid a single prompt such as “finish the entire cryptocurrency”; it makes security boundaries,
 review, test evidence, and regressions difficult to track.
 
-## 20. Definition of done
+## 21. Definition of done
 
 The full project is done only when all of the following are true for one frozen revision:
 

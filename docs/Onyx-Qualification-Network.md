@@ -425,6 +425,27 @@ canonical decode and authorization plus precheck eligibility before full-proof r
 bounded local evidence; sustained program-call floods and authenticated state-conflict load remain
 open.
 
+Commit `06e55bc` extends the same process harness with an independently funded, independently
+nullified pinned-NFT state conflict. The working-tree campaign
+`working-tree-program-conflict-download-fix` admits one valid standard-program call, submits a second
+valid call that targets the same stable state key with a different next state, and proves the sibling
+is rejected by the authenticated state precheck before acquiring another verifier permit. The
+conflict returns in 0.015 seconds, leaves the pool at one transaction, increments
+`onyx_verifier_precheck_conflicts` exactly once, keeps verifier acquisitions at 11, mines the primary
+call, and converges both qualification nodes at height 10 with 742,000 bridged, 200,003 fees, 541,997
+circulating, eight commitments, and two programs. All 22 campaign checks pass. The report is
+`build/codex-invalid-proof/onyx-verifier-load-working-tree-program-conflict-download-fix.json` with
+SHA-256 `ebe537d29c0b89d1f76711b5145e3d0a16c4d909654a10b6176062d7537e18df`; the raw load report
+SHA-256 is `b68b6308279a787da39ebbd2e599afd20d3eb81de7aae4817e37137364c4008b`.
+
+That campaign also reproduced and fixed a P2P transaction-download ownership bug outside consensus
+validation. If a competing source completed a transaction while another peer's `GetObjects` body was
+still in flight, `transaction_download_finished` could erase the active peer's descriptor without
+releasing its `m_downloading_transaction_count` slot, causing a disconnect invariant failure. The
+candidate fix keeps an active downloader descriptor until its response or disconnect releases the
+slot, avoids spending a second verifier permit for a transaction already in the pool or chain, and
+guards disconnect cleanup when global ownership has already moved.
+
 Deployment admission likewise verifies funding authorization and reconstructs the pinned manifest's
 canonical program ID before early pool-conflict checks. Eligible deployments still run the complete
 stateful proof/application once and must reproduce the authenticated fee and program ID. The focused

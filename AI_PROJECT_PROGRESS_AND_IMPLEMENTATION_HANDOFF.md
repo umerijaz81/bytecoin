@@ -1,9 +1,9 @@
 # Bytecoin Jade/Onyx: Complete Project Progress and AI Implementation Handoff
 
-- Document date: **2026-08-15**
+- Document date: **2026-09-19**
 - Repository: `https://github.com/umerijaz81/bytecoin.git`
 - Working branch: `kimiK3/jade-onyx-hardening`
-- Committed revision reviewed: `aaa8e0c` (`Qualify authenticated invalid Onyx issuance`)
+- Committed revision reviewed: `06e55bc` (`Qualify Onyx program conflict precheck`)
 - Audience: a developer or another AI coding tool continuing this project
 
 ## 1. Purpose of this document
@@ -31,7 +31,7 @@ Use the following terms exactly. Do not merge them into a vague word such as "do
 
 | Label | Meaning |
 |---|---|
-| **Committed** | The implementation is part of Git revision `aaa8e0c` or an earlier ancestor on this branch. |
+| **Committed** | The implementation is part of Git revision `06e55bc` or an earlier ancestor on this branch. |
 | **Working tree** | The implementation exists only as an uncommitted local diff and may be incomplete or untested. |
 | **Unit-qualified locally** | Focused tests passed on one development machine. |
 | **Process-qualified locally** | A real local daemon/wallet/miner topology passed a bounded scenario. |
@@ -48,8 +48,9 @@ behavior.
 ### 3.1 Branch history
 
 - Active branch: `kimiK3/jade-onyx-hardening`.
-- Implementation baseline reviewed by this handoff: `aaa8e0c`; the documentation-only follow-up may
-  be the branch tip. Always use the commands below to determine the current local/remote revision.
+- Implementation baseline reviewed by this handoff: `06e55bc`. Documentation updates for that
+  revision may be the branch tip. Always use the commands below to determine the current local/remote
+  revision.
 - `origin/claude/bytecoin-privacy-analysis-n1nsck` is already an ancestor of this branch. Its latest
   shared commit is `29df510`, so its work is integrated and must not be merged a second time.
 - `codex/jade-onyx-hardening` and `origin/codex/jade-onyx-hardening` are older ancestors of the current
@@ -67,8 +68,7 @@ git merge-base --is-ancestor origin/claude/bytecoin-privacy-analysis-n1nsck HEAD
 
 ### 3.2 Local changes that must be preserved
 
-After committing the asynchronous verifier milestone, the reviewed worktree contains only the two
-pre-existing user-owned changes:
+At this handoff point, preserve these user-owned changes while committing implementation work:
 
 ```text
  M .gitignore
@@ -80,13 +80,18 @@ Ownership and commit rules:
 - `.gitignore` is an unrelated user modification. Do not overwrite or include it in another change.
 - `Bytecoin_Onyx_Security_Review.md` is already staged user work. Do not edit, unstage, delete, or
   accidentally commit it with implementation work.
-- The authenticated bridge code is committed in `7e46efb`, documented in `1587b50`, and described in
-  section 13.
+- Authenticated invalid bridge, deployment, issuance, and standard-program-call qualification is
+  committed through `13b4ea7` and documented through `e955f90`.
 - The asynchronous HTTP/P2P verifier boundary, workflow job, and real process harness are committed
-  in `585bc4d` and described in section 15.
-- Authenticated pool/state conflicts now reject before verifier permit acquisition and worker
-  submission in `715d019`; the expanded live harness proves the transfer case and exposes a private
-  precheck-conflict counter.
+  and described in `docs/Onyx-Qualification-Network.md`.
+- Authenticated pool/state conflicts reject before verifier permit acquisition and worker submission.
+  The committed harness proves transfer conflicts and, in `06e55bc`, an independent-nullifier
+  standard-program conflict.
+- Phase A evidence:
+  `build/codex-invalid-proof/onyx-verifier-load-working-tree-program-conflict-download-fix.json`
+  passed all 22 checks. SHA-256:
+  `ebe537d29c0b89d1f76711b5145e3d0a16c4d909654a10b6176062d7537e18df`. Raw load SHA-256:
+  `b68b6308279a787da39ebbd2e599afd20d3eb81de7aae4817e37137364c4008b`.
 - Never use `git add -A` in this workspace.
 - Prefer `git commit --only <explicit paths>` and inspect `git status --short` before and after every
   commit.
