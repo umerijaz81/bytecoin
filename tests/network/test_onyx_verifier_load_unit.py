@@ -54,6 +54,36 @@ class OnyxVerifierLoadUnitTests(unittest.TestCase):
         )
         self.assertEqual(LOAD.classify({"transport_error": "timeout"}), "transport_error")
 
+    def test_repeated_round_planning_latency_and_fairness(self):
+        transactions = [
+            {"source": f"tx-{index}.hex", "sha256": f"{index:064x}", "bytes": 10}
+            for index in range(6)
+        ]
+        rounds = LOAD.build_rounds(transactions, parallel=2, rounds=3)
+        self.assertEqual(
+            [[transaction["source"] for transaction in round_] for round_ in rounds],
+            [["tx-0.hex", "tx-1.hex"], ["tx-2.hex", "tx-3.hex"], ["tx-4.hex", "tx-5.hex"]],
+        )
+        with self.assertRaisesRegex(ValueError, "require at least 8"):
+            LOAD.build_rounds(transactions, parallel=4, rounds=2)
+
+        submissions = [
+            {"source": "tx-0.hex", "elapsed_seconds": 1.0, "classification": "accepted"},
+            {"source": "tx-1.hex", "elapsed_seconds": 3.0, "classification": "verifier_busy"},
+            {"source": "tx-2.hex", "elapsed_seconds": 5.0, "classification": "rejected"},
+            {"source": "tx-3.hex", "elapsed_seconds": 7.0, "classification": "transport_error"},
+        ]
+        summary = LOAD.latency_summary(submissions)
+        self.assertEqual(summary["count"], 4)
+        self.assertEqual(summary["min_seconds"], 1.0)
+        self.assertEqual(summary["p50_seconds"], 4.0)
+        self.assertEqual(summary["max_seconds"], 7.0)
+        fairness = LOAD.source_fairness(submissions)
+        self.assertEqual(fairness["tx-0.hex"]["accepted"], 1)
+        self.assertEqual(fairness["tx-1.hex"]["verifier_busy"], 1)
+        self.assertEqual(fairness["tx-2.hex"]["rejected"], 1)
+        self.assertEqual(fairness["tx-3.hex"]["transport_error"], 1)
+
     def test_current_process_sampling_is_nonzero(self):
         sample = LOAD.process_sample(os.getpid())
         self.assertGreater(sample["rss_bytes"], 0)

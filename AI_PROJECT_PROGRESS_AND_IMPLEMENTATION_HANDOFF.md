@@ -92,6 +92,9 @@ Ownership and commit rules:
   passed all 22 checks. SHA-256:
   `ebe537d29c0b89d1f76711b5145e3d0a16c4d909654a10b6176062d7537e18df`. Raw load SHA-256:
   `b68b6308279a787da39ebbd2e599afd20d3eb81de7aae4817e37137364c4008b`.
+- Phase B is beginning in the working tree: `tools/onyx_verifier_load.py` has repeated-round,
+  sequential/parallel mode, latency-summary, latency-bound, campaign-label, and per-source fairness
+  reporting support. This is unit-tested but not yet process-qualified as a sustained campaign.
 - Never use `git add -A` in this workspace.
 - Prefer `git commit --only <explicit paths>` and inspect `git status --short` before and after every
   commit.

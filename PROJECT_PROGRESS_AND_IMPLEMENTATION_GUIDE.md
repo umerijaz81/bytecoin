@@ -1623,6 +1623,13 @@ post-commit artifact is required, and push.
 
 ### Phase B — sustained verifier scheduling, fairness, and resource ceilings
 
+Current state: **Phase B runner foundation implemented in the working tree; full sustained process
+campaigns still pending**. `tools/onyx_verifier_load.py` now supports repeated rounds, explicit
+parallel/sequential modes, campaign labels, optional maximum-latency assertions, latency percentile
+summaries, per-transaction-source fairness accounting, and portable checks that every requested round
+and source was observed. This extends the existing RSS, verifier permit, overload, daemon sampling,
+and transport-error assertions without changing the default one-round process-harness behavior.
+
 Primary files:
 
 - `tools/onyx_verifier_load.py`

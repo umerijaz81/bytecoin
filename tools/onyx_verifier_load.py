@@ -198,6 +198,73 @@ def classify(response):
     return "rejected"
 
 
+def percentile(sorted_values, percent):
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = (len(sorted_values) - 1) * percent / 100.0
+    lower = int(rank)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    if lower == upper:
+        return sorted_values[lower]
+    fraction = rank - lower
+    return sorted_values[lower] * (1.0 - fraction) + sorted_values[upper] * fraction
+
+
+def latency_summary(submissions):
+    latencies = sorted(item["elapsed_seconds"] for item in submissions)
+    if not latencies:
+        return {
+            "count": 0,
+            "min_seconds": None,
+            "p50_seconds": None,
+            "p90_seconds": None,
+            "p95_seconds": None,
+            "max_seconds": None,
+        }
+    return {
+        "count": len(latencies),
+        "min_seconds": latencies[0],
+        "p50_seconds": percentile(latencies, 50),
+        "p90_seconds": percentile(latencies, 90),
+        "p95_seconds": percentile(latencies, 95),
+        "max_seconds": latencies[-1],
+    }
+
+
+def build_rounds(transactions, parallel, rounds):
+    required = parallel * rounds
+    if len(transactions) < required:
+        raise ValueError(
+            f"--parallel {parallel} and --rounds {rounds} require at least "
+            f"{required} distinct transaction files"
+        )
+    return [
+        transactions[index * parallel : (index + 1) * parallel]
+        for index in range(rounds)
+    ]
+
+
+def source_fairness(submissions):
+    fairness = {}
+    for submission in submissions:
+        source = submission["source"]
+        bucket = fairness.setdefault(
+            source,
+            {
+                "submitted": 0,
+                "accepted": 0,
+                "verifier_busy": 0,
+                "rejected": 0,
+                "transport_error": 0,
+            },
+        )
+        bucket["submitted"] += 1
+        bucket[submission["classification"]] += 1
+    return fairness
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rpc-url", default="http://127.0.0.1:18081/json_rpc")
@@ -205,21 +272,29 @@ def main():
     parser.add_argument("--pid", required=True, type=int, help="bytecoind process id")
     parser.add_argument("--transaction-file", action="append", type=pathlib.Path, required=True)
     parser.add_argument("--parallel", type=int, default=2)
+    parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument("--mode", choices=("parallel", "sequential"), default="parallel")
     parser.add_argument("--sample-interval", type=float, default=0.25)
     parser.add_argument("--rpc-timeout", type=float, default=1800.0)
     parser.add_argument("--statistics-timeout", type=float, default=2.0)
     parser.add_argument("--max-rss-growth-mib", type=float)
+    parser.add_argument("--max-latency-seconds", type=float)
+    parser.add_argument("--campaign-label", default="default")
     parser.add_argument("--revision", required=True)
     parser.add_argument("--report", type=pathlib.Path, required=True)
     parser.add_argument("--allow-no-overload", action="store_true")
     args = parser.parse_args()
-    if args.parallel < 2 or args.sample_interval <= 0:
-        parser.error("--parallel must be at least 2 and --sample-interval must be positive")
+    if args.parallel < 1 or args.rounds < 1 or args.sample_interval <= 0:
+        parser.error("--parallel, --rounds, and --sample-interval must be positive")
+    if args.mode == "parallel" and args.parallel < 2:
+        parser.error("--parallel must be at least 2 in parallel mode")
 
     transactions = read_transactions(args.transaction_file)
-    selected = transactions[: args.parallel]
-    if len(selected) < args.parallel:
-        parser.error("--parallel exceeds the number of distinct transaction files")
+    try:
+        rounds = build_rounds(transactions, args.parallel, args.rounds)
+    except ValueError as error:
+        parser.error(str(error))
+    selected = [transaction for round_transactions in rounds for transaction in round_transactions]
 
     baseline_stats_response = rpc(
         args.rpc_url, "get_statistics", {}, args.authorization, args.statistics_timeout
@@ -271,11 +346,31 @@ def main():
             args.rpc_timeout,
         )
         return {
+            "source": transaction["source"],
             "sha256": transaction["sha256"],
             "bytes": transaction["bytes"],
             "elapsed_seconds": time.monotonic() - begin,
             "classification": classify(response),
             "response": response,
+        }
+
+    def submit_round(round_index, round_transactions):
+        begin = time.monotonic()
+        if args.mode == "sequential":
+            submissions = [submit(transaction) for transaction in round_transactions]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as executor:
+                futures = [
+                    executor.submit(submit, transaction) for transaction in round_transactions
+                ]
+                submissions = [
+                    future.result(timeout=args.rpc_timeout + 30) for future in futures
+                ]
+        return {
+            "round": round_index,
+            "elapsed_seconds": time.monotonic() - begin,
+            "submissions": submissions,
+            "latency": latency_summary(submissions),
         }
 
     started = time.monotonic()
@@ -287,10 +382,16 @@ def main():
     )
     process_thread.start()
     daemon_thread.start()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as executor:
-        futures = [executor.submit(submit, transaction) for transaction in selected]
-        start.set()
-        submissions = [future.result(timeout=args.rpc_timeout + 30) for future in futures]
+    start.set()
+    round_reports = [
+        submit_round(index, round_transactions)
+        for index, round_transactions in enumerate(rounds)
+    ]
+    submissions = [
+        submission
+        for round_report in round_reports
+        for submission in round_report["submissions"]
+    ]
     stop.set()
     process_thread.join(timeout=args.sample_interval + 2)
     daemon_thread.join(timeout=args.statistics_timeout + args.sample_interval + 2)
@@ -326,11 +427,24 @@ def main():
     transport_errors = [
         item for item in submissions if item["classification"] == "transport_error"
     ]
+    fairness = source_fairness(submissions)
+    overall_latency = latency_summary(submissions)
     checks = {
         "node_responded_after_load": "result" in final_status and "result" in final_stats_response,
         "node_responded_during_load": len(successful_daemon_samples) >= 2,
         "no_daemon_sampling_errors": not daemon_sample_errors,
         "no_submission_transport_errors": not transport_errors,
+        "every_round_completed": len(round_reports) == args.rounds
+        and all(len(round_report["submissions"]) == args.parallel for round_report in round_reports),
+        "every_source_observed": len(fairness) == len(selected)
+        and all(bucket["submitted"] == 1 for bucket in fairness.values()),
+        "no_starvation": all(
+            any(
+                submission["classification"] in ("accepted", "verifier_busy", "rejected")
+                for submission in round_report["submissions"]
+            )
+            for round_report in round_reports
+        ),
         "verifier_peak_within_bound": peak_active <= 1
         and final_metrics["onyx_verifier_peak_active"] <= 1,
         "verifier_permit_observed": final_metrics["onyx_verifier_acquired"]
@@ -343,6 +457,11 @@ def main():
         > baseline_metrics["onyx_verifier_rejected_source"],
         "rss_growth_within_requested_bound": args.max_rss_growth_mib is None
         or rss_growth <= args.max_rss_growth_mib * 1024 * 1024,
+        "latency_within_requested_bound": args.max_latency_seconds is None
+        or (
+            overall_latency["max_seconds"] is not None
+            and overall_latency["max_seconds"] <= args.max_latency_seconds
+        ),
     }
     report = {
         "schema": SCHEMA,
@@ -359,14 +478,19 @@ def main():
             "rpc_url": args.rpc_url,
             "pid": args.pid,
             "parallel": args.parallel,
+            "rounds": args.rounds,
+            "mode": args.mode,
+            "campaign_label": args.campaign_label,
             "sample_interval_seconds": args.sample_interval,
             "max_rss_growth_mib": args.max_rss_growth_mib,
+            "max_latency_seconds": args.max_latency_seconds,
         },
         "transactions": [{key: value for key, value in tx.items() if key != "hex"} for tx in selected],
         "elapsed_seconds": finished - started,
         "baseline": {"daemon": baseline_metrics, "process": baseline_process, "status": baseline_status},
         "process_samples": process_samples,
         "daemon_samples": daemon_samples,
+        "rounds": round_reports,
         "submissions": submissions,
         "final": {"daemon": final_metrics, "process": final_process, "status": final_status},
         "observed": {
@@ -377,6 +501,8 @@ def main():
             "successful_daemon_samples": len(successful_daemon_samples),
             "daemon_sampling_errors": len(daemon_sample_errors),
             "submission_transport_errors": len(transport_errors),
+            "latency": overall_latency,
+            "source_fairness": fairness,
         },
         "checks": checks,
         "passed": all(checks.values()),
