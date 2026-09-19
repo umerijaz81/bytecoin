@@ -229,6 +229,11 @@ def main():
     parser.add_argument("--report", required=True, type=pathlib.Path)
     parser.add_argument("--rpc-timeout", type=float, default=1800.0)
     parser.add_argument("--max-rss-growth-mib", type=float)
+    parser.add_argument("--load-rounds", type=int, default=1)
+    parser.add_argument(
+        "--load-mode", choices=("parallel", "sequential"), default="parallel"
+    )
+    parser.add_argument("--max-load-latency-seconds", type=float)
     args = parser.parse_args()
 
     bytecoind = args.bytecoind.resolve()
@@ -245,6 +250,8 @@ def main():
         parser.error(f"load runner does not exist: {LOAD_TOOL}")
     if args.rpc_timeout <= 0:
         parser.error("--rpc-timeout must be positive")
+    if args.load_rounds < 1:
+        parser.error("--load-rounds must be positive")
 
     report_path = args.report.resolve()
     load_report_path = report_path.with_name(
@@ -805,7 +812,8 @@ def main():
             if transfer_amount <= 0:
                 raise RuntimeError("shielded funding cannot cover the load transaction fee")
             transactions = []
-            for index in range(2):
+            load_transaction_count = 2 * args.load_rounds
+            for index in range(load_transaction_count):
                 transactions.append(
                     source_wallet.call(
                         "create_onyx_transaction",
@@ -814,11 +822,13 @@ def main():
                             "amount": transfer_amount,
                             "fee": transfer_fee,
                             "expiry_height": 0,
-                            "memo": f"parallel valid verifier load {index}",
+                            "memo": f"{args.load_mode} valid verifier load {index}",
                         },
                     )
                 )
-            if transactions[0]["transaction_hash"] == transactions[1]["transaction_hash"]:
+            if len({transaction["transaction_hash"] for transaction in transactions}) != len(
+                transactions
+            ):
                 raise RuntimeError("wallet produced duplicate load transactions")
             invalid_proof_transaction = source_wallet.call(
                 "create_onyx_transaction",
@@ -2186,12 +2196,14 @@ def main():
                 "local-load:qualification",
                 "--pid",
                 str(node.process.pid),
-                "--transaction-file",
-                str(transaction_paths[0]),
-                "--transaction-file",
-                str(transaction_paths[1]),
                 "--parallel",
                 "2",
+                "--rounds",
+                str(args.load_rounds),
+                "--mode",
+                args.load_mode,
+                "--campaign-label",
+                f"process-{args.load_mode}-{args.load_rounds}-rounds",
                 "--sample-interval",
                 "0.05",
                 "--rpc-timeout",
@@ -2201,9 +2213,18 @@ def main():
                 "--report",
                 str(load_report_path),
             ]
+            for transaction_path in transaction_paths:
+                command.extend(["--transaction-file", str(transaction_path)])
             if args.max_rss_growth_mib is not None:
                 command.extend(
                     ["--max-rss-growth-mib", str(args.max_rss_growth_mib)]
+                )
+            if args.max_load_latency_seconds is not None:
+                command.extend(
+                    [
+                        "--max-latency-seconds",
+                        str(args.max_load_latency_seconds),
+                    ]
                 )
             load_run = subprocess.run(
                 command,
@@ -2226,10 +2247,18 @@ def main():
             classifications = sorted(
                 item.get("classification") for item in load_report["submissions"]
             )
-            if classifications != ["accepted", "verifier_busy"]:
+            if args.load_rounds == 1 and classifications != ["accepted", "verifier_busy"]:
                 raise RuntimeError(
                     f"load did not produce one accepted and one bounded-overload response: "
                     f"{classifications!r}"
+                )
+            if args.load_rounds > 1 and not {
+                "accepted",
+                "verifier_busy",
+            }.issubset(set(classifications)):
+                raise RuntimeError(
+                    "multi-round load did not include both accepted and bounded-overload "
+                    f"responses: {classifications!r}"
                 )
             verifier_acquired_after_load = node.statistics().get(
                 "onyx_verifier_acquired", 0

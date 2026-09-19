@@ -94,7 +94,9 @@ Ownership and commit rules:
   `b68b6308279a787da39ebbd2e599afd20d3eb81de7aae4817e37137364c4008b`.
 - Phase B is beginning in the working tree: `tools/onyx_verifier_load.py` has repeated-round,
   sequential/parallel mode, latency-summary, latency-bound, campaign-label, and per-source fairness
-  reporting support. This is unit-tested but not yet process-qualified as a sustained campaign.
+  reporting support. `tests/network/test_onyx_verifier_load_process.py` can pass those controls with
+  `--load-rounds`, `--load-mode`, and `--max-load-latency-seconds`. This is unit-tested but not yet
+  process-qualified as a sustained campaign.
 - Never use `git add -A` in this workspace.
 - Prefer `git commit --only <explicit paths>` and inspect `git status --short` before and after every
   commit.
