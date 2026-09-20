@@ -1623,15 +1623,26 @@ post-commit artifact is required, and push.
 
 ### Phase B — sustained verifier scheduling, fairness, and resource ceilings
 
-Current state: **Phase B runner and process-harness foundation implemented in the working tree; full
-sustained process campaigns still pending**. `tools/onyx_verifier_load.py` now supports repeated
-rounds, explicit parallel/sequential modes, campaign labels, optional maximum-latency assertions,
-latency percentile summaries, per-transaction-source fairness accounting, and portable checks that
-every requested round and source was observed. `tests/network/test_onyx_verifier_load_process.py`
-now exposes those controls through `--load-rounds`, `--load-mode`, and
-`--max-load-latency-seconds`, generates the required distinct transaction files, and preserves the
-default one-round process-harness behavior. This extends the existing RSS, verifier permit, overload,
-daemon sampling, and transport-error assertions.
+Current state: **Phase B runner and process-harness foundation implemented and locally qualified for
+a two-round parallel campaign; broader sustained campaigns still pending**. `tools/onyx_verifier_load.py`
+now supports repeated rounds, explicit parallel/sequential modes, campaign labels, optional
+maximum-latency assertions, latency percentile summaries, per-transaction-source fairness accounting,
+and portable checks that every requested round and source was observed.
+`tests/network/test_onyx_verifier_load_process.py` now exposes those controls through
+`--load-rounds`, `--load-mode`, and `--max-load-latency-seconds`, generates the required distinct
+transaction files, and preserves the default one-round process-harness behavior. This extends the
+existing RSS, verifier permit, overload, daemon sampling, and transport-error assertions.
+
+At revision `61f3456-load-rounds-2`, a committed two-round parallel process campaign passed all 23
+wrapper checks and all 12 raw-runner checks. The raw runner submitted four distinct valid
+transactions over two rounds, observed classifications `accepted`, `accepted`, `accepted`, and
+`verifier_busy`, peak verifier active count 1, peak RSS 343,650,304 bytes, RSS growth 17,813,504
+bytes, maximum submission latency 0.266 seconds, no daemon sampling errors, no transport errors,
+per-source accounting for every submitted transaction, and exact final supply convergence at height
+10. The wrapper report is
+`build/codex-invalid-proof/onyx-verifier-load-61f3456-load-rounds-2.json` with SHA-256
+`5f1965cc46655315462977f545a258a1fb3e69dbc0e703ffc08fe3e666ac1482`; the raw report SHA-256 is
+`3c5119607694d21245d29e1fff838d6735151c1d9b0b579b2a022c5c8a17f5eb`.
 
 Primary files:
 
@@ -1653,8 +1664,8 @@ Deliverables:
 5. Separate named-hardware observations from portable invariants. Do not invent release thresholds;
    derive candidate limits from recorded variance and keep reports labelled non-release evidence.
 
-Exit criterion: unit tests and the three-node campaign pass for cold/warm, sequential, parallel and
-mixed-ingress modes, with an atomic revision-bound report and documented safe local limits.
+Remaining exit criterion: extend the same evidence to cold/warm, sequential, longer repeated, and
+mixed-ingress modes, with atomic revision-bound reports and documented safe local limits.
 
 ### Phase C — rollback, persistence, corruption, and incident rehearsal automation
 
