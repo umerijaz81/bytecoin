@@ -1643,7 +1643,7 @@ def main():
                 and len(reciprocal_target.statistics().get("connected_peers", []))
                 >= 2,
                 nodes,
-                timeout=120,
+                timeout=args.rpc_timeout,
             )
             reciprocal_before = reciprocal_target.statistics()
             reciprocal_relay_before = reciprocal_relay.statistics()
